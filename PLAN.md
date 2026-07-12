@@ -195,4 +195,6 @@ Each milestone is a working app; 1–3 recreate the daily-driver experience.
   ✅ — outbound facet detection (links/@mentions post correctly) and inbound rendering
   (clickable links/mentions), plus **image embeds** in the card. (Mastotron was read-only;
   Skynets is not.) **Quote-embed cards** ✅ and **external link-preview cards** ✅ render
-  inline in the hover card. Later: compose image uploads/alt-text.
+  inline in the hover card. **Image upload** ✅ — attach up to 4 images with per-image alt
+  text, client-side downscale/compress, images (or record-with-media) embed, optimistic
+  preview. Later: multi-post thread composer.

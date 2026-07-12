@@ -1,6 +1,7 @@
 import { getAgent } from './agent'
 import { isDemo } from './demo'
 import type { ReplyTarget } from '../state/compose.svelte'
+import type { UploadedImage } from './upload'
 
 /** Max post length in graphemes (Bluesky's limit). */
 export const MAX_GRAPHEMES = 300
@@ -26,6 +27,7 @@ export async function createPost(
   reply: ReplyTarget | null,
   quote: QuoteTarget | null = null,
   facets?: unknown[],
+  images: UploadedImage[] = [],
 ): Promise<{ uri: string; cid: string }> {
   if (isDemo()) {
     const id = `${Date.now()}`
@@ -39,12 +41,28 @@ export async function createPost(
       root: { uri: reply.rootUri, cid: reply.rootCid },
     }
   }
-  if (quote) {
+
+  const media = images.length
+    ? {
+        $type: 'app.bsky.embed.images',
+        images: images.map((i) => ({ image: i.blob, alt: i.alt, aspectRatio: i.aspectRatio })),
+      }
+    : null
+  const recordEmbed = quote
+    ? { $type: 'app.bsky.embed.record', record: { uri: quote.uri, cid: quote.cid } }
+    : null
+  if (media && recordEmbed) {
     record.embed = {
-      $type: 'app.bsky.embed.record',
-      record: { uri: quote.uri, cid: quote.cid },
+      $type: 'app.bsky.embed.recordWithMedia',
+      record: recordEmbed,
+      media,
     }
+  } else if (media) {
+    record.embed = media
+  } else if (recordEmbed) {
+    record.embed = recordEmbed
   }
+
   const res = await getAgent().post(record as never)
   return { uri: res.uri, cid: res.cid }
 }

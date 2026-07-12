@@ -19,12 +19,18 @@ export function toReplyTarget(item: FeedItem): ReplyTarget {
   return { uri: p.uri, cid: p.cid, rootUri: root.uri, rootCid: root.cid, item }
 }
 
+export interface PreviewImage {
+  thumb: string
+  alt: string
+}
+
 /** An optimistic FeedItem for a post we just made, so it shows immediately. */
 export function buildSelfPost(
   text: string,
   uri: string,
   cid: string,
   reply: ReplyTarget | null,
+  images: PreviewImage[] = [],
 ): FeedItem {
   const createdAt = new Date().toISOString()
   const record: Record<string, unknown> = { $type: 'app.bsky.feed.post', text, createdAt }
@@ -34,23 +40,28 @@ export function buildSelfPost(
       root: { uri: reply.rootUri, cid: reply.rootCid },
     }
   }
-  return {
-    post: {
-      uri,
-      cid,
-      author: {
-        did: session.did ?? 'did:self',
-        handle: session.handle ?? 'you',
-        displayName: session.displayName,
-        avatar: session.avatar,
-      },
-      record,
-      replyCount: 0,
-      repostCount: 0,
-      likeCount: 0,
-      indexedAt: createdAt,
+  const post: Record<string, unknown> = {
+    uri,
+    cid,
+    author: {
+      did: session.did ?? 'did:self',
+      handle: session.handle ?? 'you',
+      displayName: session.displayName,
+      avatar: session.avatar,
     },
-  } as unknown as FeedItem
+    record,
+    replyCount: 0,
+    repostCount: 0,
+    likeCount: 0,
+    indexedAt: createdAt,
+  }
+  if (images.length) {
+    post.embed = {
+      $type: 'app.bsky.embed.images#view',
+      images: images.map((i) => ({ thumb: i.thumb, fullsize: i.thumb, alt: i.alt })),
+    }
+  }
+  return { post } as unknown as FeedItem
 }
 
 /** Modal state + optimistically-injected posts the graph merges in. */

@@ -1,18 +1,30 @@
 <script lang="ts">
   import { compose, buildSelfPost } from '../state/compose.svelte'
   import { createPost, graphemeLength, MAX_GRAPHEMES } from '../api/posting'
+  import { uploadImage } from '../api/upload'
   import { detectFacets } from '../api/richtext'
   import { authorName, postText } from '../api/post'
 
+  const MAX_IMAGES = 4
+
+  interface Attached {
+    file: File
+    url: string
+    alt: string
+  }
+
   let text = $state('')
+  let attached = $state<Attached[]>([])
   let posting = $state(false)
   let error = $state<string | undefined>(undefined)
   let textarea = $state<HTMLTextAreaElement | undefined>(undefined)
+  let fileInput = $state<HTMLInputElement | undefined>(undefined)
 
   // Reset each time the modal opens, and focus the textarea.
   $effect(() => {
     if (compose.open) {
       text = ''
+      attached = []
       error = undefined
       queueMicrotask(() => textarea?.focus())
     }
@@ -20,7 +32,29 @@
 
   const count = $derived(graphemeLength(text))
   const remaining = $derived(MAX_GRAPHEMES - count)
-  const canPost = $derived(text.trim().length > 0 && remaining >= 0 && !posting)
+  const canPost = $derived(
+    (text.trim().length > 0 || attached.length > 0) && remaining >= 0 && !posting,
+  )
+
+  function onFiles(e: Event) {
+    const input = e.target as HTMLInputElement
+    for (const f of Array.from(input.files ?? [])) {
+      if (attached.length >= MAX_IMAGES) break
+      if (!f.type.startsWith('image/')) continue
+      attached = [...attached, { file: f, url: URL.createObjectURL(f), alt: '' }]
+    }
+    input.value = '' // allow re-picking the same file
+  }
+
+  function removeImage(i: number) {
+    URL.revokeObjectURL(attached[i].url)
+    attached = attached.filter((_, idx) => idx !== i)
+  }
+
+  function cancel() {
+    for (const a of attached) URL.revokeObjectURL(a.url)
+    compose.close()
+  }
 
   async function submit() {
     if (!canPost) return
@@ -32,8 +66,12 @@
         ? { uri: compose.quote.post.uri, cid: compose.quote.post.cid }
         : null
       const facets = await detectFacets(text)
-      const { uri, cid } = await createPost(text, reply, quote, facets)
-      compose.inject(buildSelfPost(text, uri, cid, reply))
+      const uploaded = []
+      for (const a of attached) uploaded.push(await uploadImage(a.file, a.alt))
+      const { uri, cid } = await createPost(text, reply, quote, facets, uploaded)
+      const previews = attached.map((a) => ({ thumb: a.url, alt: a.alt }))
+      compose.inject(buildSelfPost(text, uri, cid, reply, previews))
+      attached = [] // URLs now referenced by the injected post; don't revoke
       compose.close()
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to post'
@@ -43,7 +81,7 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') compose.close()
+    if (e.key === 'Escape') cancel()
     else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') submit()
   }
 </script>
@@ -53,7 +91,7 @@
     class="backdrop"
     role="button"
     tabindex="-1"
-    onclick={() => compose.close()}
+    onclick={() => cancel()}
     onkeydown={onKeydown}
   >
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -66,7 +104,7 @@
     >
       <div class="head">
         <strong>{compose.reply ? 'Reply' : compose.quote ? 'Quote post' : 'New post'}</strong>
-        <button class="close" aria-label="Close" onclick={() => compose.close()}>✕</button>
+        <button class="close" aria-label="Close" onclick={() => cancel()}>✕</button>
       </div>
 
       {#if compose.reply}
@@ -95,11 +133,46 @@
         </div>
       {/if}
 
+      {#if attached.length}
+        <div class="attachments">
+          {#each attached as img, i (img.url)}
+            <div class="att">
+              <img src={img.url} alt="" />
+              <button class="att-remove" aria-label="Remove image" onclick={() => removeImage(i)}
+                >✕</button
+              >
+              <input
+                class="att-alt"
+                placeholder="Alt text — describe the image"
+                bind:value={attached[i].alt}
+              />
+            </div>
+          {/each}
+        </div>
+      {/if}
+
       {#if error}
         <p class="error">{error}</p>
       {/if}
 
       <div class="foot">
+        <button
+          class="tool"
+          title="Add image"
+          disabled={attached.length >= MAX_IMAGES}
+          onclick={() => fileInput?.click()}
+        >
+          🖼 Image
+        </button>
+        <input
+          bind:this={fileInput}
+          type="file"
+          accept="image/*"
+          multiple
+          hidden
+          onchange={onFiles}
+        />
+        <span class="spacer"></span>
         <span class="count" class:over={remaining < 0}>{remaining}</span>
         <button class="post" onclick={submit} disabled={!canPost}>
           {posting ? 'Posting…' : compose.reply ? 'Reply' : 'Post'}
@@ -184,12 +257,60 @@
     font-size: 0.82rem;
     margin: 0.5rem 0 0;
   }
+  .attachments {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    margin-top: 0.7rem;
+  }
+  .att {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  .att img {
+    width: 100%;
+    height: 110px;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  .att-remove {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.6);
+    border: none;
+    color: #fff;
+    font-size: 0.7rem;
+    display: grid;
+    place-items: center;
+  }
+  .att-alt {
+    width: 100%;
+    font-size: 0.75rem;
+    padding: 0.35rem 0.5rem;
+  }
   .foot {
     display: flex;
     align-items: center;
-    justify-content: flex-end;
     gap: 0.9rem;
     margin-top: 0.7rem;
+  }
+  .spacer {
+    flex: 1;
+  }
+  .tool {
+    font-size: 0.82rem;
+    padding: 0.4rem 0.7rem;
+  }
+  .tool:disabled {
+    opacity: 0.5;
   }
   .count {
     color: var(--text-dim);
