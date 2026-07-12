@@ -38,7 +38,7 @@
   <button
     class="node"
     class:replies={hasReplies}
-    title={authorName(node.item)}
+    aria-label={authorName(node.item)}
     onclick={() => onclick(node)}
     ondblclick={() => ondblclick(node)}
   >
