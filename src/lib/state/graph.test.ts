@@ -45,6 +45,22 @@ describe('buildGraph', () => {
     expect(edges).toHaveLength(2)
   })
 
+  it('groups a conversation by reply-connectivity even with inconsistent roots', () => {
+    // A chain a <- b <- c <- d whose stored reply.root refs disagree (as real
+    // Bluesky data often does). Connectivity must still collapse it to one node
+    // rather than fragmenting into several linked nodes.
+    const items = [
+      mkPost({ uri: 'at://a' }),
+      mkPost({ uri: 'at://b', parent: 'at://a', root: 'at://a' }),
+      mkPost({ uri: 'at://c', parent: 'at://b', root: 'at://b' }), // root ≠ a
+      mkPost({ uri: 'at://d', parent: 'at://c', root: 'at://elsewhere' }), // root ≠ a
+    ]
+    const { nodes, edges } = buildGraph(items)
+    expect(nodes).toHaveLength(1)
+    expect(nodes[0].collapsedCount).toBe(3)
+    expect(edges).toHaveLength(0)
+  })
+
   it('shows a small (2-post) thread as connected nodes, not collapsed', () => {
     const root = 'at://x/root'
     const items = [mkPost({ uri: root }), mkPost({ uri: 'at://x/r1', parent: root, root })]

@@ -287,18 +287,23 @@
     else pinned.add(node.uri)
   }
 
+  // The graph groups posts by reply-connectivity, so expand/collapse is keyed by
+  // the node's group id; the thread is *fetched* by its real root uri.
+  function groupKey(item: FeedItem): string {
+    return nodeByUri.get(item.post.uri)?.rootUri ?? rootUriOf(item)
+  }
   /** Map (or un-map) a post's replies: reveal its thread, capped to the loudest. */
   function toggleMapReplies(item: FeedItem) {
-    const root = rootUriOf(item)
-    if (expanded.has(root)) {
-      expanded.delete(root)
+    const key = groupKey(item)
+    if (expanded.has(key)) {
+      expanded.delete(key)
     } else {
-      expanded.add(root)
-      threads.ensure(root) // pull replies not already in the timeline
+      expanded.add(key)
+      threads.ensure(rootUriOf(item)) // pull replies not already in the timeline
     }
   }
   function repliesMapped(item: FeedItem): boolean {
-    return expanded.has(rootUriOf(item))
+    return expanded.has(groupKey(item))
   }
 
   function dismiss(uri: string) {

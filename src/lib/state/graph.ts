@@ -198,13 +198,12 @@ interface Unit {
 }
 
 /**
- * Build the post graph from timeline items. Posts are grouped by thread: any
- * thread with 2+ posts in view collapses to a single representative node (the
- * root author) unless its root uri is in `expanded`, in which case every member
- * is shown and wired with reply edges. A collapsed thread is positioned by its
- * *latest* activity and *peak* engagement so a hot thread still sits where it
- * belongs. Duplicate posts (an original that also appears as a repost) collapse
- * by uri first.
+ * Build the post graph from timeline items. Posts are grouped by reply
+ * *connectivity* (union-find over parent links, robust to inconsistent thread
+ * roots): a group of 3+ collapses to a single representative node unless its
+ * group is in `expanded`; a group of 2 shows as connected nodes. A collapsed
+ * thread is positioned by its *latest* activity and *peak* engagement. Duplicate
+ * posts (an original that also appears as a repost) collapse by uri first.
  */
 export function buildGraph(items: FeedItem[], expanded: ReadonlySet<string> = new Set()): Graph {
   // Dedup by post uri, keeping first occurrence.
@@ -215,14 +214,38 @@ export function buildGraph(items: FeedItem[], expanded: ReadonlySet<string> = ne
   const unique = [...byUri.values()]
   if (unique.length === 0) return { nodes: [], edges: [] }
 
-  // Group by thread root.
+  // Group by reply *connectivity* (union-find over parent links), not by the
+  // stored thread root — Bluesky thread data often has inconsistent root refs
+  // that would otherwise split one conversation into several nodes.
+  const uf = new Map<string, string>()
+  const find = (x: string): string => {
+    let r = x
+    while (uf.get(r) !== r) r = uf.get(r) as string
+    while (uf.get(x) !== r) {
+      const n = uf.get(x) as string
+      uf.set(x, r)
+      x = n
+    }
+    return r
+  }
+  for (const item of unique) uf.set(item.post.uri, item.post.uri)
+  for (const item of unique) {
+    const p = parentUriOf(item)
+    if (p && uf.has(p)) {
+      const a = find(item.post.uri)
+      const b = find(p)
+      if (a !== b) uf.set(a, b)
+    }
+  }
   const groups = new Map<string, FeedItem[]>()
   for (const item of unique) {
-    const root = rootUriOf(item)
-    const g = groups.get(root)
+    const key = find(item.post.uri)
+    const g = groups.get(key)
     if (g) g.push(item)
-    else groups.set(root, [item])
+    else groups.set(key, [item])
   }
+
+  const inGroup = (members: FeedItem[]) => new Set(members.map((m) => m.post.uri))
 
   const units: Unit[] = []
   for (const [rootUri, members] of groups) {
@@ -238,10 +261,15 @@ export function buildGraph(items: FeedItem[], expanded: ReadonlySet<string> = ne
       })
       continue
     }
-    // Representative: the actual root post if we have it, else the earliest.
-    const rep =
-      members.find((m) => m.post.uri === rootUri) ??
-      members.reduce((a, b) => (timestampOf(a) <= timestampOf(b) ? a : b))
+    // Representative: the conversation's entry point (a member with no parent in
+    // the group), preferring the earliest; else just the earliest.
+    const uris = inGroup(members)
+    const tops = members.filter((m) => {
+      const p = parentUriOf(m)
+      return !p || !uris.has(p)
+    })
+    const pool = tops.length ? tops : members
+    const rep = pool.reduce((a, b) => (timestampOf(a) <= timestampOf(b) ? a : b))
 
     // Small threads (or explicitly expanded ones) show as connected nodes;
     // larger threads collapse to one node unless the user maps their replies.
