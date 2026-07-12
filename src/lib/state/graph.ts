@@ -57,7 +57,7 @@ function timestampOf(item: FeedItem): number {
 }
 
 /** The parent post uri this item replies to, if any (from the record's reply ref). */
-function parentUri(item: FeedItem): string | undefined {
+export function parentUriOf(item: FeedItem): string | undefined {
   const rec = item.post.record
   if (AppBskyFeedPost.isRecord(rec) && rec.reply) return rec.reply.parent.uri
   return undefined
@@ -150,7 +150,7 @@ export function selectVisible(
 export function threadDescendants(items: FeedItem[], uri: string): string[] {
   const children = new Map<string, string[]>()
   for (const it of items) {
-    const parent = parentUri(it)
+    const parent = parentUriOf(it)
     if (parent) {
       const arr = children.get(parent)
       if (arr) arr.push(it.post.uri)
@@ -182,6 +182,10 @@ export function rootUriOf(item: FeedItem): string {
 
 /** When a thread is expanded, show at most this many replies (the loudest). */
 export const MAX_THREAD_REPLIES = 10
+
+/** Threads with fewer than this many posts show as connected nodes (edges) rather
+ * than collapsing — so small conversations read as a network, big ones stay tidy. */
+export const COLLAPSE_MIN = 3
 
 /** One layout unit — either a standalone post or a collapsed thread. */
 interface Unit {
@@ -239,7 +243,11 @@ export function buildGraph(items: FeedItem[], expanded: ReadonlySet<string> = ne
       members.find((m) => m.post.uri === rootUri) ??
       members.reduce((a, b) => (timestampOf(a) <= timestampOf(b) ? a : b))
 
-    if (expanded.has(rootUri)) {
+    // Small threads (or explicitly expanded ones) show as connected nodes;
+    // larger threads collapse to one node unless the user maps their replies.
+    const collapse = members.length >= COLLAPSE_MIN && !expanded.has(rootUri)
+
+    if (!collapse) {
       // Show the root + only the loudest replies, so a huge thread can't flood
       // the graph. The rep keeps a "+N" badge for any replies beyond the cap.
       const others = members
@@ -285,7 +293,7 @@ export function buildGraph(items: FeedItem[], expanded: ReadonlySet<string> = ne
   const present = new Set(nodes.map((n) => n.uri))
   const edges: GraphEdge[] = []
   for (const u of units) {
-    const parent = parentUri(u.item)
+    const parent = parentUriOf(u.item)
     const child = u.item.post.uri
     if (parent && present.has(parent) && present.has(child)) {
       edges.push({ id: `${child}->${parent}`, from: child, to: parent })

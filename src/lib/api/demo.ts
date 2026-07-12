@@ -161,6 +161,11 @@ export function demoFeed(): FeedItem[] {
   specs.push({ id: 'quote', ai: 2, text: 'exactly this — well put', quote: { ai: 5, text: 'You cannot convince me that a technology where I can type this into a text box and expect to get an interesting response is not, at some level, genuinely astonishing — even if you also worry about where it all goes.' }, likes: 19, reposts: 6, replies: 1, minsAgo: 10 })
   specs.push({ id: 'ext', ai: 4, text: 'good writeup', external: { uri: 'https://docs.bsky.app/blog', title: 'Building on the AT Protocol', description: 'A guide to client apps, feeds, and the firehose.', thumb: DEMO_IMG }, likes: 14, reposts: 3, replies: 1, minsAgo: 6 })
 
+  // A 2-post mini-thread (a post + one reply) — shows as a connected edge.
+  const miniRoot = 'at://did:plc:erao.bsky.social/app.bsky.feed.post/m0'
+  specs.push({ id: 'm0', ai: 4, text: 'a question worth answering', likes: 14, reposts: 3, replies: 1, minsAgo: 4 })
+  specs.push({ id: 'm1', ai: 1, text: 'here is my reply to it', likes: 6, reposts: 1, replies: 0, minsAgo: 2, reply: { parent: miniRoot, root: miniRoot } })
+
   // A 5-post thread rooted at t0 (tests collapsing + "+N" badge).
   const root = 'at://did:plc:alice.bsky.social/app.bsky.feed.post/t0'
   specs.push({ id: 't0', ai: 0, text: 'starting a thread about the graph metaphor', likes: 30, reposts: 8, replies: 4, minsAgo: 25 })

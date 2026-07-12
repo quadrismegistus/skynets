@@ -177,6 +177,12 @@ jQuery-UI + socket.io + vis-network.
    hundreds of replies can't flood the graph). Single-click instead **pins** a node
    (fixes its position + keeps it on the map, immune to turnover/limit); double-click
    opens on bsky.app.
+   - **Connect replies** ✅ (toggle, on by default): fetch the *parent* of each loaded
+     reply via `getPosts` (batched, skipping dismissed, climbing to root), and render
+     small threads as connected nodes instead of collapsing (`COLLAPSE_MIN = 3`) — so a
+     reply that would look standalone is drawn linked to what it's replying to. Big
+     threads still collapse. Dismissing never re-fetches a dismissed post as a parent,
+     but does **not** mute future replies (thread-muting would be a separate action).
 5. **Live + polish** ✅ (mostly) — **OAuth login**, **deployed** to GitHub Pages at
    ryanheuser.com/skynets/, **open-in-bsky.app** on double-click, and **60s live polling**
    that slides new posts into the graph (persisted toggle in the config popover). Still

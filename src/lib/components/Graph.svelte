@@ -4,6 +4,7 @@
   import {
     buildGraph,
     layoutPositions,
+    parentUriOf,
     rootUriOf,
     selectVisible,
     threadDescendants,
@@ -15,6 +16,7 @@
   import { settings } from '../state/settings.svelte'
   import { compose } from '../state/compose.svelte'
   import { threads } from '../state/threads.svelte'
+  import { ancestors } from '../state/ancestors.svelte'
   import { SvelteSet } from 'svelte/reactivity'
   import PostNode from './PostNode.svelte'
   import PostCard from './PostCard.svelte'
@@ -50,15 +52,16 @@
 
   // Merge optimistically-posted items (our own new posts/replies) with the feed,
   // then drop dismissed ones. buildGraph dedupes by uri.
-  const allItems = $derived([...compose.injected, ...threads.posts, ...items])
+  const allItems = $derived([...compose.injected, ...threads.posts, ...ancestors.posts, ...items])
   const visible = $derived(allItems.filter((i) => !read.isDismissed(i.post.uri)))
   const graph = $derived(buildGraph(visible, expanded))
 
   const total = $derived(graph.nodes.length)
   const queued = $derived(total <= settings.nodeLimit ? 0 : total - settings.nodeLimit)
 
-  // Which nodes to show (top/recent/mix), plus any pinned nodes (always shown),
-  // then their layout computed over just this set so they fill the full x/y range.
+  // Which nodes to show (top/recent/mix), plus pinned nodes and — when "connect
+  // replies" is on — the present ancestor chain of each shown node, so a reply is
+  // drawn connected to the post it replies to. Layout is computed over this set.
   const visibleNodes = $derived.by(() => {
     const selected = selectVisible(
       graph.nodes,
@@ -67,9 +70,25 @@
       turnoverOffset,
       expanded,
     )
-    if (!pinned.size) return selected
+    if (!pinned.size && !settings.connectReplies) return selected
     const set = new Map(selected.map((n) => [n.uri, n]))
     for (const n of graph.nodes) if (pinned.has(n.uri) && !set.has(n.uri)) set.set(n.uri, n)
+    if (settings.connectReplies) {
+      const byUri = new Map(graph.nodes.map((n) => [n.uri, n]))
+      for (const start of [...set.values()]) {
+        let cur: GraphNode | undefined = start
+        const guard = new Set<string>([start.uri])
+        while (cur) {
+          const p = parentUriOf(cur.item)
+          if (!p || guard.has(p)) break
+          const pn = byUri.get(p)
+          if (!pn) break
+          guard.add(p)
+          set.set(p, pn)
+          cur = pn
+        }
+      }
+    }
     return [...set.values()]
   })
   const nodeLayout = $derived(layoutPositions(visibleNodes))
@@ -157,6 +176,20 @@
     const t = targets
     const links = visibleEdges.map((e) => ({ source: e.from, target: e.to }))
     layout?.update(t, links, new Set(pinned))
+  })
+
+  // Connect replies: pull in the parents of any loaded reply we don't have yet
+  // (skipping dismissed ones). As fetched parents reveal their own parents, this
+  // climbs the chain toward the thread root over successive runs.
+  $effect(() => {
+    if (!settings.connectReplies) return
+    const present = new Set(allItems.map((i) => i.post.uri))
+    const wanted = new Set<string>()
+    for (const it of allItems) {
+      const p = parentUriOf(it)
+      if (p && !present.has(p) && !read.isDismissed(p)) wanted.add(p)
+    }
+    if (wanted.size) ancestors.ensure([...wanted])
   })
 
   // Keep the graph full: when the queue runs dry (fewer posts loaded than the
@@ -397,6 +430,13 @@
           <span class="val"></span>
         </div>
         <p class="hint">Pull new posts into the graph every 60s.</p>
+
+        <div class="row">
+          <span class="label">Connect</span>
+          <input type="checkbox" bind:checked={settings.connectReplies} />
+          <span class="val"></span>
+        </div>
+        <p class="hint">Bring in the posts replies are replying to, drawing edges.</p>
       </div>
     {/if}
   </div>

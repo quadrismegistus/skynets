@@ -112,6 +112,12 @@ test('composing with an image attaches and posts', async ({ page }) => {
   await expect(page.locator('.modal')).toHaveCount(0)
 })
 
+test('connect-replies draws edges for small threads by default', async ({ page }) => {
+  await graphReady(page)
+  // The demo mini-thread (post + one reply) renders as a connected edge.
+  expect(await page.locator('.edges line').count()).toBeGreaterThan(0)
+})
+
 test('single-click pins a node', async ({ page }) => {
   await graphReady(page)
   await page.locator('.wrap').first().click()

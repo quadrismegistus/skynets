@@ -45,6 +45,15 @@ describe('buildGraph', () => {
     expect(edges).toHaveLength(2)
   })
 
+  it('shows a small (2-post) thread as connected nodes, not collapsed', () => {
+    const root = 'at://x/root'
+    const items = [mkPost({ uri: root }), mkPost({ uri: 'at://x/r1', parent: root, root })]
+    const { nodes, edges } = buildGraph(items)
+    expect(nodes).toHaveLength(2) // below COLLAPSE_MIN → not collapsed
+    expect(edges).toHaveLength(1) // reply → parent edge
+    expect(nodes.some((n) => n.collapsedCount > 0)).toBe(false)
+  })
+
   it('caps an expanded thread to the root + MAX_THREAD_REPLIES loudest', () => {
     const root = 'at://x/root'
     const items = [mkPost({ uri: root })]
@@ -63,6 +72,7 @@ describe('buildGraph', () => {
     const items = [
       mkPost({ uri: root, likes: 5, createdAt: T(0) }),
       mkPost({ uri: 'at://x/r1', parent: root, root, likes: 50, createdAt: T(10) }),
+      mkPost({ uri: 'at://x/r2', parent: 'at://x/r1', root, likes: 3, createdAt: T(5) }),
     ]
     const rep = buildGraph(items).nodes[0]
     expect(rep.timestamp).toBe(Date.parse(T(10))) // latest activity
