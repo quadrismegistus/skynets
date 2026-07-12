@@ -27,7 +27,10 @@
     error = undefined
     try {
       const reply = compose.reply
-      const { uri, cid } = await createPost(text, reply)
+      const quote = compose.quote
+        ? { uri: compose.quote.post.uri, cid: compose.quote.post.cid }
+        : null
+      const { uri, cid } = await createPost(text, reply, quote)
       compose.inject(buildSelfPost(text, uri, cid, reply))
       compose.close()
     } catch (err) {
@@ -60,12 +63,12 @@
       onclick={(e) => e.stopPropagation()}
     >
       <div class="head">
-        <strong>{compose.reply ? 'Reply' : 'New post'}</strong>
+        <strong>{compose.reply ? 'Reply' : compose.quote ? 'Quote post' : 'New post'}</strong>
         <button class="close" aria-label="Close" onclick={() => compose.close()}>✕</button>
       </div>
 
       {#if compose.reply}
-        <div class="replying-to">
+        <div class="context">
           <span class="to-label">Replying to {authorName(compose.reply.item)}</span>
           <p class="quote">{postText(compose.reply.item)}</p>
         </div>
@@ -75,9 +78,20 @@
         bind:this={textarea}
         bind:value={text}
         onkeydown={onKeydown}
-        placeholder={compose.reply ? 'Write your reply…' : "What's happening?"}
+        placeholder={compose.reply
+          ? 'Write your reply…'
+          : compose.quote
+            ? 'Add a comment…'
+            : "What's happening?"}
         rows="5"
       ></textarea>
+
+      {#if compose.quote}
+        <div class="context quoted">
+          <span class="to-label">{authorName(compose.quote)} · @{compose.quote.post.author.handle}</span>
+          <p class="quote">{postText(compose.quote)}</p>
+        </div>
+      {/if}
 
       {#if error}
         <p class="error">{error}</p>
@@ -124,10 +138,16 @@
     border: none;
     color: var(--text-dim);
   }
-  .replying-to {
+  .context {
     border-left: 2px solid var(--border);
     padding: 0.1rem 0 0.1rem 0.7rem;
     margin-bottom: 0.7rem;
+  }
+  .context.quoted {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.5rem 0.7rem;
+    margin: 0.7rem 0 0;
   }
   .to-label {
     font-size: 0.75rem;

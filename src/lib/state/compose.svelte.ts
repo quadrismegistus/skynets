@@ -57,19 +57,28 @@ export function buildSelfPost(
 class ComposeState {
   open = $state(false)
   reply = $state<ReplyTarget | null>(null)
+  quote = $state<FeedItem | null>(null)
   injected = $state<FeedItem[]>([])
 
   openNew() {
     this.reply = null
+    this.quote = null
     this.open = true
   }
   openReply(item: FeedItem) {
+    this.quote = null
     this.reply = toReplyTarget(item)
+    this.open = true
+  }
+  openQuote(item: FeedItem) {
+    this.reply = null
+    this.quote = item
     this.open = true
   }
   close() {
     this.open = false
     this.reply = null
+    this.quote = null
   }
   inject(item: FeedItem) {
     this.injected = [item, ...this.injected]

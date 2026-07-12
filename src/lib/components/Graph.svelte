@@ -302,6 +302,7 @@
       x={hoveredCard.x}
       y={hoveredCard.y}
       onreply={(it) => compose.openReply(it)}
+      onquote={(it) => compose.openQuote(it)}
       onkeep={() => setHovered(hoveredCard.item.post.uri)}
       onleave={scheduleClear}
     />
