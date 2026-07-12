@@ -242,6 +242,18 @@
     if (total > settings.nodeLimit) turnoverOffset = (turnoverOffset + settings.nodeLimit) % total
   }
 
+  // Hover with a short close delay so the pointer can travel from a node to its
+  // card (and interact with it) without the card vanishing.
+  let clearTimer: ReturnType<typeof setTimeout> | undefined
+  function setHovered(uri: string) {
+    clearTimeout(clearTimer)
+    hovered = uri
+  }
+  function scheduleClear() {
+    clearTimeout(clearTimer)
+    clearTimer = setTimeout(() => (hovered = null), 140)
+  }
+
   function onKey(e: KeyboardEvent) {
     if (e.target instanceof HTMLInputElement) return
     const k = e.key.toLowerCase()
@@ -277,16 +289,22 @@
       size={p.size}
       hasReplies={(edgeCount.get(p.node.uri) ?? 0) > 0}
       active={hovered === p.node.uri}
-      onhover={(uri) => (hovered = uri)}
+      onhover={(uri) => (uri ? setHovered(uri) : scheduleClear())}
       onclick={onNodeClick}
       ondblclick={onNodeDblClick}
       ondismiss={dismiss}
-      onreply={(n) => compose.openReply(n.item)}
     />
   {/each}
 
   {#if hoveredCard}
-    <PostCard item={hoveredCard.item} x={hoveredCard.x} y={hoveredCard.y} />
+    <PostCard
+      item={hoveredCard.item}
+      x={hoveredCard.x}
+      y={hoveredCard.y}
+      onreply={(it) => compose.openReply(it)}
+      onkeep={() => setHovered(hoveredCard.item.post.uri)}
+      onleave={scheduleClear}
+    />
   {/if}
 
   {#if items.length === 0 && !loading}

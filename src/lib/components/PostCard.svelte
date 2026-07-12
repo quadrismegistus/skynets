@@ -1,19 +1,31 @@
 <script lang="ts">
   import type { FeedItem } from '../api/timeline'
   import { authorName, fullDate, postText, reposter, timeAgo } from '../api/post'
+  import { interactions } from '../state/interactions.svelte'
 
   interface Props {
     item: FeedItem
     /** Top-left position in container px. */
     x: number
     y: number
+    onreply: (item: FeedItem) => void
+    onkeep: () => void
+    onleave: () => void
   }
-  let { item, x, y }: Props = $props()
+  let { item, x, y, onreply, onkeep, onleave }: Props = $props()
 
   const rt = $derived(reposter(item))
+  const liked = $derived(interactions.liked(item))
+  const reposted = $derived(interactions.reposted(item))
 </script>
 
-<div class="card" style="left: {x}px; top: {y}px;">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="card"
+  style="left: {x}px; top: {y}px;"
+  onmouseenter={onkeep}
+  onmouseleave={onleave}
+>
   {#if rt}
     <div class="repost">🔁 reposted by {rt}</div>
   {/if}
@@ -28,10 +40,27 @@
     <span class="time" title={fullDate(item)}>{timeAgo(item)}</span>
   </div>
   <div class="text">{postText(item)}</div>
-  <div class="stats">
-    <span>💬 {item.post.replyCount ?? 0}</span>
-    <span>🔁 {item.post.repostCount ?? 0}</span>
-    <span>❤️ {item.post.likeCount ?? 0}</span>
+
+  <div class="actions">
+    <button class="act reply" title="Reply" onclick={() => onreply(item)}>
+      💬 <span>{item.post.replyCount ?? 0}</span>
+    </button>
+    <button
+      class="act repost"
+      class:on={reposted}
+      title={reposted ? 'Undo repost' : 'Repost'}
+      onclick={() => interactions.toggleRepost(item)}
+    >
+      🔁 <span>{interactions.repostCount(item)}</span>
+    </button>
+    <button
+      class="act like"
+      class:on={liked}
+      title={liked ? 'Unlike' : 'Like'}
+      onclick={() => interactions.toggleLike(item)}
+    >
+      {liked ? '❤️' : '🤍'} <span>{interactions.likeCount(item)}</span>
+    </button>
   </div>
 </div>
 
@@ -46,7 +75,6 @@
     border-radius: 12px;
     padding: 0.8rem 0.9rem;
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
-    pointer-events: none;
   }
   .repost {
     font-size: 0.72rem;
@@ -92,10 +120,33 @@
     font-size: 0.9rem;
     margin-bottom: 0.5rem;
   }
-  .stats {
+  .actions {
     display: flex;
-    gap: 0.9rem;
-    font-size: 0.78rem;
+    gap: 0.5rem;
+  }
+  .act {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3rem;
+    padding: 0.3rem 0.4rem;
+    font-size: 0.8rem;
+    background: transparent;
+    border-color: transparent;
     color: var(--text-dim);
+  }
+  .act:hover {
+    background: var(--bg);
+    border-color: var(--border);
+  }
+  .act.on {
+    color: var(--text);
+  }
+  .act.like.on {
+    color: var(--danger);
+  }
+  .act.repost.on {
+    color: #4caf7d;
   }
 </style>

@@ -14,32 +14,15 @@
     onclick: (node: GraphNode) => void
     ondblclick: (node: GraphNode) => void
     ondismiss: (uri: string) => void
-    onreply: (node: GraphNode) => void
   }
-  let {
-    node,
-    px,
-    py,
-    size,
-    hasReplies,
-    active,
-    onhover,
-    onclick,
-    ondblclick,
-    ondismiss,
-    onreply,
-  }: Props = $props()
+  let { node, px, py, size, hasReplies, active, onhover, onclick, ondblclick, ondismiss }: Props =
+    $props()
 
   const avatar = $derived(node.item.post.author.avatar)
 
   function dismiss(e: MouseEvent) {
     e.stopPropagation()
     ondismiss(node.uri)
-  }
-
-  function reply(e: MouseEvent) {
-    e.stopPropagation()
-    onreply(node)
   }
 </script>
 
@@ -75,7 +58,6 @@
   <button class="dismiss" title="Mark as read (dismiss)" aria-label="Dismiss" onclick={dismiss}>
     ✕
   </button>
-  <button class="reply" title="Reply" aria-label="Reply" onclick={reply}> ↩ </button>
 </div>
 
 <style>
@@ -165,30 +147,5 @@
     color: #fff;
     background: var(--danger);
     border-color: var(--danger);
-  }
-  .reply {
-    position: absolute;
-    top: -7px;
-    left: -7px;
-    width: 20px;
-    height: 20px;
-    padding: 0;
-    border-radius: 50%;
-    border: 1px solid var(--border);
-    background: var(--bg);
-    color: var(--text-dim);
-    font-size: 0.7rem;
-    line-height: 1;
-    display: none;
-    place-items: center;
-    z-index: 60;
-  }
-  .wrap:hover .reply {
-    display: grid;
-  }
-  .reply:hover {
-    color: #fff;
-    background: var(--accent);
-    border-color: var(--accent);
   }
 </style>
