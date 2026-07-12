@@ -347,8 +347,6 @@
     line-height: 1.35;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    max-height: 4.5em;
-    overflow: hidden;
   }
   .actions {
     display: flex;

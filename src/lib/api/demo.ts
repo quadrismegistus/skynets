@@ -158,7 +158,7 @@ export function demoFeed(): FeedItem[] {
   // Rich content: a link post (facets) and an image post.
   specs.push({ id: 'link', ai: 1, text: 'worth a read', link: 'https://docs.bsky.app', likes: 18, reposts: 5, replies: 2, minsAgo: 8 })
   specs.push({ id: 'img', ai: 3, text: 'a photo from today', image: DEMO_IMG, likes: 26, reposts: 7, replies: 3, minsAgo: 14 })
-  specs.push({ id: 'quote', ai: 2, text: 'exactly this — well put', quote: { ai: 5, text: 'the map beats the feed, every time' }, likes: 19, reposts: 6, replies: 1, minsAgo: 10 })
+  specs.push({ id: 'quote', ai: 2, text: 'exactly this — well put', quote: { ai: 5, text: 'You cannot convince me that a technology where I can type this into a text box and expect to get an interesting response is not, at some level, genuinely astonishing — even if you also worry about where it all goes.' }, likes: 19, reposts: 6, replies: 1, minsAgo: 10 })
   specs.push({ id: 'ext', ai: 4, text: 'good writeup', external: { uri: 'https://docs.bsky.app/blog', title: 'Building on the AT Protocol', description: 'A guide to client apps, feeds, and the firehose.', thumb: DEMO_IMG }, likes: 14, reposts: 3, replies: 1, minsAgo: 6 })
 
   // A 5-post thread rooted at t0 (tests collapsing + "+N" badge).
