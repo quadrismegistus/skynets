@@ -189,6 +189,10 @@ jQuery-UI + socket.io + vis-network.
    - Edges are **directional** (arrow child →(replied to)→ parent), trimmed to node rims;
      accounts you **don't follow** (reposts, pulled-in parents) render **dashed + dimmed**
      to distinguish context from your actual follows; nodes have extra collision spacing.
+   - Provenance so unfollowed content is never a mystery: a **repost** shows the
+     reposter's avatar tucked behind-and-left of the reposted node; a **pulled-in
+     reply-parent** is only shown while it's still attached to a post that's actually in
+     your feed (conversations with no primary post of your own are dropped).
 5. **Live + polish** ✅ (mostly) — **OAuth login**, **deployed** to GitHub Pages at
    ryanheuser.com/skynets/, **open-in-bsky.app** on double-click, and **60s live polling**
    that slides new posts into the graph (persisted toggle in the config popover). Still

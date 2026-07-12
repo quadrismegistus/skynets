@@ -118,6 +118,11 @@ test('connect-replies draws edges for small threads by default', async ({ page }
   expect(await page.locator('.edges line').count()).toBeGreaterThan(0)
 })
 
+test('a reposted node shows the reposter avatar', async ({ page }) => {
+  await graphReady(page)
+  expect(await page.locator('.reposter').count()).toBeGreaterThan(0)
+})
+
 test('non-followed authors are marked (dashed) and followed are not', async ({ page }) => {
   await graphReady(page)
   // Demo marks a couple of authors as not-followed; most are followed.

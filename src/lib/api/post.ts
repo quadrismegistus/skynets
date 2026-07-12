@@ -84,14 +84,21 @@ export function postQuote(item: FeedItem): QuotedPost | null {
   return null
 }
 
-/** Display name of the reposter, if this feed item is a repost. */
-export function reposter(item: FeedItem): string | undefined {
+/** The reposter's profile, if this feed item is a repost. */
+export function reposterProfile(
+  item: FeedItem,
+): { name: string; avatar?: string } | undefined {
   const reason = item.reason
   if (reason && reason.$type === 'app.bsky.feed.defs#reasonRepost') {
-    const by = reason.by as { displayName?: string; handle?: string }
-    return by.displayName || by.handle
+    const by = reason.by as { displayName?: string; handle?: string; avatar?: string }
+    return { name: by.displayName || by.handle || '', avatar: by.avatar }
   }
   return undefined
+}
+
+/** Display name of the reposter, if this feed item is a repost. */
+export function reposter(item: FeedItem): string | undefined {
+  return reposterProfile(item)?.name || undefined
 }
 
 export function authorName(item: FeedItem): string {

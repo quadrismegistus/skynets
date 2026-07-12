@@ -70,6 +70,19 @@ describe('buildGraph', () => {
     expect(nodes.some((n) => n.collapsedCount > 0)).toBe(false)
   })
 
+  it('drops conversations with no primary post (orphaned pulled-in parents)', () => {
+    const items = [
+      mkPost({ uri: 'at://parent' }),
+      mkPost({ uri: 'at://reply', parent: 'at://parent', root: 'at://parent' }),
+    ]
+    // No filter → both shown.
+    expect(buildGraph(items).nodes).toHaveLength(2)
+    // The reply is primary → its parent is kept, attached.
+    expect(buildGraph(items, new Set(), new Set(['at://reply'])).nodes).toHaveLength(2)
+    // Nothing primary → the whole (pulled-in-only) group is dropped.
+    expect(buildGraph(items, new Set(), new Set()).nodes).toHaveLength(0)
+  })
+
   it('caps an expanded thread to the root + MAX_THREAD_REPLIES loudest', () => {
     const root = 'at://x/root'
     const items = [mkPost({ uri: root })]

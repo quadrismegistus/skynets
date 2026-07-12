@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { GraphNode } from '../state/graph'
-  import { authorName } from '../api/post'
+  import { authorName, reposterProfile } from '../api/post'
 
   interface Props {
     node: GraphNode
@@ -33,6 +33,7 @@
   }: Props = $props()
 
   const avatar = $derived(node.item.post.author.avatar)
+  const repost = $derived(reposterProfile(node.item))
 
   function dismiss(e: MouseEvent) {
     e.stopPropagation()
@@ -51,6 +52,15 @@
   onmouseenter={() => onhover(node.uri)}
   onmouseleave={() => onhover(null)}
 >
+  {#if repost}
+    <span class="reposter" title="Reposted by {repost.name}">
+      {#if repost.avatar}
+        <img src={repost.avatar} alt="" />
+      {:else}
+        <span class="rp-initial">{repost.name.charAt(0).toUpperCase()}</span>
+      {/if}
+    </span>
+  {/if}
   <button
     class="node"
     class:replies={hasReplies}
@@ -136,6 +146,35 @@
     font-size: 0.7rem;
     z-index: 55;
     pointer-events: none;
+  }
+  /* Repost: the reposter tucked behind and to the left of the reposted post. */
+  .reposter {
+    position: absolute;
+    width: 52%;
+    height: 52%;
+    left: -34%;
+    top: 22%;
+    border-radius: 50%;
+    overflow: hidden;
+    border: 2px solid var(--bg);
+    background: var(--bg-elev);
+    z-index: 0;
+    display: grid;
+    place-items: center;
+  }
+  .reposter img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .rp-initial {
+    font-size: 0.6rem;
+    font-weight: 700;
+    color: var(--text-dim);
+  }
+  .node {
+    position: relative;
+    z-index: 1;
   }
   img {
     width: 100%;

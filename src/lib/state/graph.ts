@@ -205,7 +205,11 @@ interface Unit {
  * thread is positioned by its *latest* activity and *peak* engagement. Duplicate
  * posts (an original that also appears as a repost) collapse by uri first.
  */
-export function buildGraph(items: FeedItem[], expanded: ReadonlySet<string> = new Set()): Graph {
+export function buildGraph(
+  items: FeedItem[],
+  expanded: ReadonlySet<string> = new Set(),
+  primary?: ReadonlySet<string>,
+): Graph {
   // Dedup by post uri, keeping first occurrence.
   const byUri = new Map<string, FeedItem>()
   for (const item of items) {
@@ -249,6 +253,11 @@ export function buildGraph(items: FeedItem[], expanded: ReadonlySet<string> = ne
 
   const units: Unit[] = []
   for (const [rootUri, members] of groups) {
+    // Drop conversations that are pure pulled-in context (no primary post of
+    // your own / from your timeline) — so a fetched reply-parent never floats
+    // alone; it only appears attached to a post that's actually in your feed.
+    if (primary && !members.some((m) => primary.has(m.post.uri))) continue
+
     if (members.length === 1) {
       const it = members[0]
       units.push({

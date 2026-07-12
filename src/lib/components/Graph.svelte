@@ -54,13 +54,17 @@
 
   // Merge optimistically-posted items (our own new posts/replies) with the feed,
   // then drop dismissed ones. buildGraph dedupes by uri.
-  const allItems = $derived([...compose.injected, ...threads.posts, ...ancestors.posts, ...items])
+  // Primary sources (your feed, mapped threads, your own posts) come before the
+  // fetched reply-parents so a real post wins dedup and counts as "primary".
+  const primarySources = $derived([...compose.injected, ...threads.posts, ...items])
+  const allItems = $derived([...primarySources, ...ancestors.posts])
+  const primaryUris = $derived(new Set(primarySources.map((i) => i.post.uri)))
   const visible = $derived(
     allItems.filter(
       (i) => !read.isDismissed(i.post.uri) && (settings.showReposts || !reposter(i)),
     ),
   )
-  const graph = $derived(buildGraph(visible, expanded))
+  const graph = $derived(buildGraph(visible, expanded, primaryUris))
 
   const total = $derived(graph.nodes.length)
   const queued = $derived(total <= settings.nodeLimit ? 0 : total - settings.nodeLimit)
