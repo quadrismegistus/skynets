@@ -14,6 +14,8 @@
   } from '../api/post'
   import { segments } from '../api/richtext'
   import { interactions } from '../state/interactions.svelte'
+  import { follows } from '../state/follows.svelte'
+  import { session } from '../state/session.svelte'
 
   interface Props {
     item: FeedItem
@@ -62,6 +64,8 @@
   }
 
   let repostMenu = $state(false)
+  const isSelf = $derived(item.post.author.did === session.did)
+  const following = $derived(follows.following(item.post.author))
 
   const REPLY =
     'M12 4C6.9 4 3 7.2 3 11.2c0 2 1 3.9 2.7 5.2-.1 1.3-.7 2.6-1.7 3.6 1.6-.1 3.3-.7 4.6-1.6 1.1.3 2.2.5 3.4.5 5.1 0 9-3.2 9-7.3C21 7.2 17.1 4 12 4z'
@@ -89,6 +93,15 @@
       <span class="name">{authorName(item)}</span>
       <span class="handle">@{item.post.author.handle}</span>
     </div>
+    {#if !isSelf}
+      <button
+        class="follow"
+        class:following
+        onclick={() => follows.toggle(item.post.author)}
+      >
+        {following ? 'Following' : 'Follow'}
+      </button>
+    {/if}
     <span class="time" title={fullDate(item)}>{timeAgo(item)}</span>
   </div>
   <div class="text">
@@ -205,8 +218,11 @@
   .card {
     position: absolute;
     z-index: 100;
-    width: 300px;
-    max-width: 80vw;
+    width: 360px;
+    max-width: 84vw;
+    max-height: 72vh;
+    overflow-y: auto;
+    overflow-x: hidden;
     background: var(--bg-elev);
     border: 1px solid var(--border);
     border-radius: 12px;
@@ -223,6 +239,28 @@
     gap: 0.5rem;
     align-items: center;
     margin-bottom: 0.45rem;
+  }
+  .follow {
+    margin-left: auto;
+    align-self: center;
+    padding: 0.2rem 0.6rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-radius: 999px;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    white-space: nowrap;
+  }
+  .follow:hover {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+  }
+  .follow.following {
+    background: transparent;
+    color: var(--text-dim);
+    border-color: var(--border);
+    font-weight: 500;
   }
   .time {
     margin-left: auto;

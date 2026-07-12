@@ -171,7 +171,10 @@ jQuery-UI + socket.io + vis-network.
    it always fills the full x/y range; a gear **config popover** holds mode, count, and
    an opt-in auto-cycle (rotates the queued overflow through over time — replaced the
    awkward prominent play button); keyboard `R` load more, `N` next batch, `L` back to
-   top, `D` dismiss, `Esc` close.
+   top, `D` dismiss, `Esc` close. The popover also has **Live**, **Connect** (edge
+   replies), **Cluster** (force connected posts together, loosening the axes), and
+   **Reposts** on/off. Pinned posts keep their card open; the hover card is wider with a
+   height cap and carries a **Follow/Unfollow** button.
 4. **Threads** ✅ — a **"Map replies"** button in the hover card fetches the conversation
    via `getPostThread` and adds **only the loudest N replies** (capped, so a post with
    hundreds of replies can't flood the graph). Single-click instead **pins** a node

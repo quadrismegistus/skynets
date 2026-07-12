@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getTimeline, type FeedItem } from '../api/timeline'
-  import { bskyUrl } from '../api/post'
+  import { bskyUrl, reposter } from '../api/post'
   import {
     buildGraph,
     layoutPositions,
@@ -26,7 +26,7 @@
   const PAD_BOTTOM = 56
   const MIN_SIZE = 34
   const MAX_SIZE = 66
-  const CARD_W = 300
+  const CARD_W = 360
 
   let items = $state<FeedItem[]>([])
   let cursor = $state<string | undefined>(undefined)
@@ -53,7 +53,11 @@
   // Merge optimistically-posted items (our own new posts/replies) with the feed,
   // then drop dismissed ones. buildGraph dedupes by uri.
   const allItems = $derived([...compose.injected, ...threads.posts, ...ancestors.posts, ...items])
-  const visible = $derived(allItems.filter((i) => !read.isDismissed(i.post.uri)))
+  const visible = $derived(
+    allItems.filter(
+      (i) => !read.isDismissed(i.post.uri) && (settings.showReposts || !reposter(i)),
+    ),
+  )
   const graph = $derived(buildGraph(visible, expanded))
 
   const total = $derived(graph.nodes.length)
@@ -147,17 +151,29 @@
       .filter((l): l is NonNullable<typeof l> => l !== null),
   )
 
-  const hoveredCard = $derived.by(() => {
-    if (!hovered) return null
-    const p = placedByUri.get(hovered)
-    if (!p) return null
+  function cardPos(p: { px: number; py: number; size: number }) {
     let x = p.px + p.size / 2 + 12
     if (x + CARD_W > w) x = p.px - p.size / 2 - 12 - CARD_W
     if (x < 8) x = 8
     let y = p.py - p.size / 2
     if (y < 8) y = 8
     if (y > h - 180) y = h - 180
-    return { node: p.node, item: p.node.item, x, y }
+    return { x, y }
+  }
+
+  // A card is shown for the hovered post and for every pinned post (so a pinned
+  // post stays readable, not just its avatar). Deduped by uri.
+  const cards = $derived.by(() => {
+    const uris = new Set<string>(pinned)
+    if (hovered) uris.add(hovered)
+    const out: { node: GraphNode; x: number; y: number }[] = []
+    for (const uri of uris) {
+      const p = placedByUri.get(uri)
+      if (!p) continue
+      const { x, y } = cardPos(p)
+      out.push({ node: p.node, x, y })
+    }
+    return out
   })
 
   // ── force layout lifecycle ────────────────────────────────────────────────
@@ -175,7 +191,7 @@
   $effect(() => {
     const t = targets
     const links = visibleEdges.map((e) => ({ source: e.from, target: e.to }))
-    layout?.update(t, links, new Set(pinned))
+    layout?.update(t, links, new Set(pinned), settings.clusterForce)
   })
 
   // Connect replies: pull in the parents of any loaded reply we don't have yet
@@ -325,8 +341,10 @@
 <svelte:window onkeydown={onKey} />
 
 <div class="graph" bind:clientWidth={w} bind:clientHeight={h}>
-  <div class="axis y-axis">louder ↑ · ↓ quieter</div>
-  <div class="axis x-axis">← older · newer →</div>
+  {#if !settings.clusterForce}
+    <div class="axis y-axis">louder ↑ · ↓ quieter</div>
+    <div class="axis x-axis">← older · newer →</div>
+  {/if}
   <div class="axis legend"><span class="dot"></span> size = replies</div>
 
   <svg class="edges" width={w} height={h}>
@@ -351,20 +369,20 @@
     />
   {/each}
 
-  {#if hoveredCard}
+  {#each cards as c (c.node.uri)}
     <PostCard
-      item={hoveredCard.item}
-      x={hoveredCard.x}
-      y={hoveredCard.y}
-      canMapReplies={hoveredCard.node.isThreadRoot || (hoveredCard.item.post.replyCount ?? 0) > 0}
-      repliesMapped={repliesMapped(hoveredCard.item)}
+      item={c.node.item}
+      x={c.x}
+      y={c.y}
+      canMapReplies={c.node.isThreadRoot || (c.node.item.post.replyCount ?? 0) > 0}
+      repliesMapped={repliesMapped(c.node.item)}
       onreply={(it) => compose.openReply(it)}
       onquote={(it) => compose.openQuote(it)}
       onmapreplies={toggleMapReplies}
-      onkeep={() => setHovered(hoveredCard.item.post.uri)}
+      onkeep={() => setHovered(c.node.uri)}
       onleave={scheduleClear}
     />
-  {/if}
+  {/each}
 
   {#if items.length === 0 && !loading}
     <div class="empty">{error ?? 'No posts.'}</div>
@@ -437,6 +455,20 @@
           <span class="val"></span>
         </div>
         <p class="hint">Bring in the posts replies are replying to, drawing edges.</p>
+
+        <div class="row">
+          <span class="label">Cluster</span>
+          <input type="checkbox" bind:checked={settings.clusterForce} />
+          <span class="val"></span>
+        </div>
+        <p class="hint">Let connected posts pull together, loosening the time/engagement axes.</p>
+
+        <div class="row">
+          <span class="label">Reposts</span>
+          <input type="checkbox" bind:checked={settings.showReposts} />
+          <span class="val"></span>
+        </div>
+        <p class="hint">Include reposts from people you follow.</p>
       </div>
     {/if}
   </div>

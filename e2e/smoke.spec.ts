@@ -118,10 +118,14 @@ test('connect-replies draws edges for small threads by default', async ({ page }
   expect(await page.locator('.edges line').count()).toBeGreaterThan(0)
 })
 
-test('single-click pins a node', async ({ page }) => {
+test('single-click pins a node and keeps its card shown', async ({ page }) => {
   await graphReady(page)
   await page.locator('.wrap').first().click()
   await expect(page.locator('.wrap.pinned')).toHaveCount(1)
+  // Move the pointer away; the pinned post's card stays displayed.
+  await page.mouse.move(5, 5)
+  await page.waitForTimeout(400)
+  await expect(page.locator('.card')).toHaveCount(1)
 })
 
 test('Map replies expands a thread with edges', async ({ page }) => {
@@ -133,6 +137,26 @@ test('Map replies expands a thread with edges', async ({ page }) => {
   await page.locator('.map-replies').click()
   await page.waitForTimeout(800)
   expect(await page.locator('.edges line').count()).toBeGreaterThan(0)
+})
+
+test('follow button toggles on the card', async ({ page }) => {
+  await graphReady(page)
+  await page.locator('.wrap').first().hover()
+  await page.locator('.card').waitFor()
+  await page.locator('.card').hover()
+  const follow = page.locator('.card .follow').first()
+  await follow.waitFor()
+  const before = (await follow.textContent())!.trim()
+  await follow.click()
+  await expect(follow).not.toHaveText(before)
+})
+
+test('cluster mode hides the semantic axes', async ({ page }) => {
+  await graphReady(page)
+  await page.locator('.gear').click()
+  await page.locator('.config .row', { hasText: 'Cluster' }).locator('input').check()
+  await expect(page.locator('.x-axis')).toHaveCount(0)
+  expect(await page.locator('button.node').count()).toBeGreaterThan(0)
 })
 
 test('help dialog opens and closes', async ({ page }) => {

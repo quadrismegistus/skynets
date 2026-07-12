@@ -9,6 +9,8 @@ interface Persisted {
   cycleInterval: number
   livePoll: boolean
   connectReplies: boolean
+  clusterForce: boolean
+  showReposts: boolean
 }
 
 function load(): Partial<Persisted> {
@@ -32,6 +34,8 @@ class Settings {
   cycleInterval = $state(4)
   livePoll = $state(true)
   connectReplies = $state(true)
+  clusterForce = $state(false)
+  showReposts = $state(true)
 
   constructor() {
     const p = load()
@@ -43,6 +47,8 @@ class Settings {
     if (typeof p.cycleInterval === 'number') this.cycleInterval = p.cycleInterval
     if (typeof p.livePoll === 'boolean') this.livePoll = p.livePoll
     if (typeof p.connectReplies === 'boolean') this.connectReplies = p.connectReplies
+    if (typeof p.clusterForce === 'boolean') this.clusterForce = p.clusterForce
+    if (typeof p.showReposts === 'boolean') this.showReposts = p.showReposts
 
     if (typeof localStorage !== 'undefined') {
       $effect.root(() => {
@@ -54,6 +60,8 @@ class Settings {
             cycleInterval: this.cycleInterval,
             livePoll: this.livePoll,
             connectReplies: this.connectReplies,
+            clusterForce: this.clusterForce,
+            showReposts: this.showReposts,
           }
           localStorage.setItem(KEY, JSON.stringify(data))
         })

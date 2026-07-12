@@ -1,9 +1,12 @@
 import {
   forceCollide,
   forceLink,
+  forceManyBody,
   forceSimulation,
   forceX,
   forceY,
+  type ForceX,
+  type ForceY,
   type Simulation,
   type SimulationNodeDatum,
 } from 'd3-force'
@@ -58,7 +61,12 @@ export class ForceLayout {
    * their target so they ease outward rather than flying in from origin; dropped
    * nodes are removed. Then the sim gently reheats.
    */
-  update(targets: Target[], links: SimLink[], pinned: ReadonlySet<string> = new Set()) {
+  update(
+    targets: Target[],
+    links: SimLink[],
+    pinned: ReadonlySet<string> = new Set(),
+    cluster = false,
+  ) {
     const next: SimNode[] = []
     const nextById = new Map<string, SimNode>()
     for (const t of targets) {
@@ -88,13 +96,20 @@ export class ForceLayout {
       .map((l) => ({ source: l.source, target: l.target }))
 
     this.sim.nodes(this.#nodes)
+
+    // Cluster mode: loosen the semantic anchoring and let strong links + charge
+    // pull connected posts together. Default (strict) mode keeps positions
+    // tightly on the recency × engagement axes with only a whisper of link pull.
+    ;(this.sim.force('x') as ForceX<SimNode>).strength(cluster ? 0.03 : 0.08)
+    ;(this.sim.force('y') as ForceY<SimNode>).strength(cluster ? 0.03 : 0.08)
     this.sim.force(
       'link',
       forceLink<SimNode, SimLink>(safeLinks)
         .id((d) => d.id)
-        .distance(70)
-        .strength(0.05),
+        .distance(cluster ? 46 : 70)
+        .strength(cluster ? 0.5 : 0.05),
     )
+    this.sim.force('charge', cluster ? forceManyBody<SimNode>().strength(-24) : null)
     this.sim.alpha(0.7).restart()
   }
 

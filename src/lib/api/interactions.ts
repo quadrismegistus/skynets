@@ -22,3 +22,14 @@ export async function unrepostPost(repostUri: string): Promise<void> {
   if (isDemo()) return
   await getAgent().deleteRepost(repostUri)
 }
+
+/** Follow an account; returns the follow record uri (needed to unfollow later). */
+export async function followUser(did: string): Promise<{ uri: string }> {
+  if (isDemo()) return { uri: `at://demo/follow/${Date.now()}` }
+  return getAgent().follow(did)
+}
+
+export async function unfollowUser(followUri: string): Promise<void> {
+  if (isDemo()) return
+  await getAgent().deleteFollow(followUri)
+}
