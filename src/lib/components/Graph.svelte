@@ -4,6 +4,7 @@
   import {
     buildGraph,
     layoutPositions,
+    rootUriOf,
     selectVisible,
     threadDescendants,
     type GraphNode,
@@ -43,8 +44,9 @@
   // Live node positions, written by the simulation each tick.
   let positions = $state<Map<string, { x: number; y: number }>>(new Map())
 
-  // Threads the user has unspooled (by thread root uri).
+  // Threads the user has mapped in (by thread root uri), and pinned nodes (by uri).
   const expanded = new SvelteSet<string>()
+  const pinned = new SvelteSet<string>()
 
   // Merge optimistically-posted items (our own new posts/replies) with the feed,
   // then drop dismissed ones. buildGraph dedupes by uri.
@@ -55,11 +57,21 @@
   const total = $derived(graph.nodes.length)
   const queued = $derived(total <= settings.nodeLimit ? 0 : total - settings.nodeLimit)
 
-  // Which nodes to show (top/recent/mix), then their layout computed over just
-  // this set so they always fill the full x/y range.
-  const visibleNodes = $derived(
-    selectVisible(graph.nodes, settings.selectMode, settings.nodeLimit, turnoverOffset, expanded),
-  )
+  // Which nodes to show (top/recent/mix), plus any pinned nodes (always shown),
+  // then their layout computed over just this set so they fill the full x/y range.
+  const visibleNodes = $derived.by(() => {
+    const selected = selectVisible(
+      graph.nodes,
+      settings.selectMode,
+      settings.nodeLimit,
+      turnoverOffset,
+      expanded,
+    )
+    if (!pinned.size) return selected
+    const set = new Map(selected.map((n) => [n.uri, n]))
+    for (const n of graph.nodes) if (pinned.has(n.uri) && !set.has(n.uri)) set.set(n.uri, n)
+    return [...set.values()]
+  })
   const nodeLayout = $derived(layoutPositions(visibleNodes))
 
   const visibleUris = $derived(new Set(visibleNodes.map((n) => n.uri)))
@@ -126,7 +138,7 @@
     let y = p.py - p.size / 2
     if (y < 8) y = 8
     if (y > h - 180) y = h - 180
-    return { item: p.node.item, x, y }
+    return { node: p.node, item: p.node.item, x, y }
   })
 
   // ── force layout lifecycle ────────────────────────────────────────────────
@@ -139,11 +151,12 @@
     return () => l.stop()
   })
 
-  // Reheat whenever targets or links change (new data, resize, dismissal, turnover).
+  // Reheat whenever targets or links change (new data, resize, dismissal, turnover),
+  // or when the pinned set changes (pinned nodes get fixed positions).
   $effect(() => {
     const t = targets
     const links = visibleEdges.map((e) => ({ source: e.from, target: e.to }))
-    layout?.update(t, links)
+    layout?.update(t, links, new Set(pinned))
   })
 
   // Keep the graph full: when the queue runs dry (fewer posts loaded than the
@@ -206,14 +219,23 @@
     window.open(bskyUrl(node.item), '_blank', 'noopener')
   }
 
-  function toggleThread(node: GraphNode) {
-    if (expanded.has(node.rootUri)) {
-      expanded.delete(node.rootUri)
+  function togglePin(node: GraphNode) {
+    if (pinned.has(node.uri)) pinned.delete(node.uri)
+    else pinned.add(node.uri)
+  }
+
+  /** Map (or un-map) a post's replies: reveal its thread, capped to the loudest. */
+  function toggleMapReplies(item: FeedItem) {
+    const root = rootUriOf(item)
+    if (expanded.has(root)) {
+      expanded.delete(root)
     } else {
-      expanded.add(node.rootUri)
-      // Pull the full conversation so replies not in the timeline appear too.
-      threads.ensure(node.rootUri)
+      expanded.add(root)
+      threads.ensure(root) // pull replies not already in the timeline
     }
+  }
+  function repliesMapped(item: FeedItem): boolean {
+    return expanded.has(rootUriOf(item))
   }
 
   function dismiss(uri: string) {
@@ -224,14 +246,12 @@
     if (hovered && all.includes(hovered)) hovered = null
   }
 
-  // Distinguish single click (expand/collapse a thread) from double click
-  // (open on bsky.app): a lone click waits ~220ms for a possible double.
+  // Distinguish single click (pin the node) from double click (open on bsky.app):
+  // a lone click waits ~220ms for a possible double.
   let clickTimer: ReturnType<typeof setTimeout> | undefined
   function onNodeClick(node: GraphNode) {
     clearTimeout(clickTimer)
-    clickTimer = setTimeout(() => {
-      if (node.isThreadRoot) toggleThread(node)
-    }, 220)
+    clickTimer = setTimeout(() => togglePin(node), 220)
   }
   function onNodeDblClick(node: GraphNode) {
     clearTimeout(clickTimer)
@@ -290,6 +310,7 @@
       size={p.size}
       hasReplies={(edgeCount.get(p.node.uri) ?? 0) > 0}
       active={hovered === p.node.uri}
+      pinned={pinned.has(p.node.uri)}
       onhover={(uri) => (uri ? setHovered(uri) : scheduleClear())}
       onclick={onNodeClick}
       ondblclick={onNodeDblClick}
@@ -302,8 +323,11 @@
       item={hoveredCard.item}
       x={hoveredCard.x}
       y={hoveredCard.y}
+      canMapReplies={hoveredCard.node.isThreadRoot || (hoveredCard.item.post.replyCount ?? 0) > 0}
+      repliesMapped={repliesMapped(hoveredCard.item)}
       onreply={(it) => compose.openReply(it)}
       onquote={(it) => compose.openQuote(it)}
+      onmapreplies={toggleMapReplies}
       onkeep={() => setHovered(hoveredCard.item.post.uri)}
       onleave={scheduleClear}
     />

@@ -10,13 +10,25 @@
     size: number
     hasReplies: boolean
     active: boolean
+    pinned: boolean
     onhover: (uri: string | null) => void
     onclick: (node: GraphNode) => void
     ondblclick: (node: GraphNode) => void
     ondismiss: (uri: string) => void
   }
-  let { node, px, py, size, hasReplies, active, onhover, onclick, ondblclick, ondismiss }: Props =
-    $props()
+  let {
+    node,
+    px,
+    py,
+    size,
+    hasReplies,
+    active,
+    pinned,
+    onhover,
+    onclick,
+    ondblclick,
+    ondismiss,
+  }: Props = $props()
 
   const avatar = $derived(node.item.post.author.avatar)
 
@@ -29,6 +41,7 @@
 <div
   class="wrap"
   class:active
+  class:pinned
   class:thread={node.isThreadRoot}
   style="left: {px}px; top: {py}px; width: {size}px; height: {size}px;"
   role="group"
@@ -48,6 +61,10 @@
       <span class="initial">{authorName(node.item).charAt(0).toUpperCase()}</span>
     {/if}
   </button>
+
+  {#if pinned}
+    <span class="pin" aria-hidden="true">📌</span>
+  {/if}
 
   {#if node.collapsedCount > 0}
     <span class="badge" title="{node.collapsedCount} more in thread — click to expand"
@@ -96,6 +113,18 @@
   .wrap.active .node {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.35);
+  }
+  .wrap.pinned .node {
+    border-color: #e0a838;
+    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px #e0a838;
+  }
+  .pin {
+    position: absolute;
+    top: -8px;
+    left: -6px;
+    font-size: 0.7rem;
+    z-index: 55;
+    pointer-events: none;
   }
   img {
     width: 100%;

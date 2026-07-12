@@ -112,6 +112,23 @@ test('composing with an image attaches and posts', async ({ page }) => {
   await expect(page.locator('.modal')).toHaveCount(0)
 })
 
+test('single-click pins a node', async ({ page }) => {
+  await graphReady(page)
+  await page.locator('.wrap').first().click()
+  await expect(page.locator('.wrap.pinned')).toHaveCount(1)
+})
+
+test('Map replies expands a thread with edges', async ({ page }) => {
+  await graphReady(page)
+  const thread = page.locator('.wrap.thread').first()
+  await thread.hover()
+  await page.locator('.card').waitFor()
+  await page.locator('.card').hover()
+  await page.locator('.map-replies').click()
+  await page.waitForTimeout(800)
+  expect(await page.locator('.edges line').count()).toBeGreaterThan(0)
+})
+
 test('help dialog opens and closes', async ({ page }) => {
   await graphReady(page)
   await page.locator('.help').click()

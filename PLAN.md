@@ -172,9 +172,11 @@ jQuery-UI + socket.io + vis-network.
    an opt-in auto-cycle (rotates the queued overflow through over time — replaced the
    awkward prominent play button); keyboard `R` load more, `N` next batch, `L` back to
    top, `D` dismiss, `Esc` close.
-4. **Threads** ✅ (core) — expanding a collapsed thread now calls `getPostThread` to pull
-   in the full conversation (replies not in the timeline), flattened and merged into the
-   graph. Still could add: read/unread styling and richer reply-count badges.
+4. **Threads** ✅ — a **"Map replies"** button in the hover card fetches the conversation
+   via `getPostThread` and adds **only the loudest N replies** (capped, so a post with
+   hundreds of replies can't flood the graph). Single-click instead **pins** a node
+   (fixes its position + keeps it on the map, immune to turnover/limit); double-click
+   opens on bsky.app.
 5. **Live + polish** ✅ (mostly) — **OAuth login**, **deployed** to GitHub Pages at
    ryanheuser.com/skynets/, **open-in-bsky.app** on double-click, and **60s live polling**
    that slides new posts into the graph (persisted toggle in the config popover). Still

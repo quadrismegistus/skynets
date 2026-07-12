@@ -58,7 +58,7 @@ export class ForceLayout {
    * their target so they ease outward rather than flying in from origin; dropped
    * nodes are removed. Then the sim gently reheats.
    */
-  update(targets: Target[], links: SimLink[]) {
+  update(targets: Target[], links: SimLink[], pinned: ReadonlySet<string> = new Set()) {
     const next: SimNode[] = []
     const nextById = new Map<string, SimNode>()
     for (const t of targets) {
@@ -67,6 +67,14 @@ export class ForceLayout {
       node.tx = t.tx
       node.ty = t.ty
       node.r = t.r
+      // Pinned nodes are fixed at their current position (fx/fy); others are free.
+      if (pinned.has(t.id)) {
+        node.fx = node.x ?? t.tx
+        node.fy = node.y ?? t.ty
+      } else {
+        node.fx = null
+        node.fy = null
+      }
       next.push(node)
       nextById.set(t.id, node)
     }

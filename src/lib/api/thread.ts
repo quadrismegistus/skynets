@@ -25,6 +25,6 @@ export function flattenThread(root: unknown): FeedItem[] {
  */
 export async function fetchThread(uri: string): Promise<FeedItem[]> {
   if (isDemo()) return []
-  const res = await getAgent().getPostThread({ uri, depth: 20, parentHeight: 0 })
+  const res = await getAgent().getPostThread({ uri, depth: 6, parentHeight: 0 })
   return flattenThread(res.data.thread)
 }

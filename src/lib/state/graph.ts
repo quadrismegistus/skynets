@@ -174,11 +174,14 @@ export function threadDescendants(items: FeedItem[], uri: string): string[] {
 }
 
 /** The thread root uri this item belongs to (its own uri if not a reply). */
-function rootUriOf(item: FeedItem): string {
+export function rootUriOf(item: FeedItem): string {
   const rec = item.post.record
   if (AppBskyFeedPost.isRecord(rec) && rec.reply) return rec.reply.root.uri
   return item.post.uri
 }
+
+/** When a thread is expanded, show at most this many replies (the loudest). */
+export const MAX_THREAD_REPLIES = 10
 
 /** One layout unit — either a standalone post or a collapsed thread. */
 interface Unit {
@@ -237,14 +240,21 @@ export function buildGraph(items: FeedItem[], expanded: ReadonlySet<string> = ne
       members.reduce((a, b) => (timestampOf(a) <= timestampOf(b) ? a : b))
 
     if (expanded.has(rootUri)) {
-      for (const m of members) {
+      // Show the root + only the loudest replies, so a huge thread can't flood
+      // the graph. The rep keeps a "+N" badge for any replies beyond the cap.
+      const others = members
+        .filter((m) => m !== rep)
+        .sort((a, b) => postScore(b) - postScore(a))
+      const shown = others.slice(0, MAX_THREAD_REPLIES)
+      const hidden = others.length - shown.length
+      for (const m of [rep, ...shown]) {
         units.push({
           item: m,
           score: postScore(m),
           timestamp: timestampOf(m),
           rootUri,
           isThreadRoot: m === rep,
-          collapsedCount: 0,
+          collapsedCount: m === rep ? hidden : 0,
         })
       }
     } else {

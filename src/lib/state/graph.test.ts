@@ -3,6 +3,7 @@ import { mkPost } from '../testing'
 import {
   buildGraph,
   layoutPositions,
+  MAX_THREAD_REPLIES,
   selectVisible,
   threadDescendants,
   type GraphNode,
@@ -42,6 +43,19 @@ describe('buildGraph', () => {
     const { nodes, edges } = buildGraph(items, new Set([root]))
     expect(nodes).toHaveLength(3)
     expect(edges).toHaveLength(2)
+  })
+
+  it('caps an expanded thread to the root + MAX_THREAD_REPLIES loudest', () => {
+    const root = 'at://x/root'
+    const items = [mkPost({ uri: root })]
+    for (let i = 0; i < 15; i++) {
+      items.push(mkPost({ uri: `at://x/r${i}`, parent: root, root, likes: i }))
+    }
+    const { nodes } = buildGraph(items, new Set([root]))
+    // root + 10 replies = 11 shown; the rep badges the 5 hidden.
+    expect(nodes).toHaveLength(1 + MAX_THREAD_REPLIES)
+    const rep = nodes.find((n) => n.isThreadRoot)!
+    expect(rep.collapsedCount).toBe(15 - MAX_THREAD_REPLIES)
   })
 
   it('positions a collapsed thread by peak engagement + latest activity', () => {

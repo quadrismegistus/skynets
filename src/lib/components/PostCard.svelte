@@ -20,12 +20,26 @@
     /** Top-left position in container px. */
     x: number
     y: number
+    canMapReplies: boolean
+    repliesMapped: boolean
     onreply: (item: FeedItem) => void
     onquote: (item: FeedItem) => void
+    onmapreplies: (item: FeedItem) => void
     onkeep: () => void
     onleave: () => void
   }
-  let { item, x, y, onreply, onquote, onkeep, onleave }: Props = $props()
+  let {
+    item,
+    x,
+    y,
+    canMapReplies,
+    repliesMapped,
+    onreply,
+    onquote,
+    onmapreplies,
+    onkeep,
+    onleave,
+  }: Props = $props()
 
   const rt = $derived(reposter(item))
   const liked = $derived(interactions.liked(item))
@@ -179,6 +193,12 @@
       <span>{interactions.likeCount(item)}</span>
     </button>
   </div>
+
+  {#if canMapReplies}
+    <button class="map-replies" class:on={repliesMapped} onclick={() => onmapreplies(item)}>
+      {repliesMapped ? 'Hide replies' : `Map replies${item.post.replyCount ? ` (${item.post.replyCount})` : ''}`}
+    </button>
+  {/if}
 </div>
 
 <style>
@@ -351,6 +371,21 @@
   .actions {
     display: flex;
     gap: 0.5rem;
+  }
+  .map-replies {
+    width: 100%;
+    margin-top: 0.5rem;
+    font-size: 0.8rem;
+    padding: 0.4rem;
+    color: var(--text-dim);
+  }
+  .map-replies:hover {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+  .map-replies.on {
+    border-color: var(--accent);
+    color: var(--accent);
   }
   .repost-wrap {
     position: relative;
