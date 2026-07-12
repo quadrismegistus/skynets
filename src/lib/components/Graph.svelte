@@ -17,6 +17,8 @@
   import { compose } from '../state/compose.svelte'
   import { threads } from '../state/threads.svelte'
   import { ancestors } from '../state/ancestors.svelte'
+  import { follows } from '../state/follows.svelte'
+  import { session } from '../state/session.svelte'
   import { SvelteSet } from 'svelte/reactivity'
   import PostNode from './PostNode.svelte'
   import PostCard from './PostCard.svelte'
@@ -140,13 +142,26 @@
 
   const placedByUri = $derived(new Map(placed.map((p) => [p.node.uri, p])))
 
+  // Edges go child (reply) → parent, trimmed to each node's rim and leaving a
+  // gap at the parent end for the arrowhead.
   const edgeLines = $derived.by(() =>
     visibleEdges
       .map((e) => {
-        const a = placedByUri.get(e.from)
-        const b = placedByUri.get(e.to)
+        const a = placedByUri.get(e.from) // reply
+        const b = placedByUri.get(e.to) // parent
         if (!a || !b) return null
-        return { id: e.id, x1: a.px, y1: a.py, x2: b.px, y2: b.py }
+        const dx = b.px - a.px
+        const dy = b.py - a.py
+        const len = Math.hypot(dx, dy) || 1
+        const ux = dx / len
+        const uy = dy / len
+        return {
+          id: e.id,
+          x1: a.px + ux * (a.size / 2),
+          y1: a.py + uy * (a.size / 2),
+          x2: b.px - ux * (b.size / 2 + 7),
+          y2: b.py - uy * (b.size / 2 + 7),
+        }
       })
       .filter((l): l is NonNullable<typeof l> => l !== null),
   )
@@ -347,8 +362,27 @@
   <div class="axis legend"><span class="dot"></span> size = replies</div>
 
   <svg class="edges" width={w} height={h}>
+    <defs>
+      <marker
+        id="reply-arrow"
+        viewBox="0 0 10 10"
+        refX="8"
+        refY="5"
+        markerWidth="6"
+        markerHeight="6"
+        orient="auto-start-reverse"
+      >
+        <path d="M0,0 L10,5 L0,10 z" />
+      </marker>
+    </defs>
     {#each edgeLines as line (line.id)}
-      <line x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2} />
+      <line
+        x1={line.x1}
+        y1={line.y1}
+        x2={line.x2}
+        y2={line.y2}
+        marker-end="url(#reply-arrow)"
+      />
     {/each}
   </svg>
 
@@ -361,6 +395,8 @@
       hasReplies={(edgeCount.get(p.node.uri) ?? 0) > 0}
       active={hovered === p.node.uri}
       pinned={pinned.has(p.node.uri)}
+      unfollowed={p.node.item.post.author.did !== session.did &&
+        !follows.following(p.node.item.post.author)}
       onhover={(uri) => (uri ? setHovered(uri) : scheduleClear())}
       onclick={onNodeClick}
       ondblclick={onNodeDblClick}
@@ -499,8 +535,13 @@
     pointer-events: none;
   }
   .edges line {
-    stroke: var(--border);
-    stroke-width: 1.5;
+    stroke: var(--text-dim);
+    stroke-width: 1.6;
+    opacity: 0.65;
+  }
+  .edges marker path {
+    fill: var(--text-dim);
+    opacity: 0.9;
   }
   .axis {
     position: absolute;

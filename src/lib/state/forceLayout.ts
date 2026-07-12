@@ -50,7 +50,7 @@ export class ForceLayout {
       .velocityDecay(0.5) // friction
       .force('x', forceX<SimNode>((d) => d.tx).strength(0.08))
       .force('y', forceY<SimNode>((d) => d.ty).strength(0.08))
-      .force('collide', forceCollide<SimNode>((d) => d.r + 3).strength(0.85))
+      .force('collide', forceCollide<SimNode>((d) => d.r + 9).strength(0.9))
       .on('tick', onTick)
     this.sim.stop()
   }

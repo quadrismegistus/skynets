@@ -11,6 +11,7 @@
     hasReplies: boolean
     active: boolean
     pinned: boolean
+    unfollowed: boolean
     onhover: (uri: string | null) => void
     onclick: (node: GraphNode) => void
     ondblclick: (node: GraphNode) => void
@@ -24,6 +25,7 @@
     hasReplies,
     active,
     pinned,
+    unfollowed,
     onhover,
     onclick,
     ondblclick,
@@ -42,6 +44,7 @@
   class="wrap"
   class:active
   class:pinned
+  class:unfollowed
   class:thread={node.isThreadRoot}
   style="left: {px}px; top: {py}px; width: {size}px; height: {size}px;"
   role="group"
@@ -117,6 +120,14 @@
   .wrap.pinned .node {
     border-color: #e0a838;
     box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px #e0a838;
+  }
+  /* Accounts you don't follow (reposts, pulled-in reply parents): dashed + dimmed. */
+  .wrap.unfollowed .node {
+    border-style: dashed;
+  }
+  .wrap.unfollowed img,
+  .wrap.unfollowed .initial {
+    opacity: 0.5;
   }
   .pin {
     position: absolute;

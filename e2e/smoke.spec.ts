@@ -118,6 +118,13 @@ test('connect-replies draws edges for small threads by default', async ({ page }
   expect(await page.locator('.edges line').count()).toBeGreaterThan(0)
 })
 
+test('non-followed authors are marked (dashed) and followed are not', async ({ page }) => {
+  await graphReady(page)
+  // Demo marks a couple of authors as not-followed; most are followed.
+  expect(await page.locator('.wrap.unfollowed').count()).toBeGreaterThan(0)
+  expect(await page.locator('.wrap:not(.unfollowed)').count()).toBeGreaterThan(0)
+})
+
 test('single-click pins a node and keeps its card shown', async ({ page }) => {
   await graphReady(page)
   await page.locator('.wrap').first().click()

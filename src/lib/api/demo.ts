@@ -16,6 +16,9 @@ const AUTHORS = [
 
 const BASE = Date.parse('2026-07-12T15:00:00Z')
 
+// Demo: pretend you don't follow these authors (so their nodes render dashed).
+const NOT_FOLLOWED = new Set([4, 5])
+
 interface Spec {
   id: string
   ai: number
@@ -68,7 +71,12 @@ function make(s: Spec): FeedItem {
     post: {
       uri,
       cid: `cid-${s.id}`,
-      author: { did: `did:plc:${handle}`, handle, displayName },
+      author: {
+        did: `did:plc:${handle}`,
+        handle,
+        displayName,
+        viewer: NOT_FOLLOWED.has(s.ai) ? {} : { following: `at://self/app.bsky.graph.follow/${handle}` },
+      },
       record,
       replyCount: s.replies,
       repostCount: s.reposts,

@@ -186,6 +186,9 @@ jQuery-UI + socket.io + vis-network.
      reply that would look standalone is drawn linked to what it's replying to. Big
      threads still collapse. Dismissing never re-fetches a dismissed post as a parent,
      but does **not** mute future replies (thread-muting would be a separate action).
+   - Edges are **directional** (arrow child →(replied to)→ parent), trimmed to node rims;
+     accounts you **don't follow** (reposts, pulled-in parents) render **dashed + dimmed**
+     to distinguish context from your actual follows; nodes have extra collision spacing.
 5. **Live + polish** ✅ (mostly) — **OAuth login**, **deployed** to GitHub Pages at
    ryanheuser.com/skynets/, **open-in-bsky.app** on double-click, and **60s live polling**
    that slides new posts into the graph (persisted toggle in the config popover). Still
