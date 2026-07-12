@@ -155,9 +155,8 @@
     let x = p.px + p.size / 2 + 12
     if (x + CARD_W > w) x = p.px - p.size / 2 - 12 - CARD_W
     if (x < 8) x = 8
-    let y = p.py - p.size / 2
-    if (y < 8) y = 8
-    if (y > h - 180) y = h - 180
+    // y is just an anchor; the card clamps its own top by its measured height.
+    const y = Math.max(8, p.py - p.size / 2)
     return { x, y }
   }
 
@@ -374,6 +373,7 @@
       item={c.node.item}
       x={c.x}
       y={c.y}
+      boundsH={h}
       canMapReplies={c.node.isThreadRoot || (c.node.item.post.replyCount ?? 0) > 0}
       repliesMapped={repliesMapped(c.node.item)}
       onreply={(it) => compose.openReply(it)}

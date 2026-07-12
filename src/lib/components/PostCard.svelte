@@ -19,9 +19,11 @@
 
   interface Props {
     item: FeedItem
-    /** Top-left position in container px. */
+    /** Anchor position (top-left) in container px. */
     x: number
     y: number
+    /** Container height, so a tall card can be kept from clipping off the bottom. */
+    boundsH: number
     canMapReplies: boolean
     repliesMapped: boolean
     onreply: (item: FeedItem) => void
@@ -34,6 +36,7 @@
     item,
     x,
     y,
+    boundsH,
     canMapReplies,
     repliesMapped,
     onreply,
@@ -42,6 +45,11 @@
     onkeep,
     onleave,
   }: Props = $props()
+
+  // Keep the card fully on screen: shift its top up if its measured height would
+  // run off the bottom of the container.
+  let cardH = $state(0)
+  const top = $derived(Math.max(8, Math.min(y, boundsH - cardH - 8)))
 
   const rt = $derived(reposter(item))
   const liked = $derived(interactions.liked(item))
@@ -78,7 +86,8 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="card"
-  style="left: {x}px; top: {y}px;"
+  style="left: {x}px; top: {top}px;"
+  bind:clientHeight={cardH}
   onmouseenter={onkeep}
   onmouseleave={onleave}
 >

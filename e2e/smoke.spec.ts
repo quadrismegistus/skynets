@@ -159,6 +159,30 @@ test('cluster mode hides the semantic axes', async ({ page }) => {
   expect(await page.locator('button.node').count()).toBeGreaterThan(0)
 })
 
+test('a card near the bottom is not clipped', async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 500 })
+  await graphReady(page)
+  // Hover the lowest node on screen — the worst case for bottom clipping.
+  const idx = await page.evaluate(() => {
+    const wraps = [...document.querySelectorAll('.wrap')]
+    let best = 0
+    let bestTop = -Infinity
+    wraps.forEach((w, i) => {
+      const top = w.getBoundingClientRect().top
+      if (top > bestTop) {
+        bestTop = top
+        best = i
+      }
+    })
+    return best
+  })
+  await page.locator('.wrap').nth(idx).hover({ force: true })
+  await page.locator('.card').waitFor()
+  await page.waitForTimeout(200)
+  const box = (await page.locator('.card').boundingBox())!
+  expect(box.y + box.height).toBeLessThanOrEqual(502)
+})
+
 test('help dialog opens and closes', async ({ page }) => {
   await graphReady(page)
   await page.locator('.help').click()
