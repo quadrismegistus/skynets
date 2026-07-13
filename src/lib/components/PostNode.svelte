@@ -61,10 +61,12 @@
     const up = () => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
       if (dragMoved) ondragend(node.uri)
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
   }
 </script>
 
@@ -83,7 +85,7 @@
   {#if repost}
     <span class="reposter" title="Reposted by {repost.name}">
       {#if repost.avatar}
-        <img src={repost.avatar} alt="" />
+        <img src={repost.avatar} alt="" draggable="false" />
       {:else}
         <span class="rp-initial">{repost.name.charAt(0).toUpperCase()}</span>
       {/if}
@@ -97,7 +99,7 @@
     ondblclick={() => !dragMoved && ondblclick(node)}
   >
     {#if avatar}
-      <img src={avatar} alt={authorName(node.item)} />
+      <img src={avatar} alt={authorName(node.item)} draggable="false" />
     {:else}
       <span class="initial">{authorName(node.item).charAt(0).toUpperCase()}</span>
     {/if}
@@ -199,6 +201,8 @@
     height: 100%;
     object-fit: cover;
     display: block;
+    -webkit-user-drag: none; /* belt-and-braces with draggable=false */
+    user-select: none;
   }
   .initial {
     font-weight: 700;
