@@ -247,26 +247,46 @@ and E-minimal can actually ship first (see ordering note at the end).
 
 Persist every timeline post locally so nothing is lost between sessions.
 
-1. **Schema decision (do this first, it's load-bearing):** what is a record? Proposal:
-   one row per *feed item* (post uri + optional repost attribution), storing the raw
-   `FeedViewPost` JSON plus `firstSeen`/`lastSeen` timestamps, keyed per user DID.
-   Decide explicitly whether to keep: engagement-count snapshots over time (enables
-   velocity history; costs writes), deletions (timeline backfill can't see them;
-   Jetstream can), and follows-list snapshots.
+1. **Schema — normalized, three tables (this is the load-bearing decision).** A single
+   post reaches you many times (reposted by several follows, plus pulled in as thread
+   context); storing the whole `FeedViewPost` JSON per encounter duplicates the content
+   and, because engagement counts live *inside* that JSON, forces a bad either/or —
+   freeze counts at `firstSeen` (no velocity history, stale queries) or overwrite (lose
+   the snapshot). So separate the layers, all keyed per user DID:
+   - **`posts`** — one row per post URI: the content (record text, embeds, author),
+     `firstSeen`/`lastSeen`.
+   - **`appearances`** — one row per *event* that surfaced a post: `(uri, kind:
+     timeline|repost|context, reposterDid?, seenAt)`. This is the feed-item layer; it
+     references `posts`, never re-stores it.
+   - **`counts`** *(only if we want velocity history)* — samples `(uri, t, likes,
+     reposts, replies)`. Skip this table and you still have a corpus; add it and you can
+     watch a post heat up. Decide up front, because it changes the write path.
+   Also decide (cheap to defer, but name it now): capture deletions (backfill can't see
+   them, Jetstream can) and follows-list snapshots (who you followed *then*).
 2. **IndexedDB store** — move from `idb-keyval` to `idb` proper for this database
    (need indexes on `indexedAt`/`firstSeen` for range queries). Request
    `navigator.storage.persist()` to resist eviction.
-3. **Write path**: every poll/fetch/backfill also archives (dedup by key; update
-   `lastSeen` + counts on re-encounter).
-4. **Gap-healing backfill on startup**: cursor-paginate `getTimeline` backwards until
-   overlapping already-archived items (stop after N consecutive known posts, with a
-   page-depth safety cap). Caveat to document: the timeline is a view — posts deleted
-   while away are unrecoverable, and pagination depth is empirically deep but not
-   contractually guaranteed.
+3. **Write path**: every poll/fetch/backfill upserts `posts` (dedup by URI, bump
+   `lastSeen`), appends to `appearances`, and — if the `counts` table exists — samples
+   counts. **Archive is its own layer, independent of triage:** a *dismissed* post stays
+   in the corpus (it happened), even though it's filtered out of the graph. Dismiss-state
+   and archive-state must never be conflated, or the corpus quietly loses everything you
+   read.
+4. **Gap-healing backfill on startup**: cursor-paginate `getTimeline` backwards until it
+   overlaps what's archived. Caveats that make the stop-condition non-trivial: the
+   timeline is a *personalized view*, not an append-only log — reposts surface at
+   repost-time and the feed reorders, so "N consecutive already-known posts" can converge
+   early (leaving a gap) or, on a churny feed, never (paging to the cap every startup).
+   Make N and the page-depth cap **tunable**, and log when the cap is hit rather than
+   pretending the heal was complete. Also **throttle**: aggressive backward pagination is
+   exactly what Bluesky's rate limits punish (429) — backoff between pages, cap pages per
+   startup. And document the hard limit: posts deleted while away are unrecoverable, and
+   pagination depth is empirically deep but not contractually guaranteed.
 5. **Archive UI**: stats in the config popover (posts, span, size on disk); an export
    button (JSON dump) early — it's cheap and makes the corpus portable to
    notebooks/pandas from day one.
-6. Tests: dedup, stop condition, gap-heal against a mocked paginated timeline.
+6. Tests: upsert dedup, appearance-append, the (tunable) stop condition, gap-heal against
+   a mocked paginated timeline, throttle/backoff.
 
 ### Phase B — Jetstream capture (backlog item, promoted)
 
@@ -294,7 +314,9 @@ Client-side vectors as the always-on cheap signal.
    and image alt text. A reply inherits its conversation's topic; a "this." embeds as
    what it points at.
 3. Embed incrementally on arrival; cache vectors in IndexedDB keyed by uri (384-dim
-   float32 ≈ 1.5KB/post — 50k posts ≈ 75MB, fine). Never re-embed.
+   float32 ≈ 1.5KB/post — 50k posts ≈ 75MB on disk). Never re-embed. Vectors live in
+   IndexedDB and load **by time-window** for clustering — don't hold the whole 75MB
+   resident; a day or a week of vectors at a time is what any live view needs.
 4. Similarity utilities: cosine, top-k neighbors over a time window.
 
 ### Phase D — Conversation detection
@@ -323,14 +345,26 @@ Client-side vectors as the always-on cheap signal.
 The interpreter. ~100 posts ≈ 10–15k input tokens ≈ a cent per call on a small model;
 cost is not the constraint.
 
-1. **BYO Anthropic key** in the config popover: stored in localStorage, sent only to
-   Anthropic (CORS direct-browser access), with a plain-language note on cost and
-   storage. Model picker (default the cheapest current model). Demo mode stubs it.
+1. **BYO Anthropic key** in the config popover. The browser calls Anthropic directly,
+   which needs the `anthropic-dangerous-direct-browser-access: true` header — and the
+   header is named "dangerous" for a real reason that bites *this* app specifically:
+   Skynets renders rich user content (facets, quote-embeds, external link cards, images),
+   which is a live XSS surface, and a key in `localStorage` is exfiltratable through any
+   injection. Mitigations, in order of paranoia: keep the key in session memory only
+   (re-enter per session), or `sessionStorage` (narrower than `localStorage`), or — the
+   only real fix — a tiny proxy that holds the key server-side and never ships it to the
+   page (the one place a backend earns its keep; see Phase F, whose SQLite/native store
+   can hold the key out of the DOM entirely). Whatever we pick, say it plainly in the UI:
+   what's stored, where, and the exposure. Model picker (default the cheapest current
+   model). Demo mode stubs it.
 2. **Incremental digest state**, not a long conversation: the app holds a compact JSON
    digest — `[{label, one-line summary, exemplar uris, status: heating|cooling}]`.
    Each call sends {previous digest + posts since last call} and returns the updated
    digest. A few hundred tokens of state regardless of session length; passing prior
    labels in is also what keeps labels stable call-to-call (the failure mode to test).
+   **Validate every URI the model returns against the input set and drop any that
+   weren't there** — models fabricate plausible-looking IDs, and an exemplar link that
+   404s is worse than none. Referential integrity is not optional here.
 3. The same call assigns posts to conversations — LLM-as-clusterer resolves the deixis
    and pragmatics that sink sentence embedders on cryptic posts (including the
    second-order-discourse case Phase D can't reach).
@@ -339,7 +373,8 @@ cost is not the constraint.
 5. **Cadence**: a manual "Summarize" button first; auto-refresh every ~20–30 min later
    (never per-poll). If Phase C/D exist, the embedder gates the LLM: only call when a
    new cluster appears or an old one doubles.
-6. Tests: digest-state round-trip with a mocked API; label stability across calls.
+6. Tests: digest-state round-trip with a mocked API; label stability across calls;
+   URI-integrity (fabricated exemplar URIs are dropped).
 
 ### Phase F — Desktop wrap (Tauri) — only if needed
 
