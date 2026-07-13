@@ -51,13 +51,28 @@
   const expanded = new SvelteSet<string>()
   const pinned = new SvelteSet<string>()
 
+  // "Follows only" gates the timeline to accounts you follow (plus their
+  // reposts and your own posts) — Bluesky's following feed occasionally serves
+  // reason-less posts from unfollowed accounts (observed live), and this
+  // excludes whatever it injects rather than displaying it unexplained.
+  const feedItems = $derived(
+    settings.followsOnly
+      ? items.filter(
+          (i) =>
+            i.post.author.did === session.did ||
+            reposter(i) !== undefined ||
+            follows.following(i.post.author),
+        )
+      : items,
+  )
+
   // Merge optimistically-posted items (our own new posts/replies) with the feed,
   // then drop dismissed ones. buildGraph dedupes by uri.
   // Primary = your own posts + your timeline; fetched thread posts and reply
   // parents are pulled-in *context* that only ever appears attached (mapped or
   // chained), never on its own. Primary sources come first so a timeline copy
   // of a post wins dedup over a fetched one.
-  const primarySources = $derived([...compose.injected, ...items])
+  const primarySources = $derived([...compose.injected, ...feedItems])
   const allItems = $derived([...primarySources, ...threads.posts, ...ancestors.posts])
   const primaryUris = $derived(new Set(primarySources.map((i) => i.post.uri)))
   const visible = $derived(
@@ -326,7 +341,7 @@
   // an author you don't follow (and no repost line) would itself be a signal
   // that something is off.
   const ownUris = $derived(new Set(compose.injected.map((i) => i.post.uri)))
-  const timelineUris = $derived(new Set(items.map((i) => i.post.uri)))
+  const timelineUris = $derived(new Set(feedItems.map((i) => i.post.uri)))
   function whyHere(node: GraphNode): string {
     const uri = node.uri
     if (ownUris.has(uri)) return 'your post'
@@ -545,6 +560,13 @@
           <span class="val"></span>
         </div>
         <p class="hint">Include reposts from people you follow.</p>
+
+        <div class="row">
+          <span class="label">Follows only</span>
+          <input type="checkbox" bind:checked={settings.followsOnly} />
+          <span class="val"></span>
+        </div>
+        <p class="hint">Hide feed posts from accounts you don't follow (Bluesky sometimes serves them).</p>
       </div>
     {/if}
   </div>

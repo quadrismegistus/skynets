@@ -11,6 +11,7 @@ interface Persisted {
   connectReplies: boolean
   clusterForce: boolean
   showReposts: boolean
+  followsOnly: boolean
 }
 
 function load(): Partial<Persisted> {
@@ -36,6 +37,7 @@ class Settings {
   connectReplies = $state(true)
   clusterForce = $state(false)
   showReposts = $state(true)
+  followsOnly = $state(false)
 
   constructor() {
     const p = load()
@@ -49,6 +51,7 @@ class Settings {
     if (typeof p.connectReplies === 'boolean') this.connectReplies = p.connectReplies
     if (typeof p.clusterForce === 'boolean') this.clusterForce = p.clusterForce
     if (typeof p.showReposts === 'boolean') this.showReposts = p.showReposts
+    if (typeof p.followsOnly === 'boolean') this.followsOnly = p.followsOnly
 
     if (typeof localStorage !== 'undefined') {
       $effect.root(() => {
@@ -62,6 +65,7 @@ class Settings {
             connectReplies: this.connectReplies,
             clusterForce: this.clusterForce,
             showReposts: this.showReposts,
+            followsOnly: this.followsOnly,
           }
           localStorage.setItem(KEY, JSON.stringify(data))
         })
