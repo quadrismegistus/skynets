@@ -47,6 +47,7 @@ export const DEFAULT_OLLAMA_URL = 'http://localhost:11434'
 export const OLLAMA_MODELS: { id: string; label: string }[] = [
   { id: 'llama3.1:8b', label: 'llama3.1:8b — ~5GB, needs 16GB RAM' },
   { id: 'qwen2.5:7b', label: 'qwen2.5:7b — ~5GB, strong at JSON' },
+  { id: 'qwen3:8b', label: 'qwen3:8b — ~5GB, resolves subtweets well' },
   { id: 'qwen3:4b', label: 'qwen3:4b — ~3GB, for 8GB RAM' },
   { id: 'gemma3:4b', label: 'gemma3:4b — ~3GB, for 8GB RAM' },
   { id: 'gemma3:12b', label: 'gemma3:12b — ~8GB, needs a GPU/32GB' },
@@ -230,6 +231,10 @@ async function summarizeOllama(items: FeedItem[], content: string, opts: Summari
         // unparseable JSON — and lift the default 2048 context so a full feed
         // isn't silently truncated.
         format: DIGEST_SCHEMA,
+        // Disable extended reasoning: on a thinking model (qwen3, deepseek-r1)
+        // the reasoning trace turns a ~15s clustering call into minutes for no
+        // quality gain on this task; non-thinking models ignore the flag.
+        think: false,
         options: { temperature: 0.2, num_ctx: 8192 },
         messages: [
           { role: 'system', content: SYSTEM },

@@ -127,6 +127,10 @@ describe('summarizeFeed', () => {
     })
     // Hits Ollama's chat endpoint (trailing slash normalized), not Anthropic.
     expect(fetchMock).toHaveBeenCalledWith('http://localhost:11434/api/chat', expect.anything())
+    // Thinking is disabled (latency) and context is lifted past the 2048 default.
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.think).toBe(false)
+    expect(body.options.num_ctx).toBeGreaterThan(2048)
     expect(digest.conversations[0].postUris).toEqual(['at://real/1', 'at://real/2'])
   })
 
