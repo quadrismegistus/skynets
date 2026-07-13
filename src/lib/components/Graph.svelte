@@ -78,7 +78,6 @@
       settings.selectMode,
       settings.nodeLimit,
       turnoverOffset,
-      expanded,
     )
     if (!pinned.size && !settings.connectReplies) return selected
     const set = new Map(selected.map((n) => [n.uri, n]))
@@ -291,23 +290,19 @@
     else pinned.add(node.uri)
   }
 
-  // The graph groups posts by reply-connectivity, so expand/collapse is keyed by
-  // the node's group id; the thread is *fetched* by its real root uri.
-  function groupKey(item: FeedItem): string {
-    return nodeByUri.get(item.post.uri)?.rootUri ?? rootUriOf(item)
-  }
-  /** Map (or un-map) a post's replies: reveal its thread, capped to the loudest. */
+  // Expansion is keyed by the clicked post's own uri (stable as the group grows);
+  // buildGraph expands a conversation if any of its members' uri is in `expanded`.
   function toggleMapReplies(item: FeedItem) {
-    const key = groupKey(item)
-    if (expanded.has(key)) {
-      expanded.delete(key)
+    const uri = item.post.uri
+    if (expanded.has(uri)) {
+      expanded.delete(uri)
     } else {
-      expanded.add(key)
+      expanded.add(uri)
       threads.ensure(rootUriOf(item)) // pull replies not already in the timeline
     }
   }
   function repliesMapped(item: FeedItem): boolean {
-    return expanded.has(groupKey(item))
+    return nodeByUri.get(item.post.uri)?.expanded ?? expanded.has(item.post.uri)
   }
 
   function dismiss(uri: string) {

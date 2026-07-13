@@ -106,8 +106,8 @@ export class ForceLayout {
       'link',
       forceLink<SimNode, SimLink>(safeLinks)
         .id((d) => d.id)
-        .distance(cluster ? 46 : 70)
-        .strength(cluster ? 0.5 : 0.05),
+        .distance(cluster ? 46 : 54)
+        .strength(cluster ? 0.5 : 0.18),
     )
     this.sim.force('charge', cluster ? forceManyBody<SimNode>().strength(-24) : null)
     this.sim.alpha(0.7).restart()
