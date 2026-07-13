@@ -207,7 +207,8 @@ jQuery-UI + socket.io + vis-network.
      websocket subscription filtered by `wantedDids` (your ~600 follows fit its limits)
      so new posts slide into the graph the moment they're made — no polling, no auth
      needed for public data. Needs: subscribe, filter to `app.bsky.feed.post` commits,
-     hydrate post views, refresh the did list when follows change.
+     hydrate post views, refresh the did list when follows change. *(Absorbed into the
+     roadmap below as Phase B.)*
 
 Each milestone is a working app; 1–3 recreate the daily-driver experience.
 
@@ -231,3 +232,137 @@ Each milestone is a working app; 1–3 recreate the daily-driver experience.
   text, client-side downscale/compress. **Thread composer** ✅ — "+ Add post" writes a
   multi-post self-reply chain (each segment its own text + images); it lands in the graph
   as a collapsed thread node.
+
+---
+
+## 6. Roadmap: the corpus turn (archive → embeddings → LLM digest)
+
+Skynets so far is a *live view*: it shows what the timeline serves right now and forgets
+the rest. The next arc turns it into a **personal corpus with an interpreter** — the feed
+persisted locally, organized into "conversations" (the few discourse-events in play on a
+given day), and summarized on demand. Six phases; A is the foundation, E is the payoff,
+and E-minimal can actually ship first (see ordering note at the end).
+
+### Phase A — Archive foundation
+
+Persist every timeline post locally so nothing is lost between sessions.
+
+1. **Schema decision (do this first, it's load-bearing):** what is a record? Proposal:
+   one row per *feed item* (post uri + optional repost attribution), storing the raw
+   `FeedViewPost` JSON plus `firstSeen`/`lastSeen` timestamps, keyed per user DID.
+   Decide explicitly whether to keep: engagement-count snapshots over time (enables
+   velocity history; costs writes), deletions (timeline backfill can't see them;
+   Jetstream can), and follows-list snapshots.
+2. **IndexedDB store** — move from `idb-keyval` to `idb` proper for this database
+   (need indexes on `indexedAt`/`firstSeen` for range queries). Request
+   `navigator.storage.persist()` to resist eviction.
+3. **Write path**: every poll/fetch/backfill also archives (dedup by key; update
+   `lastSeen` + counts on re-encounter).
+4. **Gap-healing backfill on startup**: cursor-paginate `getTimeline` backwards until
+   overlapping already-archived items (stop after N consecutive known posts, with a
+   page-depth safety cap). Caveat to document: the timeline is a view — posts deleted
+   while away are unrecoverable, and pagination depth is empirically deep but not
+   contractually guaranteed.
+5. **Archive UI**: stats in the config popover (posts, span, size on disk); an export
+   button (JSON dump) early — it's cheap and makes the corpus portable to
+   notebooks/pandas from day one.
+6. Tests: dedup, stop condition, gap-heal against a mocked paginated timeline.
+
+### Phase B — Jetstream capture (backlog item, promoted)
+
+Near-lossless capture while the app is open; replay heals short gaps.
+
+1. Websocket to a public Jetstream instance, `wantedDids` = follows list (refreshed on
+   follow/unfollow), filtered to `app.bsky.feed.post` + `app.bsky.feed.repost` commits
+   (a followee's repost arrives as a repost record; hydrate the subject via `getPosts`).
+2. **Replay cursor**: on reconnect, resume from the last-received event timestamp
+   (public instances buffer on the order of a day). Longer gaps fall through to
+   Phase A's timeline backfill.
+3. Capture `delete` events into the archive (the one thing backfill can never see).
+4. Polling remains the fallback when the socket is down; both funnel into the same
+   archive write path.
+
+### Phase C — Embedding layer
+
+Client-side vectors as the always-on cheap signal.
+
+1. **transformers.js** with a small model (bge-small or MiniLM class, ~25MB quantized),
+   WebGPU with WASM fallback, lazy-loaded behind a setting (off by default — 25MB is
+   rude to load unannounced).
+2. **Document construction is the whole game** for short cryptic posts: embed post text
+   *concatenated with* parent/root text, quoted-post text, link-card title/description,
+   and image alt text. A reply inherits its conversation's topic; a "this." embeds as
+   what it points at.
+3. Embed incrementally on arrival; cache vectors in IndexedDB keyed by uri (384-dim
+   float32 ≈ 1.5KB/post — 50k posts ≈ 75MB, fine). Never re-embed.
+4. Similarity utilities: cosine, top-k neighbors over a time window.
+
+### Phase D — Conversation detection
+
+"There are a few conversations in play today" made computable: a conversation is a
+**semantic cluster × a time burst**.
+
+1. Reply threads are ground-truth conversations already; clustering's job is to *join
+   threads and singletons* into discourse-events (greedy agglomerative over cosine, or
+   connected components of a thresholded kNN graph — evaluate on real feed days, e.g.
+   the Lindsey Graham day: first-order event posts should cluster trivially).
+2. **Burst detection**: cluster density over time distinguishes "conversation of the
+   day" from background topical similarity.
+3. UI options (pick after prototyping, don't build all three): similarity edges feeding
+   the existing cluster-mode force layout (cheapest, composes with what exists); cluster
+   hulls/tints; a 1D semantic x-axis mode (topic left-right × recency up-down) —
+   full 2D UMAP is explicitly rejected (unstable at n≈100, re-scrambles on every fetch,
+   destroys the semantic axes).
+4. **Known limit, by design**: second-order discourse (vague-posting *about* the
+   reactions, no shared vocabulary with the event) will not cluster with its event.
+   That's Phase E's job. If LLM clustering (E) proves good and cheap enough, C+D can
+   be skipped or demoted to the offline-analysis path — decide after E-minimal ships.
+
+### Phase E — LLM digest (BYO key)
+
+The interpreter. ~100 posts ≈ 10–15k input tokens ≈ a cent per call on a small model;
+cost is not the constraint.
+
+1. **BYO Anthropic key** in the config popover: stored in localStorage, sent only to
+   Anthropic (CORS direct-browser access), with a plain-language note on cost and
+   storage. Model picker (default the cheapest current model). Demo mode stubs it.
+2. **Incremental digest state**, not a long conversation: the app holds a compact JSON
+   digest — `[{label, one-line summary, exemplar uris, status: heating|cooling}]`.
+   Each call sends {previous digest + posts since last call} and returns the updated
+   digest. A few hundred tokens of state regardless of session length; passing prior
+   labels in is also what keeps labels stable call-to-call (the failure mode to test).
+3. The same call assigns posts to conversations — LLM-as-clusterer resolves the deixis
+   and pragmatics that sink sentence embedders on cryptic posts (including the
+   second-order-discourse case Phase D can't reach).
+4. **Render**: a digest panel (the "while you were away" view, ranked by velocity
+   score) + conversation labels annotating the graph clusters.
+5. **Cadence**: a manual "Summarize" button first; auto-refresh every ~20–30 min later
+   (never per-poll). If Phase C/D exist, the embedder gates the LLM: only call when a
+   new cluster appears or an old one doubles.
+6. Tests: digest-state round-trip with a mocked API; label stability across calls.
+
+### Phase F — Desktop wrap (Tauri) — only if needed
+
+Browser limits for always-on capture: background tabs throttle timers (~1/min; sockets
+usually survive), IndexedDB is evictable in principle. **Tauri** wraps the existing
+Vite/Svelte app nearly unchanged — SQLite for the archive, tray residence, capture
+while "closed" — and the web deployment stays the same codebase with archive features
+degrading gracefully. Deliberately last: Phase A's backfill-on-open covers most of the
+value, so build this only when capture-while-closed demonstrably matters.
+
+### Ordering
+
+Two valid paths through the graph:
+
+- **Corpus-first** (A → B → C → D → E → F): archive is the foundation; nothing is lost
+  starting from day one of the archive existing.
+- **Digest-first** (E-minimal → A → …): a "Summarize this feed" button on the *live*
+  feed needs no archive at all — key field, one API call, digest panel. Smallest
+  possible slice of the payoff, and it road-tests the digest-state design before the
+  heavy plumbing.
+
+Recommended: **E-minimal, then A, then choose** between B (capture fidelity) and
+full E (continuous digest) by which itch is stronger; C/D only if the LLM-only
+clustering proves inadequate or the archive grows past what per-call LLM reading
+can cheaply cover (the embedder's real advantage is re-clustering a month of vectors
+instantly — an *analysis* feature more than a *triage* one).
