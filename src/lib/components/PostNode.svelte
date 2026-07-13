@@ -141,7 +141,7 @@
   }
   .pin {
     position: absolute;
-    top: -8px;
+    bottom: -8px;
     left: -6px;
     font-size: 0.7rem;
     z-index: 55;
