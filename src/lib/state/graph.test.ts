@@ -96,6 +96,65 @@ describe('buildGraph', () => {
     expect(rep.collapsedCount).toBe(15 - MAX_THREAD_REPLIES)
   })
 
+  it('keeps the capped selection connected: a loud deep reply brings its quiet bridges', () => {
+    const root = 'at://x/root'
+    const items = [mkPost({ uri: root, likes: 5 })]
+    // A quiet bridge chain root <- b1 <- b2 ending in the loudest reply.
+    items.push(mkPost({ uri: 'at://x/b1', parent: root, root, likes: 0 }))
+    items.push(mkPost({ uri: 'at://x/b2', parent: 'at://x/b1', root, likes: 0 }))
+    items.push(mkPost({ uri: 'at://x/deep', parent: 'at://x/b2', root, likes: 500 }))
+    // Plus 12 medium direct replies competing for the cap.
+    for (let i = 0; i < 12; i++) {
+      items.push(mkPost({ uri: `at://x/d${i}`, parent: root, root, likes: 20 + i }))
+    }
+    const { nodes, edges } = buildGraph(items, new Set([root]))
+    const shown = new Set(nodes.map((n) => n.uri))
+    // The loud deep reply is shown WITH its bridges, not floating alone.
+    expect(shown.has('at://x/deep')).toBe(true)
+    expect(shown.has('at://x/b1')).toBe(true)
+    expect(shown.has('at://x/b2')).toBe(true)
+    // Every shown node except the rep has an edge to a shown parent.
+    const edgeFrom = new Set(edges.map((e) => e.from))
+    for (const n of nodes) {
+      if (!n.isThreadRoot) expect(edgeFrom.has(n.uri)).toBe(true)
+    }
+    // Still capped, and the rep badges what was cut.
+    expect(nodes.length).toBeLessThanOrEqual(1 + MAX_THREAD_REPLIES)
+    const rep = nodes.find((n) => n.isThreadRoot)!
+    expect(rep.collapsedCount).toBe(items.length - nodes.length)
+  })
+
+  it('keeps an expanded conversation even if none of its posts are primary', () => {
+    const items = [
+      mkPost({ uri: 'at://ctx/root' }),
+      mkPost({ uri: 'at://ctx/r1', parent: 'at://ctx/root', root: 'at://ctx/root' }),
+    ]
+    // Nothing primary and not expanded → dropped (orphan context).
+    expect(buildGraph(items, new Set(), new Set()).nodes).toHaveLength(0)
+    // Same group but the user mapped it → kept.
+    expect(buildGraph(items, new Set(['at://ctx/root']), new Set()).nodes).toHaveLength(2)
+  })
+
+  it('marks pulled-in context nodes as non-primary', () => {
+    const items = [
+      mkPost({ uri: 'at://parent' }),
+      mkPost({ uri: 'at://reply', parent: 'at://parent', root: 'at://parent' }),
+    ]
+    const { nodes } = buildGraph(items, new Set(), new Set(['at://reply']))
+    const byUri = new Map(nodes.map((n) => [n.uri, n]))
+    expect(byUri.get('at://reply')!.primary).toBe(true)
+    expect(byUri.get('at://parent')!.primary).toBe(false)
+    // A collapsed group containing a primary post is selectable as a whole.
+    const thread = [
+      mkPost({ uri: 'at://t/0' }),
+      mkPost({ uri: 'at://t/1', parent: 'at://t/0', root: 'at://t/0' }),
+      mkPost({ uri: 'at://t/2', parent: 'at://t/1', root: 'at://t/0' }),
+    ]
+    const collapsed = buildGraph(thread, new Set(), new Set(['at://t/1'])).nodes
+    expect(collapsed).toHaveLength(1)
+    expect(collapsed[0].primary).toBe(true)
+  })
+
   it('positions a collapsed thread by peak engagement + latest activity', () => {
     const root = 'at://x/root'
     const items = [
@@ -118,6 +177,7 @@ const mkNode = (
   rootUri = uri,
   replies = 0,
   expanded = false,
+  primary = true,
 ): GraphNode => ({
   uri,
   cid: uri,
@@ -128,6 +188,7 @@ const mkNode = (
   isThreadRoot: false,
   collapsedCount: 0,
   expanded,
+  primary,
 })
 
 describe('selectVisible', () => {
@@ -168,6 +229,20 @@ describe('selectVisible', () => {
       mkNode('d', 4, 4, 'R', 0, true), // expanded
     ]
     expect(ids(selectVisible(th, 'top', 2, 0))).toBe('a,b,c,d')
+  })
+  it('never selects a context (non-primary) node on its own, however loud', () => {
+    const th = [
+      mkNode('ctx', 100, 9, 'ctx', 0, false, false), // loud pulled-in parent
+      mkNode('a', 10, 1),
+      mkNode('b', 8, 2),
+      mkNode('c', 6, 3),
+    ]
+    // 'top' would otherwise pick ctx first; it must not appear at all.
+    expect(ids(selectVisible(th, 'top', 2, 0))).toBe('a,b')
+    expect(ids(selectVisible(th, 'recent', 2, 0))).toBe('b,c')
+    // …unless its conversation is expanded (user mapped it).
+    const mapped = [mkNode('ctx', 100, 9, 'ctx', 0, true, false), mkNode('a', 10, 1)]
+    expect(ids(selectVisible(mapped, 'top', 1, 0))).toBe('a,ctx')
   })
 })
 

@@ -58,8 +58,11 @@ export class ForceLayout {
   /**
    * Reconcile the simulation with a new set of targets + links. Existing nodes
    * keep their current position/velocity (continuous motion); new nodes start at
-   * their target so they ease outward rather than flying in from origin; dropped
-   * nodes are removed. Then the sim gently reheats.
+   * their target so they ease outward rather than flying in from origin — except
+   * a new node linked to an already-placed one (a mapped thread reply), which is
+   * seeded beside its partner so it visibly emanates from the conversation
+   * rather than materializing elsewhere on the canvas. Dropped nodes are
+   * removed. Then the sim gently reheats.
    */
   update(
     targets: Target[],
@@ -67,11 +70,33 @@ export class ForceLayout {
     pinned: ReadonlySet<string> = new Set(),
     cluster = false,
   ) {
+    // For a new node, find an already-placed anchor: follow the reply→parent
+    // chain (a freshly mapped thread anchors to the clicked post), else any
+    // directly linked placed node (a pulled-in parent anchors to its reply).
+    const parentOf = new Map(links.map((l) => [l.source, l.target]))
+    const anchorFor = (id: string): SimNode | undefined => {
+      let cur: string | undefined = id
+      for (let hops = 0; cur && hops < 32; hops++) {
+        const found = this.#byId.get(cur)
+        if (found) return found
+        cur = parentOf.get(cur)
+      }
+      const back = links.find((l) => l.target === id && this.#byId.has(l.source))
+      return back ? this.#byId.get(back.source) : undefined
+    }
     const next: SimNode[] = []
     const nextById = new Map<string, SimNode>()
     for (const t of targets) {
       const existing = this.#byId.get(t.id)
-      const node: SimNode = existing ?? { id: t.id, x: t.tx, y: t.ty, tx: t.tx, ty: t.ty, r: t.r }
+      let node: SimNode
+      if (existing) {
+        node = existing
+      } else {
+        const near = anchorFor(t.id)
+        const sx = near?.x != null ? near.x + (Math.random() - 0.5) * 24 : t.tx
+        const sy = near?.y != null ? near.y + (Math.random() - 0.5) * 24 : t.ty
+        node = { id: t.id, x: sx, y: sy, tx: t.tx, ty: t.ty, r: t.r }
+      }
       node.tx = t.tx
       node.ty = t.ty
       node.r = t.r

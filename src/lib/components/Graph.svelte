@@ -54,10 +54,12 @@
 
   // Merge optimistically-posted items (our own new posts/replies) with the feed,
   // then drop dismissed ones. buildGraph dedupes by uri.
-  // Primary sources (your feed, mapped threads, your own posts) come before the
-  // fetched reply-parents so a real post wins dedup and counts as "primary".
-  const primarySources = $derived([...compose.injected, ...threads.posts, ...items])
-  const allItems = $derived([...primarySources, ...ancestors.posts])
+  // Primary = your own posts + your timeline; fetched thread posts and reply
+  // parents are pulled-in *context* that only ever appears attached (mapped or
+  // chained), never on its own. Primary sources come first so a timeline copy
+  // of a post wins dedup over a fetched one.
+  const primarySources = $derived([...compose.injected, ...items])
+  const allItems = $derived([...primarySources, ...threads.posts, ...ancestors.posts])
   const primaryUris = $derived(new Set(primarySources.map((i) => i.post.uri)))
   const visible = $derived(
     allItems.filter(
@@ -66,7 +68,9 @@
   )
   const graph = $derived(buildGraph(visible, expanded, primaryUris))
 
-  const total = $derived(graph.nodes.length)
+  // Only primary nodes compete for the window, so the queue/turnover counts
+  // are over them; context nodes ride along and don't inflate the numbers.
+  const total = $derived(graph.nodes.filter((n) => n.primary).length)
   const queued = $derived(total <= settings.nodeLimit ? 0 : total - settings.nodeLimit)
 
   // Which nodes to show (top/recent/mix), plus pinned nodes and — when "connect
