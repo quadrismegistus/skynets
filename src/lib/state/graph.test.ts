@@ -111,7 +111,14 @@ describe('buildGraph', () => {
   })
 })
 
-const mkNode = (uri: string, score: number, ts: number, rootUri = uri, replies = 0): GraphNode => ({
+const mkNode = (
+  uri: string,
+  score: number,
+  ts: number,
+  rootUri = uri,
+  replies = 0,
+  expanded = false,
+): GraphNode => ({
   uri,
   cid: uri,
   item: mkPost({ uri, replies }),
@@ -120,6 +127,7 @@ const mkNode = (uri: string, score: number, ts: number, rootUri = uri, replies =
   rootUri,
   isThreadRoot: false,
   collapsedCount: 0,
+  expanded,
 })
 
 describe('selectVisible', () => {
@@ -138,23 +146,28 @@ describe('selectVisible', () => {
       .join(',')
 
   it('returns everything when total <= limit', () => {
-    expect(selectVisible(nodes, 'top', 10, 0, new Set())).toHaveLength(5)
+    expect(selectVisible(nodes, 'top', 10, 0)).toHaveLength(5)
   })
   it('top = loudest', () => {
-    expect(ids(selectVisible(nodes, 'top', 2, 0, new Set()))).toBe('a,b')
+    expect(ids(selectVisible(nodes, 'top', 2, 0))).toBe('a,b')
   })
   it('recent = newest', () => {
-    expect(ids(selectVisible(nodes, 'recent', 2, 0, new Set()))).toBe('d,e')
+    expect(ids(selectVisible(nodes, 'recent', 2, 0))).toBe('d,e')
   })
   it('mix = loudest half + newest half', () => {
-    expect(ids(selectVisible(nodes, 'mix', 4, 0, new Set()))).toBe('a,b,d,e')
+    expect(ids(selectVisible(nodes, 'mix', 4, 0))).toBe('a,b,d,e')
   })
   it('offset rotates the top/recent window', () => {
-    expect(ids(selectVisible(nodes, 'top', 2, 1, new Set()))).toBe('b,c')
+    expect(ids(selectVisible(nodes, 'top', 2, 1))).toBe('b,c')
   })
-  it('always includes members of an expanded thread', () => {
-    const th = [mkNode('a', 10, 1), mkNode('b', 8, 2), mkNode('c', 6, 3, 'R'), mkNode('d', 4, 4, 'R')]
-    expect(ids(selectVisible(th, 'top', 2, 0, new Set(['R'])))).toBe('a,b,c,d')
+  it('always includes nodes flagged expanded, even outside the window', () => {
+    const th = [
+      mkNode('a', 10, 1),
+      mkNode('b', 8, 2),
+      mkNode('c', 6, 3, 'R', 0, true), // expanded
+      mkNode('d', 4, 4, 'R', 0, true), // expanded
+    ]
+    expect(ids(selectVisible(th, 'top', 2, 0))).toBe('a,b,c,d')
   })
 })
 

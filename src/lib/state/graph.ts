@@ -14,6 +14,8 @@ export interface GraphNode {
   isThreadRoot: boolean
   /** Replies hidden under this collapsed representative (0 if standalone or expanded). */
   collapsedCount: number
+  /** True if this node's conversation is currently expanded (mapped). */
+  expanded: boolean
 }
 
 /** Normalized layout position in [0,1], computed per visible set (not baked in). */
@@ -110,7 +112,6 @@ export function selectVisible(
   mode: SelectMode,
   limit: number,
   offset: number,
-  expanded: ReadonlySet<string>,
 ): GraphNode[] {
   let chosen: GraphNode[]
   if (nodes.length <= limit) {
@@ -138,7 +139,8 @@ export function selectVisible(
   }
 
   const set = new Map(chosen.map((n) => [n.uri, n]))
-  for (const n of nodes) if (expanded.has(n.rootUri)) set.set(n.uri, n)
+  // Always include every node of an expanded conversation.
+  for (const n of nodes) if (n.expanded) set.set(n.uri, n)
   return [...set.values()]
 }
 
@@ -195,6 +197,7 @@ interface Unit {
   rootUri: string
   isThreadRoot: boolean
   collapsedCount: number
+  expanded: boolean
 }
 
 /**
@@ -258,6 +261,10 @@ export function buildGraph(
     // alone; it only appears attached to a post that's actually in your feed.
     if (primary && !members.some((m) => primary.has(m.post.uri))) continue
 
+    // Expansion is keyed by *membership* (any member's uri was clicked to map),
+    // which stays stable as fetched replies merge the group and shift its key.
+    const isExpanded = members.some((m) => expanded.has(m.post.uri))
+
     if (members.length === 1) {
       const it = members[0]
       units.push({
@@ -267,6 +274,7 @@ export function buildGraph(
         rootUri,
         isThreadRoot: false,
         collapsedCount: 0,
+        expanded: isExpanded,
       })
       continue
     }
@@ -282,7 +290,7 @@ export function buildGraph(
 
     // Small threads (or explicitly expanded ones) show as connected nodes;
     // larger threads collapse to one node unless the user maps their replies.
-    const collapse = members.length >= COLLAPSE_MIN && !expanded.has(rootUri)
+    const collapse = members.length >= COLLAPSE_MIN && !isExpanded
 
     if (!collapse) {
       // Show the root + only the loudest replies, so a huge thread can't flood
@@ -300,6 +308,7 @@ export function buildGraph(
           rootUri,
           isThreadRoot: m === rep,
           collapsedCount: m === rep ? hidden : 0,
+          expanded: isExpanded,
         })
       }
     } else {
@@ -311,6 +320,7 @@ export function buildGraph(
         rootUri,
         isThreadRoot: true,
         collapsedCount: members.length - 1,
+        expanded: false,
       })
     }
   }
@@ -325,6 +335,7 @@ export function buildGraph(
     rootUri: u.rootUri,
     isThreadRoot: u.isThreadRoot,
     collapsedCount: u.collapsedCount,
+    expanded: u.expanded,
   }))
 
   const present = new Set(nodes.map((n) => n.uri))
