@@ -147,13 +147,13 @@
     z-index: 55;
     pointer-events: none;
   }
-  /* Repost: the reposter tucked behind and to the left of the reposted post. */
+  /* Repost: the reposter tucked behind the reposted post's top-left shoulder. */
   .reposter {
     position: absolute;
     width: 52%;
     height: 52%;
-    left: -34%;
-    top: 22%;
+    left: -17%;
+    top: -17%;
     border-radius: 50%;
     overflow: hidden;
     border: 2px solid var(--bg);
