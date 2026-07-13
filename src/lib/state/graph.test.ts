@@ -135,6 +135,48 @@ describe('buildGraph', () => {
     expect(buildGraph(items, new Set(['at://ctx/root']), new Set()).nodes).toHaveLength(2)
   })
 
+  it('shows a collapsed conversation with the face of its primary member, not a pulled-in stranger', () => {
+    // A stranger's thread (root <- mid) that a followed account replied to:
+    // only the reply is primary. Collapsed, the node must display the reply.
+    const items = [
+      mkPost({ uri: 'at://stranger/root', likes: 90, createdAt: T(0) }),
+      mkPost({
+        uri: 'at://stranger/mid',
+        parent: 'at://stranger/root',
+        root: 'at://stranger/root',
+        createdAt: T(1),
+      }),
+      mkPost({
+        uri: 'at://friend/reply',
+        parent: 'at://stranger/mid',
+        root: 'at://stranger/root',
+        createdAt: T(2),
+      }),
+    ]
+    const { nodes } = buildGraph(items, new Set(), new Set(['at://friend/reply']))
+    expect(nodes).toHaveLength(1)
+    expect(nodes[0].uri).toBe('at://friend/reply')
+    expect(nodes[0].isThreadRoot).toBe(true)
+    expect(nodes[0].collapsedCount).toBe(2)
+    expect(nodes[0].primary).toBe(true)
+  })
+
+  it('always shows a clicked (expanded) post and its path, even if quiet and over budget', () => {
+    const root = 'at://x/root'
+    const items = [mkPost({ uri: root, likes: 5 })]
+    // Quiet chain root <- q1 <- clicked (all 0 likes).
+    items.push(mkPost({ uri: 'at://x/q1', parent: root, root, likes: 0 }))
+    items.push(mkPost({ uri: 'at://x/clicked', parent: 'at://x/q1', root, likes: 0 }))
+    // 15 loud direct replies that would otherwise fill the whole cap.
+    for (let i = 0; i < 15; i++) {
+      items.push(mkPost({ uri: `at://x/d${i}`, parent: root, root, likes: 50 + i }))
+    }
+    const { nodes } = buildGraph(items, new Set(['at://x/clicked']))
+    const shown = new Set(nodes.map((n) => n.uri))
+    expect(shown.has('at://x/clicked')).toBe(true)
+    expect(shown.has('at://x/q1')).toBe(true)
+  })
+
   it('marks pulled-in context nodes as non-primary', () => {
     const items = [
       mkPost({ uri: 'at://parent' }),

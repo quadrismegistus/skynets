@@ -5,7 +5,6 @@
     buildGraph,
     layoutPositions,
     parentUriOf,
-    rootUriOf,
     selectVisible,
     threadDescendants,
     type GraphNode,
@@ -296,17 +295,31 @@
 
   // Expansion is keyed by the clicked post's own uri (stable as the group grows);
   // buildGraph expands a conversation if any of its members' uri is in `expanded`.
+  // The fetch is scoped to the clicked post (its replies + its ancestor chain),
+  // not the whole root thread, so mapping stays about the post you clicked.
   function toggleMapReplies(item: FeedItem) {
     const uri = item.post.uri
     if (expanded.has(uri)) {
       expanded.delete(uri)
     } else {
       expanded.add(uri)
-      threads.ensure(rootUriOf(item)) // pull replies not already in the timeline
+      threads.ensure(uri) // pull replies not already in the timeline
     }
   }
   function repliesMapped(item: FeedItem): boolean {
     return nodeByUri.get(item.post.uri)?.expanded ?? expanded.has(item.post.uri)
+  }
+
+  // Why a post is in the graph, shown on its card — timeline posts need no
+  // label (and reposts already get a "reposted by" line), but pulled-in
+  // context should explain itself.
+  const ownUris = $derived(new Set(compose.injected.map((i) => i.post.uri)))
+  const timelineUris = $derived(new Set(items.map((i) => i.post.uri)))
+  function whyHere(uri: string): string | undefined {
+    if (ownUris.has(uri)) return 'your post'
+    if (timelineUris.has(uri)) return undefined
+    if (threads.posts.some((p) => p.post.uri === uri)) return 'from a mapped thread'
+    return 'context — a post upstream of your timeline'
   }
 
   function dismiss(uri: string) {
@@ -420,6 +433,7 @@
       boundsH={h}
       canMapReplies={c.node.isThreadRoot || (c.node.item.post.replyCount ?? 0) > 0}
       repliesMapped={repliesMapped(c.node.item)}
+      context={whyHere(c.node.uri)}
       onreply={(it) => compose.openReply(it)}
       onquote={(it) => compose.openQuote(it)}
       onmapreplies={toggleMapReplies}

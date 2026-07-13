@@ -4,11 +4,12 @@ import { flattenThread } from './thread'
 const TVP = 'app.bsky.feed.defs#threadViewPost'
 
 /** A synthetic ThreadViewPost node. */
-function node(uri: string, replies: unknown[] = []) {
+function node(uri: string, replies: unknown[] = [], parent?: unknown) {
   return {
     $type: TVP,
     post: { uri, cid: `cid-${uri}`, author: { handle: 'a' }, record: { $type: 'app.bsky.feed.post', text: 't' } },
     replies,
+    parent,
   }
 }
 
@@ -27,5 +28,20 @@ describe('flattenThread', () => {
   it('returns empty for a NotFound/Blocked root', () => {
     expect(flattenThread({ $type: 'app.bsky.feed.defs#notFoundPost' })).toEqual([])
     expect(flattenThread(undefined)).toEqual([])
+  })
+
+  it('climbs the ancestor chain of the anchor post', () => {
+    const grandparent = node('at://gp')
+    const parent = node('at://p', [], grandparent)
+    const anchor = node('at://anchor', [node('at://reply')], parent)
+    const uris = flattenThread(anchor).map((i) => i.post.uri)
+    expect(uris).toEqual(['at://anchor', 'at://reply', 'at://p', 'at://gp'])
+  })
+
+  it('stops climbing at a NotFound parent', () => {
+    const parent = node('at://p', [], { $type: 'app.bsky.feed.defs#notFoundPost' })
+    const anchor = node('at://anchor', [], parent)
+    const uris = flattenThread(anchor).map((i) => i.post.uri)
+    expect(uris).toEqual(['at://anchor', 'at://p'])
   })
 })

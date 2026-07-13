@@ -27,6 +27,23 @@ causes turned out to be code-review findable, not data gaps:
    materialized across the canvas. **Fix:** a new node linked (via the reply
    chain) to an already-placed node seeds beside it and eases to its target.
 
+Post-fix screenshots (2026-07-13, dev server) surfaced a second round, same PR:
+
+5. **A collapsed conversation wore a stranger's face.** The representative of a
+   collapsed group was the conversation's *top* post — when a followee replied
+   deep in a stranger's thread (ancestors pulled in by Connect), the lone node
+   displayed was the unfollowed root author, with the followee hidden in the
+   "+N". **Fix:** the collapsed display rep is the earliest *primary* member.
+6. **Map replies fetched the whole root thread** (`rootUriOf` + descendants),
+   so "Map replies (1)" could unspool dozens of strangers from unrelated
+   branches. **Fix:** fetch is scoped to the clicked post — its replies plus
+   its ancestor chain (`parentHeight: 20`, `flattenThread` now climbs parents),
+   no sibling branches; and the expanded-cap selection always seeds the clicked
+   post + its path.
+7. **Provenance labeling:** cards now say why a non-timeline post is present
+   ("from a mapped thread" / "context — a post upstream of your timeline"), so
+   an unfamiliar face is explainable in place.
+
 The original write-up follows for the record.
 
 ---

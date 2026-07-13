@@ -26,6 +26,8 @@
     boundsH: number
     canMapReplies: boolean
     repliesMapped: boolean
+    /** Why this post is in the graph (pulled-in context); undefined for timeline posts. */
+    context?: string
     onreply: (item: FeedItem) => void
     onquote: (item: FeedItem) => void
     onmapreplies: (item: FeedItem) => void
@@ -39,6 +41,7 @@
     boundsH,
     canMapReplies,
     repliesMapped,
+    context,
     onreply,
     onquote,
     onmapreplies,
@@ -93,6 +96,9 @@
 >
   {#if rt}
     <div class="repost">🔁 reposted by {rt}</div>
+  {/if}
+  {#if context}
+    <div class="repost">🧭 {context}</div>
   {/if}
   <div class="head">
     {#if item.post.author.avatar}

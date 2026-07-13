@@ -292,8 +292,9 @@ export function buildGraph(
       })
       continue
     }
-    // Representative: the conversation's entry point (a member with no parent in
-    // the group), preferring the earliest; else just the earliest.
+    // Structural representative: the conversation's entry point (a member with
+    // no parent in the group), preferring the earliest; else just the earliest.
+    // Used to anchor the tree when showing members as connected nodes.
     const uris = inGroup(members)
     const tops = members.filter((m) => {
       const p = parentUriOf(m)
@@ -301,6 +302,15 @@ export function buildGraph(
     })
     const pool = tops.length ? tops : members
     const rep = pool.reduce((a, b) => (timestampOf(a) <= timestampOf(b) ? a : b))
+
+    // Display representative for a *collapsed* group: prefer the earliest
+    // primary member — the post that actually earned this conversation a place
+    // in your graph — so a collapsed thread never wears the face of a pulled-in
+    // stranger (the structural top is often an unfollowed root author).
+    const primaries = members.filter(isPrimary)
+    const displayRep = primaries.length
+      ? primaries.reduce((a, b) => (timestampOf(a) <= timestampOf(b) ? a : b))
+      : rep
 
     // Small threads (or explicitly expanded ones) show as connected nodes;
     // larger threads collapse to one node unless the user maps their replies.
@@ -315,6 +325,17 @@ export function buildGraph(
       const memberByUri = new Map(members.map((m) => [m.post.uri, m]))
       const budget = 1 + MAX_THREAD_REPLIES
       const chosen = new Set<string>([rep.post.uri])
+      // Seed with the explicitly clicked posts (and their ancestor paths):
+      // whatever the user asked to map must be shown, budget notwithstanding.
+      for (const m of members) {
+        if (!expanded.has(m.post.uri)) continue
+        let cur: FeedItem | undefined = m
+        while (cur && !chosen.has(cur.post.uri)) {
+          chosen.add(cur.post.uri)
+          const p = parentUriOf(cur)
+          cur = p ? memberByUri.get(p) : undefined
+        }
+      }
       const others = members
         .filter((m) => m !== rep)
         .sort((a, b) => postScore(b) - postScore(a))
@@ -349,14 +370,14 @@ export function buildGraph(
       // Collapsed: one node, placed by peak engagement + latest activity.
       // Selectable if the conversation holds any primary post.
       units.push({
-        item: rep,
+        item: displayRep,
         score: Math.max(...members.map(postScore)),
         timestamp: Math.max(...members.map(timestampOf)),
         rootUri,
         isThreadRoot: true,
         collapsedCount: members.length - 1,
         expanded: false,
-        primary: members.some(isPrimary),
+        primary: primaries.length > 0,
       })
     }
   }
