@@ -151,18 +151,26 @@ test('Map replies expands a thread with edges', async ({ page }) => {
   expect(await page.locator('.edges line').count()).toBeGreaterThan(0)
 })
 
-test('follow button toggles on the card', async ({ page }) => {
+test('follow button toggles; unfollowing prunes the author from the graph', async ({ page }) => {
   // Unfollowing asks for confirmation — accept it so the toggle proceeds.
   page.on('dialog', (d) => d.accept())
   await graphReady(page)
-  await page.locator('.wrap').first().hover()
+  // A non-repost node: unfollowing its author prunes their plain feed posts.
+  const node = page.locator('.wrap:not(:has(.reposter))').first()
+  const name = await node.locator('button.node').getAttribute('aria-label')
+  await node.hover()
   await page.locator('.card').waitFor()
   await page.locator('.card').hover()
   const follow = page.locator('.card .follow').first()
   await follow.waitFor()
   const before = (await follow.textContent())!.trim()
   await follow.click()
-  await expect(follow).not.toHaveText(before)
+  if (before === 'Following') {
+    // The unfollowed author's posts leave the graph immediately.
+    await expect(page.locator(`button.node[aria-label="${name}"]`)).toHaveCount(0)
+  } else {
+    await expect(follow).toHaveText('Following')
+  }
 })
 
 test('dragging moves a node without pinning; a click pins it', async ({ page }) => {
