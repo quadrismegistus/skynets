@@ -19,7 +19,12 @@
   import { follows } from '../state/follows.svelte'
   import { session } from '../state/session.svelte'
   import { archive } from '../state/archive'
+  import { backfill } from '../state/backfill'
   import { getFollowDids } from '../api/actors'
+
+  // Captured at component init (before any archive write) so backfill can tell
+  // prior-session posts (firstSeen < this) from ones loaded this session.
+  const APP_MOUNT = Date.now()
   import { digest } from '../state/digest.svelte'
   import { convoColor } from '../api/llm'
   import { SvelteSet } from 'svelte/reactivity'
@@ -353,6 +358,11 @@
         // Snapshot the follows list for the corpus (network-over-time). Runs
         // once per session in the background; recordFollows skips if unchanged.
         archive.recordFollows(await getFollowDids(did)).catch(() => {})
+        // Gap-healing backfill: page the timeline backward to import history
+        // from before this session (throttled; stops at the archived boundary).
+        // Runs silently in the background; the corpus grows. Surfaced later by
+        // the archive UI (deferred).
+        backfill(APP_MOUNT).catch(() => {})
       })
       .catch(() => {
         /* archive unavailable (private mode / no IndexedDB) — the digest still

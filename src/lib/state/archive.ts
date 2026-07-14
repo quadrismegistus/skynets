@@ -190,6 +190,22 @@ export class Archive {
     return out
   }
 
+  /** How many of these URIs were already archived *before* `before` (i.e. in a
+   * prior session). The backfill uses this to detect when it has paged back into
+   * already-recorded history and can stop. */
+  async countKnownBefore(uris: string[], before: number): Promise<number> {
+    const db = this.#db
+    if (!db) return 0
+    let n = 0
+    await Promise.all(
+      uris.map(async (u) => {
+        const row = await db.get('posts', u)
+        if (row && row.firstSeen < before) n++
+      }),
+    )
+    return n
+  }
+
   async putVectors(entries: { uri: string; vec: number[] }[]): Promise<void> {
     const db = this.#db
     if (!db || entries.length === 0) return
