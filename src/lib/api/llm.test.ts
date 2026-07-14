@@ -50,8 +50,8 @@ describe('summarizeFeed', () => {
     expect(digest.conversations.map((c) => c.id)).toEqual(['real'])
   })
 
-  it('coerces an invalid status to steady', async () => {
-    const a = mkPost({ uri: 'at://real/1' })
+  it('derives status from recency when the model gives an invalid one', async () => {
+    const a = mkPost({ uri: 'at://real/1', createdAt: new Date().toISOString() })
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
@@ -61,7 +61,8 @@ describe('summarizeFeed', () => {
       ),
     )
     const digest = await summarizeFeed([a], { provider: 'anthropic', apiKey: 'sk-ant-test', model: 'm' })
-    expect(digest.conversations[0].status).toBe('steady')
+    // 'nonsense' isn't a valid status, so it's derived — a fresh post is heating.
+    expect(digest.conversations[0].status).toBe('heating')
   })
 
   it('surfaces a clean error when the model response is truncated', async () => {
@@ -102,19 +103,15 @@ describe('summarizeFeed', () => {
     expect(digest.conversations.length).toBeGreaterThan(0)
   })
 
-  it('calls the Ollama endpoint and maps its schema-constrained JSON', async () => {
-    const a = mkPost({ uri: 'at://real/1', text: 'one' })
-    const b = mkPost({ uri: 'at://real/2', text: 'two' })
+  it('maps the lean {clusters:[{label,postIds}]} shape and derives status/id', async () => {
+    const a = mkPost({ uri: 'at://real/1', text: 'one', createdAt: new Date().toISOString() })
+    const b = mkPost({ uri: 'at://real/2', text: 'two', createdAt: new Date().toISOString() })
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       statusText: 'OK',
       json: async () => ({
-        message: {
-          content: JSON.stringify({
-            conversations: [{ id: 'c', label: 'L', summary: 's', status: 'steady', postIds: [0, 1] }],
-          }),
-        },
+        message: { content: JSON.stringify({ clusters: [{ label: 'Big News', postIds: [0, 1] }] }) },
       }),
       text: async () => '',
     } as Response)
@@ -122,16 +119,37 @@ describe('summarizeFeed', () => {
 
     const digest = await summarizeFeed([a, b], {
       provider: 'ollama',
-      model: 'llama3.1:8b',
+      model: 'qwen3.5:4b-mlx',
       ollamaUrl: 'http://localhost:11434/',
     })
-    // Hits Ollama's chat endpoint (trailing slash normalized), not Anthropic.
     expect(fetchMock).toHaveBeenCalledWith('http://localhost:11434/api/chat', expect.anything())
-    // Thinking is disabled (latency) and context is lifted past the 2048 default.
+    // Lean schema (clusters/label/postIds), think off, scaled context.
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)
     expect(body.think).toBe(false)
     expect(body.options.num_ctx).toBeGreaterThan(2048)
-    expect(digest.conversations[0].postUris).toEqual(['at://real/1', 'at://real/2'])
+    expect(body.format.properties.clusters.items.required).toEqual(['label', 'postIds'])
+    const c = digest.conversations[0]
+    expect(c.postUris).toEqual(['at://real/1', 'at://real/2'])
+    expect(c.id).toBe('big-news') // slug derived from label
+    expect(c.status).toBe('heating') // derived: fresh posts
+  })
+
+  it('derives cooling status for a cluster of old posts', async () => {
+    const old = new Date(Date.now() - 24 * 3_600_000).toISOString()
+    const a = mkPost({ uri: 'at://old/1', createdAt: old })
+    const b = mkPost({ uri: 'at://old/2', createdAt: old })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({ message: { content: JSON.stringify({ clusters: [{ label: 'Old', postIds: [0, 1] }] }) } }),
+        text: async () => '',
+      } as Response),
+    )
+    const digest = await summarizeFeed([a, b], { provider: 'ollama', model: 'm', ollamaUrl: 'http://x' })
+    expect(digest.conversations[0].status).toBe('cooling')
   })
 
   function ollamaResp(content: string) {

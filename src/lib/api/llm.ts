@@ -56,27 +56,28 @@ export const OLLAMA_MODELS: { id: string; label: string }[] = [
 
 const ENDPOINT = 'https://api.anthropic.com/v1/messages'
 
-/** JSON schema for the digest, handed to Ollama's `format` so the local model
- * is constrained to valid, parseable output (no truncation/parse fragility). */
-const DIGEST_SCHEMA = {
+/** LEAN schema for the local (Ollama) path, handed to `format`. Only the two
+ * fields the model must produce — a `label` and the member `postIds`. A heavier
+ * schema (id/summary/status) makes MLX's soft grammar drop to prose and fail
+ * (measured 0/5 valid vs 5/5 for this lean form — see PLAN §7); everything else
+ * is derived client-side. Paired with an EXPLICIT output-shape prompt, which is
+ * also load-bearing (a vague prompt fails even this lean schema). */
+const LEAN_SCHEMA = {
   type: 'object',
   properties: {
-    conversations: {
+    clusters: {
       type: 'array',
       items: {
         type: 'object',
         properties: {
-          id: { type: 'string' },
           label: { type: 'string' },
-          summary: { type: 'string' },
-          status: { type: 'string', enum: ['heating', 'cooling', 'steady'] },
           postIds: { type: 'array', items: { type: 'integer' } },
         },
-        required: ['id', 'label', 'summary', 'status', 'postIds'],
+        required: ['label', 'postIds'],
       },
     },
   },
-  required: ['conversations'],
+  required: ['clusters'],
 } as const
 
 function postText(item: FeedItem): string {
@@ -110,19 +111,33 @@ function promptLines(items: FeedItem[]): string {
     .join('\n')
 }
 
-const SYSTEM = `You are the interpreter for a Bluesky timeline visualizer. You are given the posts currently in the user's home-feed graph, one per line, tab-separated: [index], author handle, engagement counts, text.
-
-Group them into the handful of distinct CONVERSATIONS actually in play — the discourse-events a person would name if asked "what's the feed about today" (e.g. "a public figure died", "an argument about how people reacted to it", "a tooling release"). A conversation may span replies AND standalone posts that share a subject even without shared vocabulary — resolve subtweets and vague reactions to what they are actually about. Not every post joins one; ignore true one-offs rather than forcing them.
-
-Return ONLY a JSON object, no prose, of the form:
-{"conversations":[{"id":"kebab-slug","label":"Short Title","summary":"one sentence, plain and specific","status":"heating|cooling|steady","postIds":[3,7,12]}]}
+const CLUSTERING_GUIDANCE = `Group them into the handful of distinct CONVERSATIONS actually in play — the discourse-events a person would name if asked "what's the feed about today" (e.g. "a public figure died", "an argument about how people reacted to it", "a tooling release"). A conversation may span replies AND standalone posts that share a subject even without shared vocabulary — resolve subtweets and vague reactions to what they are actually about. Not every post joins one; ignore true one-offs rather than forcing them.
 
 Rules:
 - 2–6 conversations. Order them most-active first.
-- label ≤ 4 words. summary ≤ 25 words, concrete, no hedging.
+- label ≤ 4 words.
 - postIds are the integer [index] values of member posts. Use only indices that appear in the input.
-- status: heating if it looks like it's growing, cooling if petering out, else steady.
-- If a previous digest is provided, KEEP the same id and label for a conversation that continues, so labels stay stable across calls. Only add/retire conversations as the feed changes.`
+- If a previous digest is provided, KEEP the same label for a conversation that continues, so labels stay stable across calls. Only add/retire conversations as the feed changes.`
+
+/** Rich prompt for the cloud path (Anthropic), which reliably follows a heavier
+ * JSON shape, so we let it produce summary + status directly. */
+const RICH_SYSTEM = `You are the interpreter for a Bluesky timeline visualizer. You are given the posts currently in the user's home-feed graph, one per line, tab-separated: [index], author handle, engagement counts, text.
+
+${CLUSTERING_GUIDANCE}
+
+Return ONLY a JSON object, no prose, of the form:
+{"conversations":[{"id":"kebab-slug","label":"Short Title","summary":"one sentence, plain and specific","status":"heating|cooling|steady","postIds":[3,7,12]}]}
+- summary ≤ 25 words, concrete, no hedging. status: heating if growing, cooling if petering out, else steady.`
+
+/** Lean prompt for the local path (Ollama). Asks ONLY for label + postIds and is
+ * EXPLICIT about the exact JSON shape — both are required for MLX reliability
+ * (PLAN §7). summary/status/id are derived client-side. */
+const LEAN_SYSTEM = `You are the interpreter for a Bluesky timeline visualizer. You are given posts, one per line, tab-separated: [index], author handle, engagement counts, text.
+
+${CLUSTERING_GUIDANCE}
+
+Return ONLY this JSON object, no prose:
+{"clusters":[{"label":"Short Title","postIds":[3,7,12]}]}`
 
 /**
  * Pull the first complete JSON value out of a model response. Must be tolerant:
@@ -174,11 +189,37 @@ export function extractJson(text: string): unknown {
   }
 }
 
+function slug(label: string): string {
+  return label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'c'
+}
+
+function ageHours(item: FeedItem): number {
+  const rec = item.post.record
+  const created = AppBskyFeedPost.isRecord(rec) ? rec.createdAt : undefined
+  return (Date.now() - Date.parse(created ?? item.post.indexedAt)) / 3_600_000
+}
+
+/** Derive a status when the model didn't give one (the lean local path): a
+ * conversation with a fresh newest post is heating, one whose posts are all old
+ * is cooling, else steady. */
+function deriveStatus(members: FeedItem[]): ConvoStatus {
+  const newest = Math.min(...members.map(ageHours))
+  if (newest < 3) return 'heating'
+  if (newest > 12) return 'cooling'
+  return 'steady'
+}
+
 function coerceDigest(raw: unknown, items: FeedItem[]): Digest {
-  // Accept both the intended `{conversations:[…]}` and a bare `[…]` array (a
-  // soft-schema MLX model sometimes drops the wrapper object).
-  const obj = raw as { conversations?: unknown }
-  const list = Array.isArray(raw) ? raw : Array.isArray(obj?.conversations) ? obj.conversations : []
+  // Accept the rich `{conversations:[…]}` (cloud), the lean `{clusters:[…]}`
+  // (local), or a bare `[…]` array (soft-schema MLX drops the wrapper).
+  const obj = raw as { conversations?: unknown; clusters?: unknown }
+  const list = Array.isArray(raw)
+    ? raw
+    : Array.isArray(obj?.conversations)
+      ? obj.conversations
+      : Array.isArray(obj?.clusters)
+        ? obj.clusters
+        : []
   const conversations: Conversation[] = []
   for (const c of list) {
     const conv = c as { id?: unknown; label?: unknown; summary?: unknown; status?: unknown; postIds?: unknown }
@@ -186,15 +227,24 @@ function coerceDigest(raw: unknown, items: FeedItem[]): Digest {
     // Map indices back to URIs; an out-of-range or non-integer index is simply
     // dropped, so the model cannot reference a post it wasn't given.
     const kept: string[] = []
+    const members: FeedItem[] = []
     for (const id of ids) {
-      if (Number.isInteger(id) && id >= 0 && id < items.length) kept.push(items[id].post.uri)
+      if (Number.isInteger(id) && (id as number) >= 0 && (id as number) < items.length) {
+        kept.push(items[id as number].post.uri)
+        members.push(items[id as number])
+      }
     }
     if (kept.length === 0) continue
+    const label = typeof conv.label === 'string' ? conv.label : 'Untitled'
+    // Use the model's status/summary if it gave them (cloud path); otherwise
+    // derive status from recency and leave summary empty (lean local path).
     const status: ConvoStatus =
-      conv.status === 'heating' || conv.status === 'cooling' ? conv.status : 'steady'
+      conv.status === 'heating' || conv.status === 'cooling' || conv.status === 'steady'
+        ? conv.status
+        : deriveStatus(members)
     conversations.push({
-      id: typeof conv.id === 'string' && conv.id ? conv.id : `c${conversations.length}`,
-      label: typeof conv.label === 'string' ? conv.label : 'Untitled',
+      id: typeof conv.id === 'string' && conv.id ? conv.id : slug(label),
+      label,
       summary: typeof conv.summary === 'string' ? conv.summary : '',
       status,
       postUris: [...new Set(kept)],
@@ -259,7 +309,7 @@ async function summarizeAnthropic(items: FeedItem[], content: string, opts: Summ
     body: JSON.stringify({
       model: opts.model,
       max_tokens: 2048,
-      system: SYSTEM,
+      system: RICH_SYSTEM,
       messages: [{ role: 'user', content }],
     }),
   })
@@ -288,9 +338,8 @@ async function summarizeOllama(
       body: JSON.stringify({
         model: opts.model,
         stream,
-        // Constrain output to the schema — the local model can't return
-        // unparseable JSON.
-        format: DIGEST_SCHEMA,
+        // Lean schema only — a heavier one makes MLX drop to prose (PLAN §7).
+        format: LEAN_SCHEMA,
         // Disable extended reasoning: on a thinking model (qwen3, deepseek-r1)
         // the reasoning trace turns a ~15s clustering call into minutes for no
         // quality gain on this task; non-thinking models ignore the flag.
@@ -298,9 +347,9 @@ async function summarizeOllama(
         // Size the context to the actual prompt (Ollama's 2048 default, and even
         // a fixed 8192, silently truncate a large feed from the left — dropping
         // the oldest posts). Scale to the estimate + output headroom, clamped.
-        options: { temperature: 0.2, num_ctx: contextFor(SYSTEM, content) },
+        options: { temperature: 0.2, num_ctx: contextFor(LEAN_SYSTEM, content) },
         messages: [
-          { role: 'system', content: SYSTEM },
+          { role: 'system', content: LEAN_SYSTEM },
           { role: 'user', content },
         ],
       }),
