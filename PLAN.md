@@ -247,6 +247,32 @@ and E-minimal can actually ship first (see ordering note at the end).
 
 Persist every timeline post locally so nothing is lost between sessions.
 
+**Scoping (2026-07-14, after building the digest engine — do it in increments):**
+The digest engine (`state/digestEngine.svelte.ts`) already retains every ingested
+`FeedItem` and its embedding in memory (`#item`, `#vec`) and never evicts — so a lot of
+Phase A's value is really about *persisting that across reloads*, not building it from
+scratch. Three increments, smallest first:
+
+- **A0 — off-window reveal (no persistence, ~½ day).** The reported "clicking a digest
+  post does nothing when it's scrolled off" is fixable now: expose `engine.getItem(uri)`
+  and have `Graph.focusPost` inject that held `FeedItem` as a context node when the uri
+  isn't already on the graph. Fixes the click; does not survive reload.
+- **A1 — persistent archive + engine rehydration (the real foundation, ~1–2 days).**
+  A `posts` KV store (reuse `idb-keyval`, already a dep): `uri → {item, firstSeen, lastSeen}`,
+  written on every timeline/poll/thread/ancestor fetch and every engine ingest. Persist
+  the engine's cluster state (id/label/status/member-uris) and its vectors
+  (`uri → Float32Array`, so no re-embed on load). On startup, rehydrate clusters +
+  centroids from the store. `navigator.storage.persist()` to resist eviction. **This is
+  what turns Continuous mode from "rolls over the current window" into "rolls over your
+  whole feed history" and survives reloads.** A1's simple KV is forward-compatible with
+  A2's normalized schema (A2 migrates it).
+- **A2 — research corpus (later, multi-day).** Everything below: the normalized
+  three-table schema via `idb` proper, gap-healing backfill, count snapshots, deletes
+  (needs Phase B), follows-snapshots, export. The diachronic-corpus version.
+
+Recommended: **A0 now** (quick, fixes the bug), **A1 next** (makes the continuous digest
+persistent), **A2 when the corpus itself is the goal**. The rest of this section is A2.
+
 1. **Schema — normalized, three tables (this is the load-bearing decision).** A single
    post reaches you many times (reposted by several follows, plus pulled in as thread
    context); storing the whole `FeedViewPost` JSON per encounter duplicates the content
