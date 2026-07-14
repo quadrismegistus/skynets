@@ -36,6 +36,7 @@
   const PAD_TOP = 52
   const PAD_BOTTOM = 56
   const PANEL_W = 340 // DigestPanel width; nodes lay out left of it when open
+  const REPLY_CONTEXT_GRACE = 12 // extra nodes beyond Count for reply chains/parents
   const MIN_SIZE = 34
   const MAX_SIZE = 66
   const CARD_W = 360
@@ -142,8 +143,15 @@
     const set = new Map(selected.map((n) => [n.uri, n]))
     for (const n of graph.nodes) if (pinned.has(n.uri) && !set.has(n.uri)) set.set(n.uri, n)
     if (connect) {
+      // Pulled-in parent chains are added ONLY up to a total budget, so a few
+      // deep threads can't balloon a limit-10 graph to 100+ nodes. Each selected
+      // node's ancestor chain is added whole while there's room; once the budget
+      // fills, further chains are held back ("added when there's room").
+      const budget = settings.nodeLimit + REPLY_CONTEXT_GRACE
       const byUri = new Map(graph.nodes.map((n) => [n.uri, n]))
       for (const start of [...set.values()]) {
+        if (set.size >= budget) break
+        const chain: GraphNode[] = []
         let cur: GraphNode | undefined = start
         const guard = new Set<string>([start.uri])
         while (cur) {
@@ -152,8 +160,12 @@
           const pn = byUri.get(p)
           if (!pn) break
           guard.add(p)
-          set.set(p, pn)
+          if (!set.has(p)) chain.push(pn)
           cur = pn
+        }
+        for (const n of chain) {
+          if (set.size >= budget) break
+          set.set(n.uri, n)
         }
       }
     }

@@ -192,12 +192,14 @@ test('dragging moves a node without pinning; a click pins it', async ({ page }) 
   await page.mouse.move(cx, cy)
   await page.mouse.down()
   await page.mouse.move(cx - 140, cy + 90, { steps: 6 })
-  await page.mouse.up()
-  // Dragging moves the node but does NOT pin it (it drifts back on its own).
-  await expect(node).not.toHaveClass(/pinned/)
-  const after = (await node.boundingBox())!
-  const dist = Math.hypot(after.x - before.x, after.y - before.y)
+  // While held, the node is at the drag position (checked before release, since
+  // an un-pinned node drifts back to its semantic spot once let go).
+  const held = (await node.boundingBox())!
+  const dist = Math.hypot(held.x - before.x, held.y - before.y)
   expect(dist).toBeGreaterThan(60)
+  await page.mouse.up()
+  // Releasing does NOT pin it.
+  await expect(node).not.toHaveClass(/pinned/)
   // A normal click pins it where it is.
   const b2 = (await node.boundingBox())!
   await page.mouse.click(b2.x + b2.width / 2, b2.y + b2.height / 2)

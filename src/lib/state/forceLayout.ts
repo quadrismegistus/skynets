@@ -145,15 +145,17 @@ export class ForceLayout {
 
     // Cluster mode: loosen the semantic anchoring and let strong links + charge
     // pull connected posts together. Default (strict) mode keeps positions
-    // tightly on the recency × engagement axes with only a whisper of link pull.
-    ;(this.sim.force('x') as ForceX<SimNode>).strength(cluster ? 0.03 : 0.08)
-    ;(this.sim.force('y') as ForceY<SimNode>).strength(cluster ? 0.03 : 0.08)
+    // tightly on the recency × engagement axes with only a whisper of link pull
+    // — the axis anchor must OUTWEIGH the links, or many reply/topic edges drag
+    // the whole graph into a central knot and the axes stop meaning anything.
+    ;(this.sim.force('x') as ForceX<SimNode>).strength(cluster ? 0.03 : 0.12)
+    ;(this.sim.force('y') as ForceY<SimNode>).strength(cluster ? 0.03 : 0.12)
     this.sim.force(
       'link',
       forceLink<SimNode, SimLink>(safeLinks)
         .id((d) => d.id)
-        .distance(cluster ? 46 : 54)
-        .strength(cluster ? 0.5 : 0.18),
+        .distance(cluster ? 46 : 58)
+        .strength(cluster ? 0.5 : 0.06),
     )
     this.sim.force('charge', cluster ? forceManyBody<SimNode>().strength(-24) : null)
     this.sim.alpha(0.7).restart()
