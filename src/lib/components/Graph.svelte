@@ -489,7 +489,7 @@
     // Clamp nodes inside the canvas so they can't drift up under the top bar (the
     // graph starts below it, but the sim could otherwise push a node to the edge).
     layout?.setBounds(w, h, 18, 24)
-    layout?.update(t, links, new Set(pinned), settings.clusterForce)
+    layout?.update(t, links, new Set(pinned), settings.cohesion)
   })
 
   // Connect replies: pull in the parents of any loaded reply we don't have yet
@@ -745,7 +745,7 @@
     if (!t.closest('.wrap, .card, .config-wrap, .hud, .panel, .digest-btn, .topic-node')) clearAll()
   }}
 >
-  {#if !settings.clusterForce}
+  {#if settings.cohesion < 0.5}
     <div class="axis y-axis">louder ↑ · ↓ quieter</div>
     <div class="axis x-axis">← older · newer →</div>
   {/if}
@@ -916,11 +916,14 @@
         <p class="hint">Show each reply's full parent chain to the thread root (won't collapse those threads).</p>
 
         <div class="row">
-          <span class="label">Cluster</span>
-          <input type="checkbox" bind:checked={settings.clusterForce} />
-          <span class="val"></span>
+          <span class="label">Cohesion</span>
+          <input type="range" min="0" max="1" step="0.05" bind:value={settings.cohesion} />
+          <span class="val">{Math.round(settings.cohesion * 100)}%</span>
         </div>
-        <p class="hint">Let connected posts pull together, loosening the time/engagement axes.</p>
+        <p class="hint">
+          Left: posts hold to the time/engagement axes. Right: connections pull connected posts
+          together into clumps.
+        </p>
 
         <div class="row">
           <span class="label">Reposts</span>

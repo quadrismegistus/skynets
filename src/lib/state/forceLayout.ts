@@ -89,7 +89,9 @@ export class ForceLayout {
     targets: Target[],
     links: SimLink[],
     pinned: ReadonlySet<string> = new Set(),
-    cluster = false,
+    /** 0 = nodes glued to their recency/engagement targets; 1 = links + charge
+     * dominate and connected posts clump. Interpolated, not a switch. */
+    cohesion = 0,
   ) {
     // For a new node, find an already-placed anchor: follow the reply→parent
     // chain (a freshly mapped thread anchors to the clicked post), else any
@@ -143,21 +145,22 @@ export class ForceLayout {
 
     this.sim.nodes(this.#nodes)
 
-    // Cluster mode: loosen the semantic anchoring and let strong links + charge
-    // pull connected posts together. Default (strict) mode keeps positions
-    // tightly on the recency × engagement axes with only a whisper of link pull
-    // — the axis anchor must OUTWEIGH the links, or many reply/topic edges drag
-    // the whole graph into a central knot and the axes stop meaning anything.
-    ;(this.sim.force('x') as ForceX<SimNode>).strength(cluster ? 0.03 : 0.12)
-    ;(this.sim.force('y') as ForceY<SimNode>).strength(cluster ? 0.03 : 0.12)
+    // Cohesion dial: at 0 the recency × engagement axes dominate and links are a
+    // whisper (the axis anchor OUTWEIGHS the edges, so reply/topic edges can't
+    // drag the graph into a central knot); at 1 strong links + charge pull
+    // connected posts into clumps and the axes go slack. Everything in between is
+    // a smooth blend, not a switch.
+    const k = Math.max(0, Math.min(1, cohesion))
+    ;(this.sim.force('x') as ForceX<SimNode>).strength(0.18 - 0.16 * k)
+    ;(this.sim.force('y') as ForceY<SimNode>).strength(0.18 - 0.16 * k)
     this.sim.force(
       'link',
       forceLink<SimNode, SimLink>(safeLinks)
         .id((d) => d.id)
-        .distance(cluster ? 46 : 58)
-        .strength(cluster ? 0.5 : 0.06),
+        .distance(60 - 14 * k)
+        .strength(0.02 + 0.53 * k),
     )
-    this.sim.force('charge', cluster ? forceManyBody<SimNode>().strength(-24) : null)
+    this.sim.force('charge', k > 0.05 ? forceManyBody<SimNode>().strength(-30 * k) : null)
     this.sim.alpha(0.7).restart()
   }
 

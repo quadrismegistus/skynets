@@ -200,9 +200,10 @@ test('dragging moves a node without pinning; a click pins it', async ({ page }) 
   await page.mouse.up()
   // Releasing does NOT pin it.
   await expect(node).not.toHaveClass(/pinned/)
-  // A normal click pins it where it is.
-  const b2 = (await node.boundingBox())!
-  await page.mouse.click(b2.x + b2.width / 2, b2.y + b2.height / 2)
+  // A normal click pins it. Click the node locator (not stale coordinates):
+  // Playwright waits for the node to settle back from the drag before clicking,
+  // so the stronger axis snap-back can't slide it out from under the cursor.
+  await node.click()
   await expect(node).toHaveClass(/pinned/)
 })
 
@@ -225,10 +226,11 @@ test('config popover closes on a click outside it', async ({ page }) => {
   await expect(page.locator('.config')).toHaveCount(0)
 })
 
-test('cluster mode hides the semantic axes', async ({ page }) => {
+test('high cohesion hides the semantic axes', async ({ page }) => {
   await graphReady(page)
   await page.locator('.gear').click()
-  await page.locator('.config .row', { hasText: 'Cluster' }).locator('input').check()
+  // Drag Cohesion to the top of its range — the axes stop meaning anything.
+  await page.locator('.config .row', { hasText: 'Cohesion' }).locator('input').fill('1')
   await expect(page.locator('.x-axis')).toHaveCount(0)
   expect(await page.locator('button.node').count()).toBeGreaterThan(0)
 })

@@ -10,7 +10,11 @@ interface Persisted {
   livePoll: boolean
   connectReplies: boolean
   replyChains: boolean
-  clusterForce: boolean
+  /** 0 = posts glued to the recency/engagement axes; 1 = connections pull
+   * connected posts together (loosening the axes). Replaces the old boolean
+   * `clusterForce`, which is still read once for migration. */
+  cohesion: number
+  clusterForce?: boolean
   showReposts: boolean
   followsOnly: boolean
   debugMode: boolean
@@ -38,7 +42,7 @@ class Settings {
   livePoll = $state(true)
   connectReplies = $state(true)
   replyChains = $state(false)
-  clusterForce = $state(false)
+  cohesion = $state(0)
   showReposts = $state(true)
   followsOnly = $state(false)
   debugMode = $state(false)
@@ -54,7 +58,8 @@ class Settings {
     if (typeof p.livePoll === 'boolean') this.livePoll = p.livePoll
     if (typeof p.connectReplies === 'boolean') this.connectReplies = p.connectReplies
     if (typeof p.replyChains === 'boolean') this.replyChains = p.replyChains
-    if (typeof p.clusterForce === 'boolean') this.clusterForce = p.clusterForce
+    if (typeof p.cohesion === 'number') this.cohesion = Math.max(0, Math.min(1, p.cohesion))
+    else if (p.clusterForce === true) this.cohesion = 1 // migrate old boolean
     if (typeof p.showReposts === 'boolean') this.showReposts = p.showReposts
     if (typeof p.followsOnly === 'boolean') this.followsOnly = p.followsOnly
     if (typeof p.debugMode === 'boolean') this.debugMode = p.debugMode
@@ -70,7 +75,7 @@ class Settings {
             livePoll: this.livePoll,
             connectReplies: this.connectReplies,
             replyChains: this.replyChains,
-            clusterForce: this.clusterForce,
+            cohesion: this.cohesion,
             showReposts: this.showReposts,
             followsOnly: this.followsOnly,
             debugMode: this.debugMode,
