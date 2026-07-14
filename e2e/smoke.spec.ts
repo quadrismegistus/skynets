@@ -244,7 +244,7 @@ test('digest button opens the panel and annotates the graph (demo)', async ({ pa
   await expect(page.locator('.convos > li').first()).toBeVisible()
   // A conversation label is annotated onto the graph, and clicking an exemplar
   // pins its node (pops a card).
-  await expect(page.locator('.convo-label').first()).toBeVisible()
+  await expect(page.locator('.topic-node').first()).toBeVisible()
   await page.locator('.convos .ex').first().click()
   await expect(page.locator('.wrap.pinned')).toHaveCount(1)
 })

@@ -193,11 +193,10 @@
         if (pts.length === 0) return null
         const cx = pts.reduce((s, p) => s + p.px, 0) / pts.length
         const cy = pts.reduce((s, p) => s + p.py, 0) / pts.length
-        // Mark each member node with a colored ring rather than one big tint
-        // blob — a conversation's posts are usually scattered across the axes
-        // (a blob would just cover the canvas), so per-node rings stay legible.
-        const members = pts.map((p) => ({ x: p.px, y: p.py, r: p.size / 2 + 5 }))
-        return { id: c.id, label: c.label, color: convoColor(c.id), cx, cy, members }
+        // Each conversation is drawn as a topic node at the centroid of its
+        // (visible) member posts, with an edge to each member.
+        const members = pts.map((p) => ({ uri: p.node.uri, x: p.px, y: p.py }))
+        return { id: c.id, label: c.label, color: convoColor(c.id), cx, cy, uris: c.postUris, members }
       })
       .filter((a): a is NonNullable<typeof a> => a !== null)
   })
@@ -222,9 +221,26 @@
   let focusedPin = $state<string | null>(null)
   function focusPost(uri: string) {
     if (focusedPin && focusedPin !== uri) pinned.delete(focusedPin)
+    // A post can be off-graph for two reasons: it's collapsed inside a thread
+    // (un-collapse its thread so it gets its own node), or it isn't in the
+    // current window/filter at all (nothing we can do without loading it).
+    if (!nodeByUri.has(uri)) expanded.add(uri)
     pinned.add(uri)
     focusedPin = uri
     setHovered(uri)
+  }
+
+  // Click a topic node → reveal its whole conversation: pin every member post
+  // (un-collapsing threads as needed) so all of them show on the graph at once.
+  function focusTopic(uris: string[]) {
+    if (focusedPin) {
+      pinned.delete(focusedPin)
+      focusedPin = null
+    }
+    for (const u of uris) {
+      if (!nodeByUri.has(u)) expanded.add(u)
+      pinned.add(u)
+    }
   }
 
   // Collapse everything: clear hover + all pins (used by a click on empty canvas).
@@ -534,11 +550,11 @@
     {/each}
   </svg>
 
-  <!-- Conversation membership rings, painted under the nodes. -->
+  <!-- Topic edges: each conversation's node links to its member posts. -->
   <svg class="annotations" width={w} height={h}>
     {#each annotations as a (a.id)}
       {#each a.members as m}
-        <circle cx={m.x} cy={m.y} r={m.r} fill="none" stroke={a.color} />
+        <line x1={a.cx} y1={a.cy} x2={m.x} y2={m.y} stroke={a.color} />
       {/each}
     {/each}
   </svg>
@@ -564,9 +580,14 @@
   {/each}
 
   {#each annotations as a (a.id)}
-    <div class="convo-label" style="left: {a.cx}px; top: {a.cy}px; --c: {a.color}">
+    <button
+      class="topic-node"
+      style="left: {a.cx}px; top: {a.cy}px; --c: {a.color}"
+      title="Show this conversation's posts"
+      onclick={() => focusTopic(a.uris)}
+    >
       {a.label}
-    </div>
+    </button>
   {/each}
 
   {#each cards as c (c.node.uri)}
@@ -731,25 +752,33 @@
     inset: 0;
     pointer-events: none;
   }
-  .annotations circle {
-    opacity: 0.55;
-    stroke-width: 2.5;
-    stroke-dasharray: 3 4;
+  .annotations line {
+    stroke-width: 1.6;
+    opacity: 0.4;
+    stroke-dasharray: 2 4;
   }
-  .convo-label {
+  /* Topic node: sits like a node at the centroid of its conversation, edges
+     radiating to member posts. Clickable to reveal the whole conversation. */
+  .topic-node {
     position: absolute;
     transform: translate(-50%, -50%);
-    padding: 0.15rem 0.5rem;
+    max-width: 8rem;
+    padding: 0.3rem 0.6rem;
     font-size: 0.72rem;
     font-weight: 600;
+    line-height: 1.15;
     color: var(--c);
-    background: color-mix(in srgb, var(--bg-elev) 82%, transparent);
-    border: 1px solid color-mix(in srgb, var(--c) 55%, transparent);
+    background: color-mix(in srgb, var(--bg-elev) 90%, transparent);
+    border: 2px solid var(--c);
     border-radius: 999px;
-    white-space: nowrap;
-    pointer-events: none;
+    text-align: center;
+    cursor: pointer;
     user-select: none;
     backdrop-filter: blur(3px);
+    z-index: 3;
+  }
+  .topic-node:hover {
+    background: color-mix(in srgb, var(--c) 22%, var(--bg-elev));
   }
   .edges line {
     stroke: var(--text-dim);
