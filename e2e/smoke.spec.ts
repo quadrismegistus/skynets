@@ -308,6 +308,32 @@ test('pressing D on a topic node dismisses its whole conversation', async ({ pag
   await expect(page.locator('.dismissed-count')).toBeVisible()
 })
 
+test('hovering a card avatar opens a profile preview', async ({ page }) => {
+  await graphReady(page)
+  await page.locator('.wrap').first().hover()
+  await page.locator('.card').waitFor()
+  await page.locator('.card').hover()
+  await page.locator('.card .avatar-wrap').hover()
+  await expect(page.locator('.profile-hover')).toBeVisible()
+  // The preview carries the fetched profile (compact follower count).
+  await expect(page.locator('.profile-hover .ph-stats')).toContainText('followers')
+})
+
+test('a mutual is marked "follows you" on its card', async ({ page }) => {
+  await graphReady(page)
+  const wraps = await page.locator('.wrap').all()
+  let seen = false
+  for (const w of wraps) {
+    await w.hover()
+    if (await page.locator('.card .follows-you').count()) {
+      seen = true
+      break
+    }
+    await page.mouse.move(3, 3)
+  }
+  expect(seen).toBe(true)
+})
+
 test('help dialog opens and closes', async ({ page }) => {
   await graphReady(page)
   await page.locator('.help').click()

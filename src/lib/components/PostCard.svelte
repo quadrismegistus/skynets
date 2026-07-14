@@ -15,8 +15,10 @@
   import { segments } from '../api/richtext'
   import { interactions } from '../state/interactions.svelte'
   import { follows } from '../state/follows.svelte'
+  import { profiles } from '../state/profiles.svelte'
   import { session } from '../state/session.svelte'
   import { settings } from '../state/settings.svelte'
+  import ProfileHover from './ProfileHover.svelte'
 
   interface Props {
     item: FeedItem
@@ -84,6 +86,21 @@
   let copied = $state(false)
   const isSelf = $derived(item.post.author.did === session.did)
   const following = $derived(follows.following(item.post.author))
+  const followsYou = $derived(follows.followsYou(item.post.author))
+
+  // Avatar hover → profile preview. A tiny open/close delay keeps the popover
+  // from flickering as the pointer crosses the small gap to it.
+  let showProfile = $state(false)
+  let hoverTimer: ReturnType<typeof setTimeout> | undefined
+  function enterAvatar() {
+    clearTimeout(hoverTimer)
+    profiles.ensure(item.post.author.did)
+    showProfile = true
+  }
+  function leaveAvatar() {
+    clearTimeout(hoverTimer)
+    hoverTimer = setTimeout(() => (showProfile = false), 160)
+  }
 
   const REPLY =
     'M12 4C6.9 4 3 7.2 3 11.2c0 2 1 3.9 2.7 5.2-.1 1.3-.7 2.6-1.7 3.6 1.6-.1 3.3-.7 4.6-1.6 1.1.3 2.2.5 3.4.5 5.1 0 9-3.2 9-7.3C21 7.2 17.1 4 12 4z'
@@ -131,12 +148,28 @@
     {/if}
   {/if}
   <div class="head">
-    {#if item.post.author.avatar}
-      <img class="avatar" src={item.post.author.avatar} alt="" />
-    {/if}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="avatar-wrap"
+      onmouseenter={enterAvatar}
+      onmouseleave={leaveAvatar}
+    >
+      {#if item.post.author.avatar}
+        <img class="avatar" src={item.post.author.avatar} alt="" />
+      {:else}
+        <div class="avatar avatar-blank"></div>
+      {/if}
+      {#if showProfile}
+        <div class="profile-pop" onmouseenter={enterAvatar} onmouseleave={leaveAvatar} role="tooltip">
+          <ProfileHover author={item.post.author} />
+        </div>
+      {/if}
+    </div>
     <div class="meta">
       <span class="name">{authorName(item)}</span>
-      <span class="handle">@{item.post.author.handle}</span>
+      <span class="handle">
+        @{item.post.author.handle}{#if followsYou && !isSelf}<span class="follows-you">follows you</span>{/if}
+      </span>
     </div>
     {#if !isSelf}
       <button
@@ -350,11 +383,27 @@
     font-size: 0.75rem;
     white-space: nowrap;
   }
+  .avatar-wrap {
+    position: relative;
+    flex: none;
+    cursor: pointer;
+  }
   .avatar {
     width: 32px;
     height: 32px;
     border-radius: 50%;
     object-fit: cover;
+    display: block;
+  }
+  .avatar-blank {
+    background: var(--border);
+  }
+  /* Profile preview popover — hangs below-right of the avatar, above the card. */
+  .profile-pop {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 20;
   }
   .meta {
     display: flex;
@@ -368,6 +417,18 @@
   .handle {
     color: var(--text-dim);
     font-size: 0.78rem;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .follows-you {
+    padding: 0.05rem 0.3rem;
+    font-size: 0.6rem;
+    font-weight: 600;
+    color: var(--text-dim);
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    border-radius: 0.3rem;
+    white-space: nowrap;
   }
   .text {
     white-space: pre-wrap;
