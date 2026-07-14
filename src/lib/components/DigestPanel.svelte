@@ -82,10 +82,14 @@
         {:else if digest.engine.lastGate && !digest.engine.lastGate.shouldRoll}
           nothing new last check ({digest.engine.bufferedCount} buffered)
         {:else if digest.engine.clusters.length}
-          {digest.engine.clusters.length} conversations tracked
+          {digest.engine.clusters.length} conversations tracked · auto-updating
         {:else}
-          press Update to start the rolling digest
+          starting the rolling digest…
         {/if}
+      </p>
+      <p class="note">
+        Updates automatically as new posts arrive (turn on <b>Live</b> in the graph settings to keep
+        the feed flowing). Most checks are free — the LLM only runs when something new appears.
       </p>
     {/if}
 

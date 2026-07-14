@@ -264,16 +264,14 @@ test('digest exemplars keep one focused card; background click collapses', async
   await expect(page.locator('.wrap.pinned')).toHaveCount(0)
 })
 
-test('continuous mode establishes a rolling digest (demo)', async ({ page }) => {
+test('continuous mode auto-establishes without pressing Update (demo)', async ({ page }) => {
   await graphReady(page)
   await page.locator('.digest-btn').click()
   await page.locator('.convos > li').first().waitFor()
-  // Turn on continuous (rolling) mode and update.
+  // Turn on continuous — auto-cadence should establish on its own (no Update click).
   await page.locator('.toggle input[type=checkbox]').check()
-  await page.locator('.go, .go.wide').first().click()
-  // The engine establishes conversations and tracks them.
+  await expect(page.locator('.engine-status')).toContainText(/auto-updating/, { timeout: 5000 })
   await expect(page.locator('.convos > li').first()).toBeVisible()
-  await expect(page.locator('.engine-status')).toContainText(/conversations tracked|nothing new/)
 })
 
 test('help dialog opens and closes', async ({ page }) => {

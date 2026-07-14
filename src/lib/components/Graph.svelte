@@ -414,6 +414,35 @@
     return () => clearInterval(id)
   })
 
+  // Auto-cadence: in Continuous digest mode, ingest new posts into the rolling
+  // engine on a timer — hands-free. The engine dedups already-seen posts and the
+  // gate skips the LLM when nothing is new, so most ticks are cheap. Toggling
+  // Continuous on triggers the initial establish; the live poll then feeds new
+  // posts in over time.
+  const DIGEST_CADENCE_MS = 60_000
+  async function runDigestTick() {
+    if (loading || digest.loading || feedItems.length === 0) return
+    // First establish fills the window so the initial clustering is rich.
+    if (digest.engine.clusters.length === 0) {
+      let guard = 0
+      while (feedItems.length < digest.window && cursor && !loading && guard++ < 12) {
+        await load(true)
+      }
+    }
+    await digest.summarize(feedItems.slice(0, digest.window))
+  }
+  $effect(() => {
+    if (!digest.continuous) return
+    // Only `digest.continuous` is read synchronously here, so the interval isn't
+    // torn down every time the feed changes; the ticks read the feed at call time.
+    const t0 = setTimeout(runDigestTick, 400)
+    const id = setInterval(runDigestTick, DIGEST_CADENCE_MS)
+    return () => {
+      clearTimeout(t0)
+      clearInterval(id)
+    }
+  })
+
   async function load(append: boolean) {
     if (loading) return
     loading = true
