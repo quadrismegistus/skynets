@@ -198,9 +198,14 @@
   // color keys the panel swatch and this overlay so they read as one thing.
   const annotations = $derived.by(() => {
     const convos = digest.digest?.conversations ?? []
+    // Membership is exclusive: each post belongs to the FIRST conversation
+    // (most-active first) that claims it, so a post never links to two topics.
+    const claimed = new Set<string>()
     return convos
       .map((c) => {
-        const pts = c.postUris
+        const own = c.postUris.filter((u) => !claimed.has(u))
+        own.forEach((u) => claimed.add(u))
+        const pts = own
           .map((u) => placedByUri.get(u))
           .filter((p): p is NonNullable<typeof p> => p != null)
         if (pts.length === 0) return null
@@ -208,7 +213,7 @@
         const cy = pts.reduce((s, p) => s + p.py, 0) / pts.length
         // Each conversation is a topic node linked to its (visible) member posts.
         const members = pts.map((p) => ({ uri: p.node.uri, x: p.px, y: p.py }))
-        return { id: c.id, sid: `topic:${c.id}`, label: c.label, color: convoColor(c.id), cx, cy, uris: c.postUris, members }
+        return { id: c.id, sid: `topic:${c.id}`, label: c.label, color: convoColor(c.id), cx, cy, uris: own, members }
       })
       .filter((a): a is NonNullable<typeof a> => a !== null)
   })
@@ -985,6 +990,7 @@
     position: absolute;
     left: 16px;
     bottom: 16px;
+    z-index: 30; /* above topic nodes (z-index 3) and the digest panel */
   }
   .gear {
     display: flex;
@@ -1113,6 +1119,7 @@
     align-items: center;
     gap: 0.75rem;
     font-size: 0.85rem;
+    z-index: 30; /* above topic nodes */
   }
   .dismissed-count {
     color: var(--text-dim);
