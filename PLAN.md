@@ -450,8 +450,14 @@ Consequences and fixes:
 - **The app parser must be tolerant** (shipped a balance-scanner; should upgrade to a JS
   `jsonrepair` lib + schema-validate, mirroring `largeliterarymodels/llm.py`).
   `json_repair` fixes malformed *JSON* but **cannot** rescue prose output.
-- **The heavy "establish"/full-digest call needs retry-until-valid** — regenerate if it
-  doesn't parse+validate. This is the single real reliability defect on local (see below).
+- **KEEP THE SCHEMA LEAN — this is the single biggest local-reliability lever.** Measured
+  on `4b-mlx` over three feed slices, 5 seeds each: a 5-required-field schema
+  (`id,label,summary,status,postIds`) produced valid JSON **0/5 every time**; a 2-field
+  schema (`label,postIds`) produced valid JSON **5/5 every time**. MLX's soft grammar chokes
+  on heavy schemas and drops to prose. So **ask the local model for only what only it can
+  do — group posts into `{label, postIds}` — and derive the rest client-side** (status from
+  members' engagement velocity, id from a slug, summary via an optional cheap second pass or
+  skip it). This mostly obviates retry; keep retry-until-valid as a cheap backstop anyway.
 - A strict parser that silently returns empty **undercounts the model** — it reads as
   "model produced nothing" when the model produced a lot in the wrong shape. This
   contaminated an earlier "4b is unstable" conclusion.
@@ -510,8 +516,17 @@ fixed LLM ground truth:
 
 ### The corrected all-local architecture
 
-1. **Establish / full re-digest** (occasional): `qwen3.5:4b-mlx`, **retry-until-valid JSON**
-   (parse + `jsonrepair` + schema-validate, regenerate on failure). Produces the cluster set.
+**Validated end-to-end 2026-07-14** (`scratchpad/loop.py`): lean-schema establish on 40
+posts → 3 rolling batches of 20 → a coherent 6-cluster digest, 43/100 placed, ~20s total,
+all-local, $0. Establish reliable with the lean schema; rolling continues + spawns cleanly
+at ~5s/step; exact-label matching kept continuations clean enough the dedup never fired.
+Open item: the coarse gate's *skip* case (a mostly-continuation batch → don't roll) is
+unproven — this feed's batches were all genuinely novel, so the gate correctly said "roll"
+every time but never had to say "skip."
+
+1. **Establish / full re-digest** (occasional): `qwen3.5:4b-mlx`, **lean schema
+   (`{label, postIds}`)** + retry-until-valid backstop (parse + `jsonrepair` + validate).
+   Derive status/summary/id client-side. Produces the cluster set.
 2. **Rolling continuation** (frequent): `qwen3.5:4b-mlx`, balanced prompt (full-digest
    discipline), compact cluster-delta output. Extends clusters + spawns new ones. Proven
    to work; ~50% cheaper prefill; 4–11s.
