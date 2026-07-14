@@ -5,8 +5,10 @@ import {
   summarizeFeed,
   type Digest,
   type Provider,
+  type SummarizeOpts,
 } from '../api/llm'
 import type { FeedItem } from '../api/timeline'
+import { DigestEngine } from './digestEngine.svelte'
 
 const KEY = 'skynets.llm'
 
@@ -16,6 +18,7 @@ interface Persisted {
   ollamaModel: string
   ollamaUrl: string
   window: number
+  continuous: boolean
 }
 
 /** How many posts to send to the digest. ~70 was the sweet spot in testing:
@@ -46,6 +49,9 @@ class DigestState {
   ollamaModel = $state(DEFAULT_OLLAMA_MODEL)
   ollamaUrl = $state(DEFAULT_OLLAMA_URL)
   window = $state(DEFAULT_WINDOW)
+  /** Continuous mode: maintain a rolling digest via the engine (embed → gate →
+   * establish/roll/skip) instead of a fresh full digest each press (PLAN §7). */
+  continuous = $state(false)
   digest = $state<Digest | undefined>(undefined)
   loading = $state(false)
   error = $state<string | undefined>(undefined)
@@ -53,6 +59,8 @@ class DigestState {
   streamText = $state('')
   /** When the last digest was produced, for the panel's "as of" note. */
   ranAt = $state<number | undefined>(undefined)
+  /** The rolling engine (used in continuous mode). */
+  engine = new DigestEngine()
 
   constructor() {
     const p = load()
@@ -61,6 +69,7 @@ class DigestState {
     if (typeof p.ollamaModel === 'string') this.ollamaModel = p.ollamaModel
     if (typeof p.ollamaUrl === 'string') this.ollamaUrl = p.ollamaUrl
     if (typeof p.window === 'number' && p.window > 0) this.window = p.window
+    if (typeof p.continuous === 'boolean') this.continuous = p.continuous
 
     if (typeof localStorage !== 'undefined') {
       $effect.root(() => {
@@ -71,10 +80,21 @@ class DigestState {
             ollamaModel: this.ollamaModel,
             ollamaUrl: this.ollamaUrl,
             window: this.window,
+            continuous: this.continuous,
           }
           localStorage.setItem(KEY, JSON.stringify(data))
         })
       })
+    }
+  }
+
+  #opts(previous?: Digest): SummarizeOpts {
+    return {
+      provider: this.provider,
+      model: this.provider === 'ollama' ? this.ollamaModel : this.model,
+      apiKey: this.apiKey,
+      ollamaUrl: this.ollamaUrl,
+      previous,
     }
   }
 
@@ -84,17 +104,15 @@ class DigestState {
     this.error = undefined
     this.streamText = ''
     try {
-      this.digest = await summarizeFeed(
-        items,
-        {
-          provider: this.provider,
-          model: this.provider === 'ollama' ? this.ollamaModel : this.model,
-          apiKey: this.apiKey,
-          ollamaUrl: this.ollamaUrl,
-          previous: this.digest,
-        },
-        (raw) => (this.streamText = raw),
-      )
+      if (this.continuous) {
+        // Rolling engine: embed → gate → establish/roll/skip. It maintains its
+        // own clusters across calls; we surface them as the digest.
+        await this.engine.ingest(items, this.#opts())
+        if (this.engine.error) this.error = this.engine.error
+        this.digest = this.engine.toDigest()
+      } else {
+        this.digest = await summarizeFeed(items, this.#opts(this.digest), (raw) => (this.streamText = raw))
+      }
       this.ranAt = Date.now()
     } catch (err) {
       this.error = err instanceof Error ? err.message : 'Summary failed'
@@ -108,6 +126,7 @@ class DigestState {
     this.digest = undefined
     this.error = undefined
     this.ranAt = undefined
+    this.engine.reset()
   }
 }
 

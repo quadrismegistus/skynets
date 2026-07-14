@@ -17,6 +17,8 @@
   const byUri = $derived(new Map(items.map((i) => [i.post.uri, i])))
   const convos = $derived(digest.digest?.conversations ?? [])
   const originHint = typeof location !== 'undefined' ? location.origin : 'http://localhost:1997'
+  // Streamed raw text comes from the engine in continuous mode, else the store.
+  const liveStream = $derived(digest.continuous ? digest.engine.streamText : digest.streamText)
 
   function text(item: FeedItem): string {
     const rec = item.post.record
@@ -26,6 +28,12 @@
     heating: '▲',
     cooling: '▼',
     steady: '■',
+  }
+  const phaseLabel: Record<string, string> = {
+    embedding: 'embedding new posts…',
+    establishing: 'establishing conversations…',
+    rolling: 'rolling in new posts…',
+    skipped: 'nothing new — skipped',
   }
 
   // Elapsed timer while a summary is in flight — the point of the raw stream is
@@ -62,6 +70,25 @@
       <span class="wval">{digest.window}</span>
     </div>
 
+    <label class="row toggle">
+      <input type="checkbox" bind:checked={digest.continuous} />
+      <span>Continuous (rolling)</span>
+    </label>
+
+    {#if digest.continuous}
+      <p class="engine-status">
+        {#if digest.loading}
+          {phaseLabel[digest.engine.phase] ?? 'working…'}
+        {:else if digest.engine.lastGate && !digest.engine.lastGate.shouldRoll}
+          nothing new last check ({digest.engine.bufferedCount} buffered)
+        {:else if digest.engine.clusters.length}
+          {digest.engine.clusters.length} conversations tracked
+        {:else}
+          press Update to start the rolling digest
+        {/if}
+      </p>
+    {/if}
+
     {#if digest.provider === 'anthropic'}
       <label class="field">
         <span>Anthropic key</span>
@@ -79,7 +106,7 @@
           {/each}
         </select>
         <button class="go" onclick={onsummarize} disabled={digest.loading || items.length === 0}>
-          {digest.loading ? 'Reading…' : digest.digest ? 'Re-summarize' : 'Summarize'}
+          {digest.loading ? (digest.continuous ? 'Updating…' : 'Reading…') : digest.continuous ? 'Update digest' : digest.digest ? 'Re-summarize' : 'Summarize'}
         </button>
       </div>
       <p class="note">
@@ -102,7 +129,7 @@
       </label>
       <div class="row">
         <button class="go wide" onclick={onsummarize} disabled={digest.loading || items.length === 0}>
-          {digest.loading ? 'Reading…' : digest.digest ? 'Re-summarize' : 'Summarize'}
+          {digest.loading ? (digest.continuous ? 'Updating…' : 'Reading…') : digest.continuous ? 'Update digest' : digest.digest ? 'Re-summarize' : 'Summarize'}
         </button>
       </div>
       <p class="note">
@@ -122,11 +149,11 @@
   {#if digest.loading}
     <div class="stream-wrap">
       <div class="stream-head">
-        <span>{digest.streamText ? 'streaming…' : 'waiting for first token…'}</span>
-        <span class="clock">{elapsed.toFixed(1)}s · {digest.streamText.length} chars</span>
+        <span>{liveStream ? 'streaming…' : 'waiting for first token…'}</span>
+        <span class="clock">{elapsed.toFixed(1)}s · {liveStream.length} chars</span>
       </div>
-      {#if digest.streamText}
-        <pre class="stream">{digest.streamText}</pre>
+      {#if liveStream}
+        <pre class="stream">{liveStream}</pre>
       {/if}
     </div>
   {:else if convos.length === 0}
@@ -238,6 +265,21 @@
     font-variant-numeric: tabular-nums;
     min-width: 2em;
     text-align: right;
+  }
+  .toggle {
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+  }
+  .toggle span {
+    color: var(--text-dim);
+    font-size: 0.78rem;
+  }
+  .engine-status {
+    margin: 0;
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    font-style: italic;
   }
   .seg {
     display: flex;
