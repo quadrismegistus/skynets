@@ -18,6 +18,8 @@
   import { ancestors } from '../state/ancestors.svelte'
   import { follows } from '../state/follows.svelte'
   import { session } from '../state/session.svelte'
+  import { archive } from '../state/archive'
+  import { getFollowDids } from '../api/actors'
   import { digest } from '../state/digest.svelte'
   import { convoColor } from '../api/llm'
   import { SvelteSet } from 'svelte/reactivity'
@@ -89,8 +91,11 @@
   // parents are pulled-in *context* that only ever appears attached (mapped or
   // chained), never on its own. Primary sources come first so a timeline copy
   // of a post wins dedup over a fetched one.
+  // Posts revived from the archive when a rolling digest references one that's
+  // scrolled out of the loaded feed (off-window reveal, PLAN §7 Phase A).
+  let revived = $state<FeedItem[]>([])
   const primarySources = $derived([...compose.injected, ...feedItems])
-  const allItems = $derived([...primarySources, ...threads.posts, ...ancestors.posts])
+  const allItems = $derived([...primarySources, ...threads.posts, ...ancestors.posts, ...revived])
   const primaryUris = $derived(new Set(primarySources.map((i) => i.post.uri)))
   const visible = $derived(allItems.filter((i) => !read.isDismissed(i.post.uri)))
   const graph = $derived(buildGraph(visible, expanded, primaryUris))
@@ -235,12 +240,18 @@
   // post is kept at a time: focusing a new one releases the previous focus pin
   // (but leaves posts you pinned by hand alone).
   let focusedPin = $state<string | null>(null)
-  function focusPost(uri: string) {
+  async function focusPost(uri: string) {
     if (focusedPin && focusedPin !== uri) pinned.delete(focusedPin)
-    // A post can be off-graph for two reasons: it's collapsed inside a thread
-    // (un-collapse its thread so it gets its own node), or it isn't in the
-    // current window/filter at all (nothing we can do without loading it).
-    if (!nodeByUri.has(uri)) expanded.add(uri)
+    // A post can be off-graph two ways: collapsed inside a thread (un-collapse
+    // it), or scrolled out of the loaded window entirely. For the latter, revive
+    // it from the engine's memory or the archive and inject it as a node.
+    if (!nodeByUri.has(uri)) {
+      expanded.add(uri)
+      if (!allItems.some((i) => i.post.uri === uri)) {
+        const item = digest.engine.getItem(uri) ?? (await archive.getPosts([uri])).get(uri)
+        if (item) revived = [...revived.filter((r) => r.post.uri !== uri), item]
+      }
+    }
     pinned.add(uri)
     focusedPin = uri
     setHovered(uri)
@@ -330,6 +341,25 @@
     return out
   })
 
+  // Open the per-user archive and rehydrate the rolling digest from it, so a
+  // continuous digest survives reloads and keeps its whole history (Phase A).
+  $effect(() => {
+    const did = session.did
+    if (!did) return
+    archive
+      .open(did)
+      .then(async () => {
+        await digest.engine.rehydrate()
+        // Snapshot the follows list for the corpus (network-over-time). Runs
+        // once per session in the background; recordFollows skips if unchanged.
+        archive.recordFollows(await getFollowDids(did)).catch(() => {})
+      })
+      .catch(() => {
+        /* archive unavailable (private mode / no IndexedDB) — the digest still
+           works in-memory, just not persisted. */
+      })
+  })
+
   // ── force layout lifecycle ────────────────────────────────────────────────
   let layout: ForceLayout | undefined
   $effect(() => {
@@ -400,6 +430,7 @@
     if (loading) return
     try {
       const page = await getTimeline()
+      void archive.record(page.items)
       const have = new Set(items.map((i) => i.post.uri))
       const fresh = page.items.filter((i) => !have.has(i.post.uri))
       if (fresh.length) items = [...fresh, ...items]
@@ -449,6 +480,7 @@
     error = undefined
     try {
       const page = await getTimeline(append ? cursor : undefined)
+      void archive.record(page.items)
       items = append ? [...items, ...page.items] : page.items
       cursor = page.cursor
     } catch (err) {

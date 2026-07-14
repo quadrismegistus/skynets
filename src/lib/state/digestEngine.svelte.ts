@@ -8,6 +8,7 @@ import {
   type SummarizeOpts,
 } from '../api/llm'
 import { centroid, cosine, embedTexts, noveltyGate, type GateResult } from '../api/embed'
+import { archive } from './archive'
 
 /** Force a roll once this many posts have buffered, even if the gate keeps
  * saying "skip" — so a slow trickle of near-cluster posts still gets folded in
@@ -72,6 +73,38 @@ export class DigestEngine {
 
   bufferedCount = $state(0)
 
+  /** A post the engine has ingested (kept in memory; also survives reload after
+   * rehydrate) — used to revive off-window posts a rolling digest references. */
+  getItem(uri: string): FeedItem | undefined {
+    return this.#item.get(uri)
+  }
+
+  /** Restore clusters + vectors + member posts from the archive (Phase A) so the
+   * rolling digest survives reloads and keeps its whole history. */
+  async rehydrate(): Promise<void> {
+    if (this.clusters.length > 0) return
+    const persisted = await archive.getDigest()
+    if (persisted.length === 0) return
+    const uris = [...new Set(persisted.flatMap((c) => c.uris))]
+    const [posts, vecs] = await Promise.all([archive.getPosts(uris), archive.getVectors(uris)])
+    for (const [u, it] of posts) this.#item.set(u, it)
+    for (const [u, v] of vecs) this.#vec.set(u, v)
+    this.clusters = persisted.map((c) => ({
+      id: c.id,
+      label: c.label,
+      summary: c.summary,
+      status: (c.status as ConvoStatus) ?? 'steady',
+      uris: c.uris,
+      centroid: this.#centroidOf(c.uris),
+    }))
+  }
+
+  #persist() {
+    void archive.putDigest(
+      this.clusters.map((c) => ({ id: c.id, label: c.label, summary: c.summary, status: c.status, uris: c.uris })),
+    )
+  }
+
   /** The digest as the panel/graph consume it. */
   toDigest(): Digest {
     return {
@@ -135,6 +168,8 @@ export class DigestEngine {
         this.#item.set(it.post.uri, it)
         if (vecs[k]) this.#vec.set(it.post.uri, vecs[k])
       })
+      // Cache the fresh vectors so a reload doesn't re-embed the whole feed.
+      void archive.putVectors(fresh.map((it, k) => ({ uri: it.post.uri, vec: vecs[k] })).filter((e) => e.vec))
 
       const gate = noveltyGate(vecs, this.clusters.map((c) => c.centroid))
       this.lastGate = gate
@@ -176,6 +211,7 @@ export class DigestEngine {
       uris: c.postUris,
       centroid: this.#centroidOf(c.postUris),
     }))
+    this.#persist()
     this.lastRunAt = Date.now()
     this.phase = 'idle'
   }
@@ -221,6 +257,7 @@ export class DigestEngine {
     }
     // Reassign to trigger reactivity (mutated cluster objects in place above).
     this.clusters = [...this.clusters]
+    this.#persist()
     this.lastRunAt = Date.now()
     this.phase = 'idle'
   }
