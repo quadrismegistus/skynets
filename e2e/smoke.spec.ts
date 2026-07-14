@@ -115,7 +115,7 @@ test('composing with an image attaches and posts', async ({ page }) => {
 test('connect-replies draws edges for small threads by default', async ({ page }) => {
   await graphReady(page)
   // The demo mini-thread (post + one reply) renders as a connected edge.
-  expect(await page.locator('.edges line').count()).toBeGreaterThan(0)
+  expect(await page.locator('.edges path').count()).toBeGreaterThan(0)
 })
 
 test('a reposted node shows the reposter avatar', async ({ page }) => {
@@ -148,7 +148,7 @@ test('Map replies expands a thread with edges', async ({ page }) => {
   await page.locator('.card').hover()
   await page.locator('.map-replies').click()
   await page.waitForTimeout(800)
-  expect(await page.locator('.edges line').count()).toBeGreaterThan(0)
+  expect(await page.locator('.edges path').count()).toBeGreaterThan(0)
 })
 
 test('follow button toggles; unfollowing prunes the author from the graph', async ({ page }) => {
@@ -209,13 +209,13 @@ test('dragging moves a node without pinning; a click pins it', async ({ page }) 
 
 test('Reply chains expands a collapsed thread into a connected chain', async ({ page }) => {
   await graphReady(page)
-  const edgesBefore = await page.locator('.edges line').count()
+  const edgesBefore = await page.locator('.edges path').count()
   await page.locator('.gear').click()
   await page.locator('.config .row', { hasText: 'Reply chains' }).locator('input').check()
   await page.mouse.click(650, 400) // close config
   await page.waitForTimeout(1200)
   // The 5-post demo thread stops collapsing and draws its chain → more edges.
-  expect(await page.locator('.edges line').count()).toBeGreaterThan(edgesBefore)
+  expect(await page.locator('.edges path').count()).toBeGreaterThan(edgesBefore)
 })
 
 test('config popover closes on a click outside it', async ({ page }) => {

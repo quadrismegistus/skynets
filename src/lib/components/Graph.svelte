@@ -379,6 +379,20 @@
 
   // Edges go child (reply) → parent, trimmed to each node's rim and leaving a
   // gap at the parent end for the arrowhead.
+  // A quadratic-bezier path from (x1,y1) to (x2,y2), bowed sideways by a control
+  // point offset perpendicular to the chord. The bow makes it unambiguous which
+  // two nodes an edge joins even when a third node sits on the straight line
+  // between them — the edge arcs clear of it rather than passing through.
+  function curvePath(x1: number, y1: number, x2: number, y2: number, frac = 0.16, cap = 34) {
+    const dx = x2 - x1
+    const dy = y2 - y1
+    const len = Math.hypot(dx, dy) || 1
+    const bow = Math.min(len * frac, cap)
+    const cx = (x1 + x2) / 2 - (dy / len) * bow
+    const cy = (y1 + y2) / 2 + (dx / len) * bow
+    return `M${x1.toFixed(1)},${y1.toFixed(1)} Q${cx.toFixed(1)},${cy.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)}`
+  }
+
   const edgeLines = $derived.by(() =>
     visibleEdges
       .map((e) => {
@@ -392,10 +406,12 @@
         const uy = dy / len
         return {
           id: e.id,
-          x1: a.px + ux * (a.size / 2),
-          y1: a.py + uy * (a.size / 2),
-          x2: b.px - ux * (b.size / 2 + 7),
-          y2: b.py - uy * (b.size / 2 + 7),
+          d: curvePath(
+            a.px + ux * (a.size / 2),
+            a.py + uy * (a.size / 2),
+            b.px - ux * (b.size / 2 + 7),
+            b.py - uy * (b.size / 2 + 7),
+          ),
         }
       })
       .filter((l): l is NonNullable<typeof l> => l !== null),
@@ -766,13 +782,7 @@
       </marker>
     </defs>
     {#each edgeLines as line (line.id)}
-      <line
-        x1={line.x1}
-        y1={line.y1}
-        x2={line.x2}
-        y2={line.y2}
-        marker-end="url(#reply-arrow)"
-      />
+      <path d={line.d} fill="none" marker-end="url(#reply-arrow)" />
     {/each}
   </svg>
 
@@ -780,7 +790,7 @@
   <svg class="annotations" width={w} height={h}>
     {#each topics as a (a.id)}
       {#each a.members as m}
-        <line x1={a.tx} y1={a.ty} x2={m.x} y2={m.y} stroke={a.color} />
+        <path d={curvePath(a.tx, a.ty, m.x, m.y, 0.12, 26)} fill="none" stroke={a.color} />
       {/each}
     {/each}
   </svg>
@@ -1008,9 +1018,10 @@
     inset: 0;
     pointer-events: none;
   }
-  .annotations line {
-    stroke-width: 2.4;
-    opacity: 0.7;
+  .annotations path {
+    fill: none;
+    stroke-width: 1.5;
+    opacity: 0.65;
     stroke-dasharray: 3 4;
   }
   /* Topic node: sits like a node at the centroid of its conversation, edges
@@ -1040,10 +1051,11 @@
   .topic-node.pinned {
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--c) 60%, transparent);
   }
-  .edges line {
+  .edges path {
+    fill: none;
     stroke: var(--text-dim);
-    stroke-width: 2.4;
-    opacity: 0.8;
+    stroke-width: 1.4;
+    opacity: 0.7;
   }
   .edges marker path {
     fill: var(--text-dim);
