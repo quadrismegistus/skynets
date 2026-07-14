@@ -409,6 +409,94 @@ async function summarizeOllama(
   return coerceDigest(await ollamaRaw(LEAN_SYSTEM, content, LEAN_SCHEMA, opts, onProgress), items)
 }
 
+// ── Rolling continuation (PLAN §7) ──────────────────────────────────────────
+// Incorporate only NEW posts into an existing digest: send the existing labels +
+// the new posts, ask "continue an existing conversation or start a new one." The
+// balanced prompt (full-digest discipline) + lean output is what makes this
+// reliable locally; the engine merges the result and dedups new clusters.
+
+export interface RollUpdate {
+  label: string
+  /** The model's hint; the engine matches by label, so this is advisory. */
+  isNew: boolean
+  uris: string[]
+}
+
+const ROLL_SCHEMA = {
+  type: 'object',
+  properties: {
+    results: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          label: { type: 'string' },
+          isNew: { type: 'boolean' },
+          postIds: { type: 'array', items: { type: 'integer' } },
+        },
+        required: ['label', 'isNew', 'postIds'],
+      },
+    },
+  },
+  required: ['results'],
+} as const
+
+const ROLL_SYSTEM = `You maintain a running digest of a Bluesky feed. You are given the conversations already identified (by label), then a batch of NEW posts (numbered [index]). Produce 2–6 conversations TOTAL covering these new posts. Each new post either EXTENDS an existing conversation (reuse its EXACT label — prefer this when it fits) or joins a NEW one you name. Merge related topics into one; every conversation needs at least 2 of the new posts; drop true one-offs. Resolve subtweets and vague reactions to what they are actually about.
+
+Return ONLY this JSON object, no prose:
+{"results":[{"label":"Short Title","isNew":true,"postIds":[0,3]}]}`
+
+function rollContent(newItems: FeedItem[], existing: { label: string; summary?: string }[]): string {
+  const ex = existing.map((c) => `"${c.label}"${c.summary ? ` — ${c.summary}` : ''}`).join('\n')
+  return `EXISTING CONVERSATIONS:\n${ex || '(none yet)'}\n\nNEW POSTS:\n${promptLines(newItems)}`
+}
+
+function coerceRoll(raw: unknown, newItems: FeedItem[]): RollUpdate[] {
+  const obj = raw as { results?: unknown }
+  const list = Array.isArray(raw) ? raw : Array.isArray(obj?.results) ? obj.results : []
+  const out: RollUpdate[] = []
+  for (const r of list) {
+    const rr = r as { label?: unknown; isNew?: unknown; postIds?: unknown }
+    const ids = Array.isArray(rr.postIds) ? rr.postIds : []
+    const uris: string[] = []
+    for (const id of ids) {
+      if (Number.isInteger(id) && (id as number) >= 0 && (id as number) < newItems.length) {
+        uris.push(newItems[id as number].post.uri)
+      }
+    }
+    if (uris.length === 0) continue
+    out.push({
+      label: typeof rr.label === 'string' && rr.label ? rr.label : 'Untitled',
+      isNew: rr.isNew !== false,
+      uris: [...new Set(uris)],
+    })
+  }
+  return out
+}
+
+/** Roll a batch of new posts into an existing set of conversations. Returns the
+ * changed/new conversations with their new-post URIs; the caller merges. */
+export async function rollFeed(
+  newItems: FeedItem[],
+  existing: { label: string; summary?: string }[],
+  opts: SummarizeOpts,
+  onProgress?: OnProgress,
+): Promise<RollUpdate[]> {
+  if (newItems.length === 0) return []
+  if (isDemo()) return demoRoll(newItems)
+  const content = rollContent(newItems, existing)
+  if (opts.provider === 'ollama') {
+    return coerceRoll(await ollamaRaw(ROLL_SYSTEM, content, ROLL_SCHEMA, opts, onProgress), newItems)
+  }
+  if (!opts.apiKey) return demoRoll(newItems)
+  return coerceRoll(await anthropicRaw(ROLL_SYSTEM, content, opts), newItems)
+}
+
+/** Offline roll: one keyword bucket, so demo/e2e exercise the merge path. */
+function demoRoll(newItems: FeedItem[]): RollUpdate[] {
+  return [{ label: 'New Posts', isNew: true, uris: newItems.map((i) => i.post.uri) }]
+}
+
 /** Exemplar posts for a conversation, loudest-by-velocity first. */
 export function exemplars(convo: Conversation, byUri: Map<string, FeedItem>, n = 3): FeedItem[] {
   return convo.postUris
