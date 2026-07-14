@@ -520,9 +520,12 @@ fixed LLM ground truth:
 posts → 3 rolling batches of 20 → a coherent 6-cluster digest, 43/100 placed, ~20s total,
 all-local, $0. Establish reliable with the lean schema; rolling continues + spawns cleanly
 at ~5s/step; exact-label matching kept continuations clean enough the dedup never fired.
-Open item: the coarse gate's *skip* case (a mostly-continuation batch → don't roll) is
-unproven — this feed's batches were all genuinely novel, so the gate correctly said "roll"
-every time but never had to say "skip."
+The coarse gate's *skip* case is now **validated too** (`scratchpad/gate_skip.py`): with
+`all-minilm` centroids, a batch of re-shown/established posts scores 0–2/12 "novel"
+(mean-sim ~0.48) and a genuinely-new batch scores 9/12 (mean-sim ~0.29). Decision rule:
+**skip the LLM roll when the novel-fraction is below ~0.4** (equivalently mean centroid-sim
+above ~0.4). Per-post routing stays too noisy to use, but the batch-aggregate signal is
+clean. So every piece of the loop — establish, roll, gate-skip, gate-roll — is proven.
 
 1. **Establish / full re-digest** (occasional): `qwen3.5:4b-mlx`, **lean schema
    (`{label, postIds}`)** + retry-until-valid backstop (parse + `jsonrepair` + validate).
