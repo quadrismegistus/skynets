@@ -462,10 +462,12 @@
   $effect(() => {
     if (!settings.connectReplies && !settings.replyChains) return
     const present = new Set(allItems.map((i) => i.post.uri))
+    // A reply whose immediate parent isn't loaded → fetch its WHOLE ancestor
+    // chain in one call (ancestors.ensure resolves the full chain to root).
     const wanted = new Set<string>()
     for (const it of allItems) {
       const p = parentUriOf(it)
-      if (p && !present.has(p) && !read.isDismissed(p)) wanted.add(p)
+      if (p && !present.has(p) && !read.isDismissed(p)) wanted.add(it.post.uri)
     }
     if (wanted.size) ancestors.ensure([...wanted])
   })

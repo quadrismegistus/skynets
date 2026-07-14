@@ -41,3 +41,20 @@ export async function fetchThread(uri: string): Promise<FeedItem[]> {
   const res = await getAgent().getPostThread({ uri, depth: 6, parentHeight: 20 })
   return flattenThread(res.data.thread)
 }
+
+/**
+ * Fetch ONLY a post's ancestor chain — parent, grandparent, … up to the thread
+ * root — in one call (depth 0, so no descendants). Used to show a reply's full
+ * parent chain immediately instead of climbing one level per poll.
+ */
+export async function fetchAncestors(uri: string): Promise<FeedItem[]> {
+  if (isDemo()) return []
+  const res = await getAgent().getPostThread({ uri, depth: 0, parentHeight: 20 })
+  const out: FeedItem[] = []
+  let up: unknown = AppBskyFeedDefs.isThreadViewPost(res.data.thread) ? res.data.thread.parent : undefined
+  while (AppBskyFeedDefs.isThreadViewPost(up)) {
+    out.push({ post: up.post } as FeedItem)
+    up = up.parent
+  }
+  return out
+}
