@@ -249,6 +249,21 @@ test('digest button opens the panel and annotates the graph (demo)', async ({ pa
   await expect(page.locator('.wrap.pinned')).toHaveCount(1)
 })
 
+test('digest exemplars keep one focused card; background click collapses', async ({ page }) => {
+  await graphReady(page)
+  await page.locator('.digest-btn').click()
+  await page.locator('.convos > li').first().waitFor()
+  const exemplars = page.locator('.convos .ex')
+  await exemplars.nth(0).click()
+  await expect(page.locator('.wrap.pinned')).toHaveCount(1)
+  // Focusing a second exemplar releases the first — still exactly one pinned.
+  await exemplars.nth(1).click()
+  await expect(page.locator('.wrap.pinned')).toHaveCount(1)
+  // A click on empty canvas collapses it.
+  await page.mouse.click(60, 400)
+  await expect(page.locator('.wrap.pinned')).toHaveCount(0)
+})
+
 test('help dialog opens and closes', async ({ page }) => {
   await graphReady(page)
   await page.locator('.help').click()

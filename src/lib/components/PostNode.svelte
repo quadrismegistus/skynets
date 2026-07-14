@@ -165,7 +165,7 @@
   }
   .wrap.unfollowed img,
   .wrap.unfollowed .initial {
-    opacity: 0.5;
+    opacity: 0.8;
   }
   /* Repost: the reposter tucked behind the reposted post's top-left shoulder. */
   .reposter {

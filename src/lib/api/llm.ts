@@ -295,7 +295,8 @@ export async function summarizeFeed(
   return summarizeAnthropic(items, content, opts)
 }
 
-async function summarizeAnthropic(items: FeedItem[], content: string, opts: SummarizeOpts): Promise<Digest> {
+/** Low-level Anthropic call: returns the parsed JSON value from the response. */
+async function anthropicRaw(system: string, content: string, opts: SummarizeOpts): Promise<unknown> {
   const res = await fetch(ENDPOINT, {
     method: 'POST',
     headers: {
@@ -309,7 +310,7 @@ async function summarizeAnthropic(items: FeedItem[], content: string, opts: Summ
     body: JSON.stringify({
       model: opts.model,
       max_tokens: 2048,
-      system: RICH_SYSTEM,
+      system,
       messages: [{ role: 'user', content }],
     }),
   })
@@ -319,15 +320,18 @@ async function summarizeAnthropic(items: FeedItem[], content: string, opts: Summ
   }
   const data = (await res.json()) as { content?: { type: string; text?: string }[] }
   const text = (data.content ?? []).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('')
-  return coerceDigest(extractJson(text), items)
+  return extractJson(text)
 }
 
-async function summarizeOllama(
-  items: FeedItem[],
+/** Low-level Ollama chat call (lean schema + think:false + scaled context),
+ * with optional token streaming. Returns the parsed JSON value. */
+async function ollamaRaw(
+  system: string,
   content: string,
+  schema: unknown,
   opts: SummarizeOpts,
   onProgress?: OnProgress,
-): Promise<Digest> {
+): Promise<unknown> {
   const base = (opts.ollamaUrl || DEFAULT_OLLAMA_URL).replace(/\/$/, '')
   const stream = !!onProgress
   let res: Response
@@ -338,26 +342,16 @@ async function summarizeOllama(
       body: JSON.stringify({
         model: opts.model,
         stream,
-        // Lean schema only — a heavier one makes MLX drop to prose (PLAN §7).
-        format: LEAN_SCHEMA,
-        // Disable extended reasoning: on a thinking model (qwen3, deepseek-r1)
-        // the reasoning trace turns a ~15s clustering call into minutes for no
-        // quality gain on this task; non-thinking models ignore the flag.
+        format: schema,
         think: false,
-        // Size the context to the actual prompt (Ollama's 2048 default, and even
-        // a fixed 8192, silently truncate a large feed from the left — dropping
-        // the oldest posts). Scale to the estimate + output headroom, clamped.
-        options: { temperature: 0.2, num_ctx: contextFor(LEAN_SYSTEM, content) },
+        options: { temperature: 0.2, num_ctx: contextFor(system, content) },
         messages: [
-          { role: 'system', content: LEAN_SYSTEM },
+          { role: 'system', content: system },
           { role: 'user', content },
         ],
       }),
     })
   } catch {
-    // A browser-level failure here is nearly always the environment, not the
-    // request: Ollama not running, CORS origin not allowed, or an https page
-    // blocked from reaching http://localhost (mixed content).
     throw new Error(
       `Could not reach Ollama at ${base}. Is it running with OLLAMA_ORIGINS set for this origin? (A deployed https page can't call http://localhost.)`,
     )
@@ -366,16 +360,13 @@ async function summarizeOllama(
     const detail = await res.text().catch(() => '')
     throw new Error(`Ollama ${res.status}: ${detail.slice(0, 200) || res.statusText}`)
   }
-
   if (!stream || !res.body) {
     const data = (await res.json()) as { message?: { content?: string } }
-    return coerceDigest(extractJson(data.message?.content ?? ''), items)
+    return extractJson(data.message?.content ?? '')
   }
-
-  // Streaming: Ollama emits newline-delimited JSON, each line a chunk with an
-  // incremental `message.content` token. Accumulate the content and report it
-  // as it grows; `thinking` should never appear (we set think:false) but if it
-  // does, surface it so a leaked reasoning trace is visible, not silent.
+  // Streaming: newline-delimited JSON chunks, each with an incremental
+  // message.content token. `thinking` should never appear (think:false) but if
+  // it leaks, surface it rather than silently dropping it.
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buf = ''
@@ -402,7 +393,20 @@ async function summarizeOllama(
       if (piece || obj.message?.thinking) onProgress?.(full)
     }
   }
-  return coerceDigest(extractJson(full), items)
+  return extractJson(full)
+}
+
+async function summarizeAnthropic(items: FeedItem[], content: string, opts: SummarizeOpts): Promise<Digest> {
+  return coerceDigest(await anthropicRaw(RICH_SYSTEM, content, opts), items)
+}
+
+async function summarizeOllama(
+  items: FeedItem[],
+  content: string,
+  opts: SummarizeOpts,
+  onProgress?: OnProgress,
+): Promise<Digest> {
+  return coerceDigest(await ollamaRaw(LEAN_SYSTEM, content, LEAN_SCHEMA, opts, onProgress), items)
 }
 
 /** Exemplar posts for a conversation, loudest-by-velocity first. */

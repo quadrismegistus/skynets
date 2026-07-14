@@ -28,6 +28,7 @@
   const PAD_X = 64
   const PAD_TOP = 52
   const PAD_BOTTOM = 56
+  const PANEL_W = 340 // DigestPanel width; nodes lay out left of it when open
   const MIN_SIZE = 34
   const MAX_SIZE = 66
   const CARD_W = 360
@@ -145,7 +146,10 @@
 
   // Semantic targets (px) each node is pulled toward.
   const targets = $derived.by<Target[]>(() => {
-    const innerW = Math.max(0, w - 2 * PAD_X)
+    // When the digest panel is open it overlays the right edge, so shrink the
+    // usable width by the panel so every node stays visible to its left.
+    const panelW = showDigest ? Math.min(PANEL_W, w * 0.88) : 0
+    const innerW = Math.max(0, w - 2 * PAD_X - panelW)
     const innerH = Math.max(0, h - PAD_TOP - PAD_BOTTOM)
     return visibleNodes.map((n) => {
       const p = nodeLayout.get(n.uri) ?? { x: 0.5, y: 0.5, sizeRank: 0.5 }
@@ -212,10 +216,22 @@
   }
 
   // Click a conversation's exemplar in the panel → pin it and pop its card, so
-  // the reference lands you on the actual node in the map.
+  // the reference lands you on the actual node in the map. Only ONE panel-focused
+  // post is kept at a time: focusing a new one releases the previous focus pin
+  // (but leaves posts you pinned by hand alone).
+  let focusedPin = $state<string | null>(null)
   function focusPost(uri: string) {
+    if (focusedPin && focusedPin !== uri) pinned.delete(focusedPin)
     pinned.add(uri)
+    focusedPin = uri
     setHovered(uri)
+  }
+
+  // Collapse everything: clear hover + all pins (used by a click on empty canvas).
+  function clearAll() {
+    hovered = null
+    focusedPin = null
+    pinned.clear()
   }
 
   // Edges go child (reply) → parent, trimmed to each node's rim and leaving a
@@ -475,7 +491,18 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="graph" bind:this={graphEl} bind:clientWidth={w} bind:clientHeight={h}>
+<div
+  class="graph"
+  bind:this={graphEl}
+  bind:clientWidth={w}
+  bind:clientHeight={h}
+  onclickcapture={(e) => {
+    // A click on empty canvas (not a node, card, panel, or control) collapses
+    // any open/pinned posts. Node/card handlers live on their own elements.
+    const t = e.target as HTMLElement
+    if (!t.closest('.wrap, .card, .config-wrap, .hud, .panel, .digest-btn')) clearAll()
+  }}
+>
   {#if !settings.clusterForce}
     <div class="axis y-axis">louder ↑ · ↓ quieter</div>
     <div class="axis x-axis">← older · newer →</div>
