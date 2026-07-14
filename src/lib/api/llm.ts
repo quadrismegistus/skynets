@@ -124,26 +124,61 @@ Rules:
 - status: heating if it looks like it's growing, cooling if petering out, else steady.
 - If a previous digest is provided, KEEP the same id and label for a conversation that continues, so labels stay stable across calls. Only add/retire conversations as the feed changes.`
 
-function extractJson(text: string): unknown {
-  const start = text.indexOf('{')
-  if (start === -1) throw new Error('No JSON object in model response')
-  const end = text.lastIndexOf('}')
-  // An opening brace with no valid close, or a slice that won't parse, is almost
-  // always a response truncated by max_tokens — surface something the user can
-  // act on rather than the raw parser position.
-  const truncated = () =>
-    new Error('Model response was cut off before valid JSON (try a smaller feed or a larger model).')
-  if (end < start) throw truncated()
+/**
+ * Pull the first complete JSON value out of a model response. Must be tolerant:
+ * Ollama's `format` schema is a HARD grammar only on the llama.cpp/GGUF engine —
+ * on the MLX engine it's soft, so a local model there can wrap output in a
+ * ```json fence, return a bare array instead of the object, or emit trailing
+ * prose. We strip fences, find the first `{` or `[`, and balance-scan (respecting
+ * strings/escapes) to its matching close, ignoring anything after.
+ */
+export function extractJson(text: string): unknown {
+  let t = text.trim()
+  const fence = t.match(/^```[a-z]*\n?/i)
+  if (fence) {
+    t = t.slice(fence[0].length)
+    const close = t.lastIndexOf('```')
+    if (close !== -1) t = t.slice(0, close)
+    t = t.trim()
+  }
+  const opens = [t.indexOf('{'), t.indexOf('[')].filter((i) => i >= 0)
+  if (opens.length === 0) throw new Error('No JSON in model response')
+  const start = Math.min(...opens)
+  let depth = 0
+  let inStr = false
+  let esc = false
+  let endIdx = -1
+  for (let i = start; i < t.length; i++) {
+    const ch = t[i]
+    if (inStr) {
+      if (esc) esc = false
+      else if (ch === '\\') esc = true
+      else if (ch === '"') inStr = false
+    } else if (ch === '"') inStr = true
+    else if (ch === '{' || ch === '[') depth++
+    else if (ch === '}' || ch === ']') {
+      if (--depth === 0) {
+        endIdx = i
+        break
+      }
+    }
+  }
+  // Opened but never closed → the response was cut off (max_tokens / a stall).
+  if (endIdx === -1) {
+    throw new Error('Model response was cut off before valid JSON (try a smaller feed or a larger model).')
+  }
   try {
-    return JSON.parse(text.slice(start, end + 1))
+    return JSON.parse(t.slice(start, endIdx + 1))
   } catch {
-    throw truncated()
+    throw new Error('Model response was not valid JSON.')
   }
 }
 
 function coerceDigest(raw: unknown, items: FeedItem[]): Digest {
+  // Accept both the intended `{conversations:[…]}` and a bare `[…]` array (a
+  // soft-schema MLX model sometimes drops the wrapper object).
   const obj = raw as { conversations?: unknown }
-  const list = Array.isArray(obj?.conversations) ? obj.conversations : []
+  const list = Array.isArray(raw) ? raw : Array.isArray(obj?.conversations) ? obj.conversations : []
   const conversations: Conversation[] = []
   for (const c of list) {
     const conv = c as { id?: unknown; label?: unknown; summary?: unknown; status?: unknown; postIds?: unknown }

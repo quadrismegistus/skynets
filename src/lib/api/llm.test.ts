@@ -134,6 +134,54 @@ describe('summarizeFeed', () => {
     expect(digest.conversations[0].postUris).toEqual(['at://real/1', 'at://real/2'])
   })
 
+  function ollamaResp(content: string) {
+    return {
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => ({ message: { content } }),
+      text: async () => '',
+    } as Response
+  }
+
+  it('tolerates a markdown-fenced object (soft MLX schema)', async () => {
+    const a = mkPost({ uri: 'at://real/1' })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        ollamaResp('```json\n{"conversations":[{"id":"c","label":"L","summary":"s","status":"steady","postIds":[0]}]}\n```'),
+      ),
+    )
+    const d = await summarizeFeed([a], { provider: 'ollama', model: 'm', ollamaUrl: 'http://x' })
+    expect(d.conversations[0].postUris).toEqual(['at://real/1'])
+  })
+
+  it('tolerates a bare array without the conversations wrapper', async () => {
+    const a = mkPost({ uri: 'at://real/1' })
+    const b = mkPost({ uri: 'at://real/2' })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        ollamaResp('[{"id":"c","label":"L","summary":"s","status":"heating","postIds":[0,1]}]'),
+      ),
+    )
+    const d = await summarizeFeed([a, b], { provider: 'ollama', model: 'm', ollamaUrl: 'http://x' })
+    expect(d.conversations).toHaveLength(1)
+    expect(d.conversations[0].postUris).toEqual(['at://real/1', 'at://real/2'])
+  })
+
+  it('ignores trailing prose after the JSON value', async () => {
+    const a = mkPost({ uri: 'at://real/1' })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        ollamaResp('{"conversations":[{"id":"c","label":"L","summary":"s","status":"steady","postIds":[0]}]}\n\nHope that helps!'),
+      ),
+    )
+    const d = await summarizeFeed([a], { provider: 'ollama', model: 'm', ollamaUrl: 'http://x' })
+    expect(d.conversations).toHaveLength(1)
+  })
+
   it('surfaces a friendly error when Ollama is unreachable', async () => {
     const a = mkPost({ uri: 'at://real/1' })
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
