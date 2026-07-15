@@ -18,6 +18,8 @@ const BASE = Date.parse('2026-07-12T15:00:00Z')
 
 // Demo: pretend you don't follow these authors (so their nodes render dashed).
 const NOT_FOLLOWED = new Set([4, 5])
+// Demo: these authors follow you back (viewer.followedBy) — shown as "Follows you".
+const FOLLOWS_YOU = new Set([0, 2, 4])
 
 interface Spec {
   id: string
@@ -75,7 +77,10 @@ function make(s: Spec): FeedItem {
         did: `did:plc:${handle}`,
         handle,
         displayName,
-        viewer: NOT_FOLLOWED.has(s.ai) ? {} : { following: `at://self/app.bsky.graph.follow/${handle}` },
+        viewer: {
+          ...(NOT_FOLLOWED.has(s.ai) ? {} : { following: `at://self/app.bsky.graph.follow/${handle}` }),
+          ...(FOLLOWS_YOU.has(s.ai) ? { followedBy: `at://them/app.bsky.graph.follow/${handle}` } : {}),
+        },
       },
       record,
       replyCount: s.replies,

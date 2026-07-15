@@ -115,7 +115,7 @@ test('composing with an image attaches and posts', async ({ page }) => {
 test('connect-replies draws edges for small threads by default', async ({ page }) => {
   await graphReady(page)
   // The demo mini-thread (post + one reply) renders as a connected edge.
-  expect(await page.locator('.edges line').count()).toBeGreaterThan(0)
+  expect(await page.locator('.edges path').count()).toBeGreaterThan(0)
 })
 
 test('a reposted node shows the reposter avatar', async ({ page }) => {
@@ -148,7 +148,7 @@ test('Map replies expands a thread with edges', async ({ page }) => {
   await page.locator('.card').hover()
   await page.locator('.map-replies').click()
   await page.waitForTimeout(800)
-  expect(await page.locator('.edges line').count()).toBeGreaterThan(0)
+  expect(await page.locator('.edges path').count()).toBeGreaterThan(0)
 })
 
 test('follow button toggles; unfollowing prunes the author from the graph', async ({ page }) => {
@@ -192,22 +192,45 @@ test('dragging moves a node without pinning; a click pins it', async ({ page }) 
   await page.mouse.move(cx, cy)
   await page.mouse.down()
   await page.mouse.move(cx - 140, cy + 90, { steps: 6 })
-  await page.mouse.up()
-  // Dragging moves the node but does NOT pin it (it drifts back on its own).
-  await expect(node).not.toHaveClass(/pinned/)
-  const after = (await node.boundingBox())!
-  const dist = Math.hypot(after.x - before.x, after.y - before.y)
+  // While held, the node is at the drag position (checked before release, since
+  // an un-pinned node drifts back to its semantic spot once let go).
+  const held = (await node.boundingBox())!
+  const dist = Math.hypot(held.x - before.x, held.y - before.y)
   expect(dist).toBeGreaterThan(60)
-  // A normal click pins it where it is.
-  const b2 = (await node.boundingBox())!
-  await page.mouse.click(b2.x + b2.width / 2, b2.y + b2.height / 2)
+  await page.mouse.up()
+  // Releasing does NOT pin it.
+  await expect(node).not.toHaveClass(/pinned/)
+  // A normal click pins it. Click the node locator (not stale coordinates):
+  // Playwright waits for the node to settle back from the drag before clicking,
+  // so the stronger axis snap-back can't slide it out from under the cursor.
+  await node.click()
   await expect(node).toHaveClass(/pinned/)
 })
 
-test('cluster mode hides the semantic axes', async ({ page }) => {
+test('Reply chains expands a collapsed thread into a connected chain', async ({ page }) => {
+  await graphReady(page)
+  const edgesBefore = await page.locator('.edges path').count()
+  await page.locator('.gear').click()
+  await page.locator('.config .row', { hasText: 'Reply chains' }).locator('input').check()
+  await page.mouse.click(650, 400) // close config
+  await page.waitForTimeout(1200)
+  // The 5-post demo thread stops collapsing and draws its chain → more edges.
+  expect(await page.locator('.edges path').count()).toBeGreaterThan(edgesBefore)
+})
+
+test('config popover closes on a click outside it', async ({ page }) => {
   await graphReady(page)
   await page.locator('.gear').click()
-  await page.locator('.config .row', { hasText: 'Cluster' }).locator('input').check()
+  await expect(page.locator('.config')).toBeVisible()
+  await page.mouse.click(700, 400) // empty canvas
+  await expect(page.locator('.config')).toHaveCount(0)
+})
+
+test('high cohesion hides the semantic axes', async ({ page }) => {
+  await graphReady(page)
+  await page.locator('.gear').click()
+  // Drag Cohesion to the top of its range — the axes stop meaning anything.
+  await page.locator('.config .row', { hasText: 'Cohesion' }).locator('input').fill('1')
   await expect(page.locator('.x-axis')).toHaveCount(0)
   expect(await page.locator('button.node').count()).toBeGreaterThan(0)
 })
@@ -234,6 +257,136 @@ test('a card near the bottom is not clipped', async ({ page }) => {
   await page.waitForTimeout(200)
   const box = (await page.locator('.card').boundingBox())!
   expect(box.y + box.height).toBeLessThanOrEqual(502)
+})
+
+test('digest button opens the panel and annotates the graph (demo)', async ({ page }) => {
+  await graphReady(page)
+  await page.locator('.digest-btn').click()
+  // The panel opens; with no API key a demo digest renders conversations.
+  await expect(page.locator('.panel')).toBeVisible()
+  await expect(page.locator('.convos > li').first()).toBeVisible()
+  // A conversation label is annotated onto the graph, and clicking an exemplar
+  // pins its node (pops a card).
+  await expect(page.locator('.topic-node').first()).toBeVisible()
+  await page.locator('.convos .ex').first().click()
+  await expect(page.locator('.wrap.pinned')).toHaveCount(1)
+})
+
+test('digest exemplars keep one focused card; background click collapses', async ({ page }) => {
+  await graphReady(page)
+  await page.locator('.digest-btn').click()
+  await page.locator('.convos > li').first().waitFor()
+  const exemplars = page.locator('.convos .ex')
+  await exemplars.nth(0).click()
+  await expect(page.locator('.wrap.pinned')).toHaveCount(1)
+  // Focusing a second exemplar releases the first — still exactly one pinned.
+  await exemplars.nth(1).click()
+  await expect(page.locator('.wrap.pinned')).toHaveCount(1)
+  // A click on empty canvas collapses it.
+  await page.mouse.click(60, 400)
+  await expect(page.locator('.wrap.pinned')).toHaveCount(0)
+})
+
+test('continuous mode auto-establishes without pressing Update (demo)', async ({ page }) => {
+  await graphReady(page)
+  await page.locator('.digest-btn').click()
+  await page.locator('.convos > li').first().waitFor()
+  // Turn on continuous — auto-cadence should establish on its own (no Update click).
+  await page.locator('.toggle', { hasText: 'Continuous' }).locator('input[type=checkbox]').check()
+  await expect(page.locator('.engine-status')).toContainText(/auto-updating/, { timeout: 5000 })
+  await expect(page.locator('.convos > li').first()).toBeVisible()
+})
+
+test('pressing D on a topic node dismisses its whole conversation', async ({ page }) => {
+  await graphReady(page)
+  await page.locator('.digest-btn').click()
+  await page.locator('.topic-node').first().waitFor()
+  await page.locator('.topic-node').first().hover()
+  await page.keyboard.press('d')
+  await page.waitForTimeout(500)
+  // Its member posts are marked read → the dismissed counter shows.
+  await expect(page.locator('.dismissed-count')).toBeVisible()
+})
+
+test('hovering a card avatar opens a profile preview', async ({ page }) => {
+  await graphReady(page)
+  await page.locator('.wrap').first().hover()
+  await page.locator('.card').waitFor()
+  await page.locator('.card').hover()
+  await page.locator('.card .avatar-wrap').hover()
+  await expect(page.locator('.profile-hover')).toBeVisible()
+  // The preview carries the fetched profile (compact follower count).
+  await expect(page.locator('.profile-hover .ph-stats')).toContainText('followers')
+})
+
+test('hovering the reposter name opens a profile preview', async ({ page }) => {
+  await graphReady(page)
+  const rep = page.locator('.wrap:has(.reposter)').first()
+  await rep.hover()
+  await page.locator('.card').waitFor()
+  await page.locator('.card').hover()
+  await page.locator('.rt-name').first().hover()
+  await expect(page.locator('.rt-name .profile-hover')).toBeVisible()
+})
+
+test('a mutual is marked "follows you" on its card', async ({ page }) => {
+  await graphReady(page)
+  const wraps = await page.locator('.wrap').all()
+  let seen = false
+  for (const w of wraps) {
+    await w.hover()
+    if (await page.locator('.card .follows-you').count()) {
+      seen = true
+      break
+    }
+    await page.mouse.move(3, 3)
+  }
+  expect(seen).toBe(true)
+})
+
+test('per-post label mode tags nodes and groups by topic', async ({ page }) => {
+  await graphReady(page)
+  await page.locator('.digest-btn').click()
+  await page.locator('.toggle', { hasText: 'Label each post' }).locator('input').check()
+  await page.locator('button.go').first().click()
+  // Labels land, then group by embedding: shared topics become pills, one-offs
+  // become captions under their node. At least the caption path should show.
+  await expect(page.locator('.node-caption').first()).toBeVisible({ timeout: 8000 })
+  const captions = await page.locator('.node-caption').count()
+  const pills = await page.locator('.topic-node').count()
+  expect(captions + pills).toBeGreaterThan(2)
+  expect(await page.locator('.convos > li').count()).toBeGreaterThan(0)
+})
+
+test('merge slider re-groups labels without re-labeling', async ({ page }) => {
+  await graphReady(page)
+  await page.locator('.digest-btn').click()
+  await page.locator('.toggle', { hasText: 'Label each post' }).locator('input').check()
+  await page.locator('button.go').first().click()
+  await page.locator('.convos > li').first().waitFor()
+  const before = await page.locator('.convos > li').count()
+  // Crank the threshold to the strictest — fewer merges → at least as many groups.
+  await page.locator('.row.window.sub', { hasText: 'Merge' }).locator('input').fill('0.9')
+  await page.waitForTimeout(300)
+  const after = await page.locator('.convos > li').count()
+  expect(after).toBeGreaterThanOrEqual(before)
+})
+
+test('clicking a topic pill reveals all its posts', async ({ page }) => {
+  await graphReady(page)
+  await page.locator('.digest-btn').click()
+  await page.locator('.toggle', { hasText: 'Label each post' }).locator('input').check()
+  await page.locator('button.go').first().click()
+  const pill = page.locator('.topic-node').first()
+  await pill.waitFor({ timeout: 8000 })
+  const before = await page.locator('button.node').count()
+  await pill.click()
+  await expect(pill).toHaveClass(/revealed/)
+  // Its off-budget members come in, so the node count doesn't drop.
+  expect(await page.locator('button.node').count()).toBeGreaterThanOrEqual(before)
+  // Clicking again collapses the reveal.
+  await pill.click()
+  await expect(pill).not.toHaveClass(/revealed/)
 })
 
 test('help dialog opens and closes', async ({ page }) => {

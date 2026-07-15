@@ -14,8 +14,14 @@ export interface GraphNode {
   isThreadRoot: boolean
   /** Replies hidden under this collapsed representative (0 if standalone or expanded). */
   collapsedCount: number
-  /** True if this node's conversation is currently expanded (mapped). */
+  /** True if this node's conversation is currently expanded (mapped) — shown as
+   * separate connected nodes rather than a collapsed representative. */
   expanded: boolean
+  /** True if the user *manually* mapped this conversation (clicked to expand),
+   * as opposed to it being auto-expanded by "Reply chains". Manual maps are
+   * force-shown in full; auto-expanded context rides the bounded budget so a
+   * whole feed of reply threads can't blow past the node limit. */
+  manualExpand: boolean
   /** True if this post is yours or from your timeline — pulled-in context
    * (reply parents, fetched thread replies) is false and never competes for
    * screen slots on its own; it only appears attached. */
@@ -149,8 +155,11 @@ export function selectVisible(
   }
 
   const set = new Map(chosen.map((n) => [n.uri, n]))
-  // Always include every node of an expanded conversation.
-  for (const n of nodes) if (n.expanded) set.set(n.uri, n)
+  // Always include every node of a *manually* mapped conversation — the user
+  // asked for it, so it shows in full. Auto-expanded reply-chain context is NOT
+  // force-included here; it rides the bounded budget in the caller, or a whole
+  // feed of reply threads would blow past the limit.
+  for (const n of nodes) if (n.manualExpand) set.set(n.uri, n)
   return [...set.values()]
 }
 
@@ -208,6 +217,7 @@ interface Unit {
   isThreadRoot: boolean
   collapsedCount: number
   expanded: boolean
+  manualExpand: boolean
   primary: boolean
 }
 
@@ -223,6 +233,10 @@ export function buildGraph(
   items: FeedItem[],
   expanded: ReadonlySet<string> = new Set(),
   primary?: ReadonlySet<string>,
+  /** Conversations the user *manually* mapped (a subset of `expanded`). These
+   * are force-shown in selection; the rest of `expanded` (auto reply-chains)
+   * is bounded by the caller's budget. Defaults to all of `expanded`. */
+  forceShow?: ReadonlySet<string>,
 ): Graph {
   // Dedup by post uri, keeping first occurrence.
   const byUri = new Map<string, FeedItem>()
@@ -270,6 +284,11 @@ export function buildGraph(
     // Expansion is keyed by *membership* (any member's uri was clicked to map),
     // which stays stable as fetched replies merge the group and shift its key.
     const isExpanded = members.some((m) => expanded.has(m.post.uri))
+    // Manual maps default to "all expanded" when no forceShow set is given, so
+    // callers that don't distinguish (tests, single-shot) keep old behavior.
+    const isManual = forceShow
+      ? members.some((m) => forceShow.has(m.post.uri))
+      : isExpanded
     const isPrimary = (m: FeedItem) => !primary || primary.has(m.post.uri)
 
     // Drop conversations that are pure pulled-in context (no primary post of
@@ -288,6 +307,7 @@ export function buildGraph(
         isThreadRoot: false,
         collapsedCount: 0,
         expanded: isExpanded,
+        manualExpand: isManual,
         primary: isPrimary(it),
       })
       continue
@@ -363,6 +383,7 @@ export function buildGraph(
           isThreadRoot: m === rep,
           collapsedCount: m === rep ? hidden : 0,
           expanded: isExpanded,
+          manualExpand: isManual,
           primary: isPrimary(m),
         })
       }
@@ -377,6 +398,7 @@ export function buildGraph(
         isThreadRoot: true,
         collapsedCount: members.length - 1,
         expanded: false,
+        manualExpand: false,
         primary: primaries.length > 0,
       })
     }
@@ -393,6 +415,7 @@ export function buildGraph(
     isThreadRoot: u.isThreadRoot,
     collapsedCount: u.collapsedCount,
     expanded: u.expanded,
+    manualExpand: u.manualExpand,
     primary: u.primary,
   }))
 

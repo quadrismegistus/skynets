@@ -5,6 +5,7 @@
     buildGraph,
     layoutPositions,
     parentUriOf,
+    rootUriOf,
     selectVisible,
     threadDescendants,
     type GraphNode,
@@ -18,13 +19,25 @@
   import { ancestors } from '../state/ancestors.svelte'
   import { follows } from '../state/follows.svelte'
   import { session } from '../state/session.svelte'
+  import { archive } from '../state/archive'
+  import { backfill, type BackfillResult } from '../state/backfill'
+  import { getFollowDids } from '../api/actors'
+
+  // Captured at component init (before any archive write) so backfill can tell
+  // prior-session posts (firstSeen < this) from ones loaded this session.
+  const APP_MOUNT = Date.now()
+  import { digest } from '../state/digest.svelte'
+  import { convoColor } from '../api/llm'
   import { SvelteSet } from 'svelte/reactivity'
   import PostNode from './PostNode.svelte'
   import PostCard from './PostCard.svelte'
+  import DigestPanel from './DigestPanel.svelte'
 
   const PAD_X = 64
   const PAD_TOP = 52
   const PAD_BOTTOM = 56
+  const PANEL_W = 340 // DigestPanel width; nodes lay out left of it when open
+  const REPLY_CONTEXT_GRACE = 12 // extra nodes beyond Count for reply chains/parents
   const MIN_SIZE = 34
   const MAX_SIZE = 66
   const CARD_W = 360
@@ -34,11 +47,16 @@
   let loading = $state(false)
   let error = $state<string | undefined>(undefined)
   let hovered = $state<string | null>(null)
+  let hoveredTopic = $state<string | null>(null)
 
   // View preferences (node limit, selection mode, auto-cycle) live in a
   // persisted store; turnover offset and popover visibility are ephemeral.
   let turnoverOffset = $state(0)
   let showConfig = $state(false)
+  let showDigest = $state(false)
+  let backfillStatus = $state<BackfillResult | undefined>(undefined)
+  let backfilling = $state(false)
+  let archiveStats = $state<{ posts: number; appearances: number; counts: number; follows: number } | undefined>(undefined)
   const modes: SelectMode[] = ['top', 'recent', 'mix']
 
   let w = $state(0)
@@ -50,6 +68,9 @@
   // Threads the user has mapped in (by thread root uri), and pinned nodes (by uri).
   const expanded = new SvelteSet<string>()
   const pinned = new SvelteSet<string>()
+  // Topic pills the user double-clicked to reveal ALL their member posts (by
+  // conversation id), even those the node budget would otherwise leave off.
+  const revealedTopics = new SvelteSet<string>()
 
   // The single source of truth for what counts as "your feed": the Reposts
   // and Follows-only toggles apply HERE, before anything downstream (primary
@@ -84,11 +105,30 @@
   // parents are pulled-in *context* that only ever appears attached (mapped or
   // chained), never on its own. Primary sources come first so a timeline copy
   // of a post wins dedup over a fetched one.
+  // Posts revived from the archive when a rolling digest references one that's
+  // scrolled out of the loaded feed (off-window reveal, PLAN §7 Phase A).
+  let revived = $state<FeedItem[]>([])
   const primarySources = $derived([...compose.injected, ...feedItems])
-  const allItems = $derived([...primarySources, ...threads.posts, ...ancestors.posts])
+  const allItems = $derived([...primarySources, ...threads.posts, ...ancestors.posts, ...revived])
+  // Every loaded post by uri — lets the digest resolve a reply's parent text to
+  // feed the classifier (a bare reply is unclassifiable without it).
+  const contextByUri = $derived(new Map(allItems.map((i) => [i.post.uri, i])))
   const primaryUris = $derived(new Set(primarySources.map((i) => i.post.uri)))
   const visible = $derived(allItems.filter((i) => !read.isDismissed(i.post.uri)))
-  const graph = $derived(buildGraph(visible, expanded, primaryUris))
+  // "Reply chains" on: treat every timeline reply's thread as expanded so its
+  // parent chain shows as connected nodes instead of collapsing (a 3+ post
+  // chain, or a parent with siblings, would otherwise collapse to one node and
+  // hide the ancestry).
+  const expandedForBuild = $derived.by(() => {
+    if (!settings.replyChains) return expanded
+    const s = new Set<string>(expanded)
+    for (const it of feedItems) if (parentUriOf(it)) s.add(it.post.uri)
+    return s
+  })
+  // `expandedForBuild` (manual ∪ auto reply-chains) controls collapse; the raw
+  // manual `expanded` set is passed separately so only user-mapped threads are
+  // force-shown — auto reply-chain context stays under the node budget.
+  const graph = $derived(buildGraph(visible, expandedForBuild, primaryUris, expanded))
 
   // Only primary nodes compete for the window, so the queue/turnover counts
   // are over them; context nodes ride along and don't inflate the numbers.
@@ -98,6 +138,18 @@
   // Which nodes to show (top/recent/mix), plus pinned nodes and — when "connect
   // replies" is on — the present ancestor chain of each shown node, so a reply is
   // drawn connected to the post it replies to. Layout is computed over this set.
+  // Member uris of every topic the user revealed (clicked its pill) — taken from
+  // the pill's own (exclusive) membership so the pill's count and what it pulls
+  // in agree.
+  const revealedUris = $derived.by(() => {
+    const s = new Set<string>()
+    if (!revealedTopics.size) return s
+    for (const m of topicMembership) {
+      if (revealedTopics.has(m.id)) for (const u of m.uris) s.add(u)
+    }
+    return s
+  })
+
   const visibleNodes = $derived.by(() => {
     const selected = selectVisible(
       graph.nodes,
@@ -105,12 +157,24 @@
       settings.nodeLimit,
       turnoverOffset,
     )
-    if (!pinned.size && !settings.connectReplies) return selected
+    const connect = settings.connectReplies || settings.replyChains
+    if (!pinned.size && !connect && !revealedUris.size) return selected
     const set = new Map(selected.map((n) => [n.uri, n]))
     for (const n of graph.nodes) if (pinned.has(n.uri) && !set.has(n.uri)) set.set(n.uri, n)
-    if (settings.connectReplies) {
+    // A revealed topic's posts come in whole, ignoring the budget — the user
+    // asked for the whole conversation.
+    if (revealedUris.size)
+      for (const n of graph.nodes) if (revealedUris.has(n.uri) && !set.has(n.uri)) set.set(n.uri, n)
+    if (connect) {
+      // Pulled-in parent chains are added ONLY up to a total budget, so a few
+      // deep threads can't balloon a limit-10 graph to 100+ nodes. Each selected
+      // node's ancestor chain is added whole while there's room; once the budget
+      // fills, further chains are held back ("added when there's room").
+      const budget = settings.nodeLimit + REPLY_CONTEXT_GRACE
       const byUri = new Map(graph.nodes.map((n) => [n.uri, n]))
       for (const start of [...set.values()]) {
+        if (set.size >= budget) break
+        const chain: GraphNode[] = []
         let cur: GraphNode | undefined = start
         const guard = new Set<string>([start.uri])
         while (cur) {
@@ -119,8 +183,12 @@
           const pn = byUri.get(p)
           if (!pn) break
           guard.add(p)
-          set.set(p, pn)
+          if (!set.has(p)) chain.push(pn)
           cur = pn
+        }
+        for (const n of chain) {
+          if (set.size >= budget) break
+          set.set(n.uri, n)
         }
       }
     }
@@ -141,7 +209,10 @@
 
   // Semantic targets (px) each node is pulled toward.
   const targets = $derived.by<Target[]>(() => {
-    const innerW = Math.max(0, w - 2 * PAD_X)
+    // When the digest panel is open it overlays the right edge, so shrink the
+    // usable width by the panel so every node stays visible to its left.
+    const panelW = showDigest ? Math.min(PANEL_W, w * 0.88) : 0
+    const innerW = Math.max(0, w - 2 * PAD_X - panelW)
     const innerH = Math.max(0, h - PAD_TOP - PAD_BOTTOM)
     return visibleNodes.map((n) => {
       const p = nodeLayout.get(n.uri) ?? { x: 0.5, y: 0.5, sizeRank: 0.5 }
@@ -171,8 +242,241 @@
 
   const placedByUri = $derived(new Map(placed.map((p) => [p.node.uri, p])))
 
+  // Conversation annotations: each digest conversation, tinted over the centroid
+  // of its member nodes that are currently on the canvas. A conversation with no
+  // visible members simply isn't drawn (it still lives in the panel). The same
+  // color keys the panel swatch and this overlay so they read as one thing.
+  // Exclusive conversation membership (each post belongs to the FIRST, i.e.
+  // most-active, conversation that claims it). Derived from the digest ALONE —
+  // NOT from live positions — so it's stable across sim ticks. The sim inputs
+  // below build on this; the render (annotations/topics) reads live positions.
+  // Split conversations into pills (2+ posts → a topic node with edges) and
+  // captions (a lone post → its label tucked under the node, no pill/edge).
+  // Exclusive membership is assigned in one pass so a post can't feed both.
+  const topicView = $derived.by(() => {
+    const convos = digest.digest?.conversations ?? []
+    const claimed = new Set<string>()
+    const pills: { id: string; sid: string; label: string; color: string; uris: string[] }[] = []
+    const captions = new Map<string, { label: string; color: string }>()
+    for (const c of convos) {
+      const uris = c.postUris.filter((u) => !claimed.has(u))
+      uris.forEach((u) => claimed.add(u))
+      if (uris.length === 0) continue
+      const color = convoColor(c.id)
+      if (uris.length === 1) captions.set(uris[0], { label: c.label, color })
+      else pills.push({ id: c.id, sid: `topic:${c.id}`, label: c.label, color, uris })
+    }
+    return { pills, captions }
+  })
+  const topicMembership = $derived(topicView.pills)
+  const nodeCaptions = $derived(topicView.captions)
+
+  // Sim inputs use the members' STABLE target positions (not live ones), so the
+  // topic targets don't shift every tick — which would restart the sim forever.
+  const targetByUri = $derived(new Map(targets.map((t) => [t.id, t])))
+  const topicTargets = $derived.by<Target[]>(() =>
+    topicMembership
+      .map((m) => {
+        const pts = m.uris.map((u) => targetByUri.get(u)).filter((t): t is Target => t != null)
+        if (pts.length === 0) return null
+        return {
+          id: m.sid,
+          tx: pts.reduce((s, t) => s + t.tx, 0) / pts.length,
+          ty: pts.reduce((s, t) => s + t.ty, 0) / pts.length,
+          r: 52, // big collision radius — the topic pill is wide
+        }
+      })
+      .filter((t): t is Target => t !== null),
+  )
+  const topicLinks = $derived(
+    topicMembership.flatMap((m) =>
+      m.uris.filter((u) => targetByUri.has(u)).map((u) => ({ source: m.sid, target: u })),
+    ),
+  )
+
+  // Render: topic nodes + edges positioned from the LIVE sim positions. A
+  // conversation with no visible members simply isn't drawn.
+  const annotations = $derived.by(() =>
+    topicMembership
+      .map((m) => {
+        const pts = m.uris
+          .map((u) => placedByUri.get(u))
+          .filter((p): p is NonNullable<typeof p> => p != null)
+        if (pts.length === 0) return null
+        const cx = pts.reduce((s, p) => s + p.px, 0) / pts.length
+        const cy = pts.reduce((s, p) => s + p.py, 0) / pts.length
+        const members = pts.map((p) => ({ uri: p.node.uri, x: p.px, y: p.py }))
+        return { id: m.id, sid: m.sid, label: m.label, color: m.color, cx, cy, uris: m.uris, members }
+      })
+      .filter((a): a is NonNullable<typeof a> => a !== null),
+  )
+  const topics = $derived(
+    annotations.map((a) => {
+      const p = positions.get(a.sid)
+      return { ...a, tx: p?.x ?? a.cx, ty: p?.y ?? a.cy }
+    }),
+  )
+
+  // What the classifier actually sees. With opsOnly, a reply is represented by
+  // its thread root (the substantive OP), deduped — so sibling replies + their
+  // OP collapse to one clean anchor instead of N noisy "lol yes" lines that the
+  // model tries (badly) to cluster. Replies whose root we haven't fetched fall
+  // back to themselves (their parent text is still inlined by promptLines).
+  function classifierInput(items: FeedItem[]): FeedItem[] {
+    if (!digest.opsOnly && !digest.labelMode) return items.slice(0, digest.window)
+    const seen = new Set<string>()
+    const out: FeedItem[] = []
+    for (const it of items) {
+      const anchor = contextByUri.get(rootUriOf(it)) ?? it
+      if (seen.has(anchor.post.uri)) continue
+      seen.add(anchor.post.uri)
+      out.push(anchor)
+    }
+    // Label mode labels posts one-by-one, so front-load the OPs that are on
+    // screen right now — their captions land first, on the nodes you're looking
+    // at — then take the window from the reordered list (stable within groups).
+    if (digest.labelMode) {
+      out.sort(
+        (a, b) => Number(visibleUris.has(b.post.uri)) - Number(visibleUris.has(a.post.uri)),
+      )
+    }
+    return out.slice(0, digest.window)
+  }
+
+  async function summarize() {
+    showDigest = true
+    // Pull more pages until we have enough posts to fill the digest window (or
+    // the timeline runs out). More posts = richer conversations — the "ICE
+    // killing" thread only cohered past ~30 posts — so the digest shouldn't be
+    // starved by whatever the node limit happened to load.
+    let guard = 0
+    while (feedItems.length < digest.window && cursor && !loading && guard++ < 12) {
+      await load(true)
+    }
+    digest.summarize(classifierInput(feedItems), contextByUri)
+  }
+
+  // Click a conversation's exemplar in the panel → pin it and pop its card, so
+  // the reference lands you on the actual node in the map. Only ONE panel-focused
+  // post is kept at a time: focusing a new one releases the previous focus pin
+  // (but leaves posts you pinned by hand alone).
+  let focusedPin = $state<string | null>(null)
+  async function focusPost(uri: string) {
+    if (focusedPin && focusedPin !== uri) pinned.delete(focusedPin)
+    // A post can be off-graph two ways: collapsed inside a thread (un-collapse
+    // it), or scrolled out of the loaded window entirely. For the latter, revive
+    // it from the engine's memory or the archive and inject it as a node.
+    if (!nodeByUri.has(uri)) {
+      expanded.add(uri)
+      if (!allItems.some((i) => i.post.uri === uri)) {
+        const item = digest.engine.getItem(uri) ?? (await archive.getPosts([uri])).get(uri)
+        if (item) revived = [...revived.filter((r) => r.post.uri !== uri), item]
+      }
+    }
+    pinned.add(uri)
+    focusedPin = uri
+    setHovered(uri)
+  }
+
+  // Topic nodes are draggable sim nodes (dragging pulls their member posts via
+  // the links). A plain click pins the topic where it is (like a post); it does
+  // NOT open every member's card. Threshold + window listeners mirror PostNode.
+  function togglePinUri(id: string) {
+    if (pinned.has(id)) pinned.delete(id)
+    else pinned.add(id)
+  }
+  // Click a pill → reveal (or re-hide) ALL its member posts, even the ones the
+  // node budget dropped, and pin the pill in place while revealed so it doesn't
+  // drift as its posts flow in. Drag still repositions it.
+  // uris a reveal added to `expanded` (to un-collapse a thread), so un-reveal can
+  // remove exactly those without disturbing threads the user mapped by hand.
+  const revealExpanded = new Map<string, string[]>()
+  async function toggleReveal(sid: string, convoId: string) {
+    if (revealedTopics.has(convoId)) {
+      revealedTopics.delete(convoId)
+      pinned.delete(sid)
+      for (const u of revealExpanded.get(convoId) ?? []) expanded.delete(u)
+      revealExpanded.delete(convoId)
+      return
+    }
+    revealedTopics.add(convoId)
+    pinned.add(sid)
+    // Make good on the pill's count: members that aren't currently nodes are
+    // either collapsed inside a thread (un-collapse them) or off the loaded
+    // window (revive from the engine/archive), mirroring focusPost.
+    const pill = topicMembership.find((m) => m.id === convoId)
+    if (!pill) return
+    const graphUris = new Set(graph.nodes.map((n) => n.uri))
+    const added: string[] = []
+    const toRevive: string[] = []
+    for (const u of pill.uris) {
+      if (graphUris.has(u)) continue // already a node → revealedUris shows it
+      if (allItems.some((i) => i.post.uri === u)) {
+        if (!expanded.has(u)) {
+          expanded.add(u)
+          added.push(u)
+        }
+      } else {
+        toRevive.push(u)
+      }
+    }
+    revealExpanded.set(convoId, added)
+    if (toRevive.length) {
+      const fromArchive = await archive.getPosts(toRevive).catch(() => new Map<string, FeedItem>())
+      const add: FeedItem[] = []
+      const have = new Set(revived.map((r) => r.post.uri))
+      for (const u of toRevive) {
+        const item = digest.engine.getItem(u) ?? fromArchive.get(u)
+        if (item && !have.has(u)) add.push(item)
+      }
+      if (add.length) revived = [...revived, ...add]
+    }
+  }
+  function onTopicPointerDown(e: PointerEvent, sid: string, convoId: string) {
+    e.preventDefault()
+    const sx = e.clientX
+    const sy = e.clientY
+    let moved = false
+    const move = (ev: PointerEvent) => {
+      if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 4) return
+      moved = true
+      onNodeDrag(sid, ev.clientX, ev.clientY)
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+      if (moved) onNodeDragEnd(sid)
+      else toggleReveal(sid, convoId)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+  }
+
+  // Collapse everything: clear hover + all pins (used by a click on empty canvas).
+  function clearAll() {
+    hovered = null
+    focusedPin = null
+    pinned.clear()
+  }
+
   // Edges go child (reply) → parent, trimmed to each node's rim and leaving a
   // gap at the parent end for the arrowhead.
+  // A quadratic-bezier path from (x1,y1) to (x2,y2), bowed sideways by a control
+  // point offset perpendicular to the chord. The bow makes it unambiguous which
+  // two nodes an edge joins even when a third node sits on the straight line
+  // between them — the edge arcs clear of it rather than passing through.
+  function curvePath(x1: number, y1: number, x2: number, y2: number, frac = 0.24, cap = 50) {
+    const dx = x2 - x1
+    const dy = y2 - y1
+    const len = Math.hypot(dx, dy) || 1
+    const bow = Math.min(len * frac, cap)
+    const cx = (x1 + x2) / 2 - (dy / len) * bow
+    const cy = (y1 + y2) / 2 + (dx / len) * bow
+    return `M${x1.toFixed(1)},${y1.toFixed(1)} Q${cx.toFixed(1)},${cy.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)}`
+  }
+
   const edgeLines = $derived.by(() =>
     visibleEdges
       .map((e) => {
@@ -186,10 +490,13 @@
         const uy = dy / len
         return {
           id: e.id,
-          x1: a.px + ux * (a.size / 2),
-          y1: a.py + uy * (a.size / 2),
-          x2: b.px - ux * (b.size / 2 + 7),
-          y2: b.py - uy * (b.size / 2 + 7),
+          d: curvePath(
+            a.px + ux * (a.size / 2),
+            a.py + uy * (a.size / 2),
+            b.px - ux * (b.size / 2 + 7),
+            b.py - uy * (b.size / 2 + 7),
+            settings.curvedEdges ? 0.24 : 0,
+          ),
         }
       })
       .filter((l): l is NonNullable<typeof l> => l !== null),
@@ -219,6 +526,52 @@
     return out
   })
 
+  // Open the per-user archive and rehydrate the rolling digest from it, so a
+  // continuous digest survives reloads and keeps its whole history (Phase A).
+  $effect(() => {
+    const did = session.did
+    if (!did) return
+    archive
+      .open(did)
+      .then(async () => {
+        await digest.engine.rehydrate()
+        // Snapshot the follows list for the corpus (network-over-time). Runs
+        // once per session in the background; recordFollows skips if unchanged.
+        archive.recordFollows(await getFollowDids(did)).catch(() => {})
+        // Gap-healing backfill: page the timeline backward to import history
+        // from before this session (throttled; stops at the archived boundary).
+        backfilling = true
+        backfill(APP_MOUNT, { onProgress: (r) => (backfillStatus = r) })
+          .then((r) => (backfillStatus = r))
+          .catch(() => {})
+          .finally(() => (backfilling = false))
+      })
+      .catch(() => {
+        /* archive unavailable (private mode / no IndexedDB) — the digest still
+           works in-memory, just not persisted. */
+      })
+  })
+
+  // Poll archive stats while the config popover is open, so the corpus counts
+  // update live as the feed loads and backfill pages in.
+  $effect(() => {
+    if (!showConfig) return
+    const tick = () => archive.stats().then((s) => (archiveStats = s)).catch(() => {})
+    tick()
+    const id = setInterval(tick, 1500)
+    return () => clearInterval(id)
+  })
+
+  async function exportArchive() {
+    const json = await archive.exportJSON()
+    const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `skynets-corpus-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   // ── force layout lifecycle ────────────────────────────────────────────────
   let layout: ForceLayout | undefined
   $effect(() => {
@@ -232,21 +585,26 @@
   // Reheat whenever targets or links change (new data, resize, dismissal, turnover),
   // or when the pinned set changes (pinned nodes get fixed positions).
   $effect(() => {
-    const t = targets
-    const links = visibleEdges.map((e) => ({ source: e.from, target: e.to }))
-    layout?.update(t, links, new Set(pinned), settings.clusterForce)
+    const t = [...targets, ...topicTargets]
+    const links = [...visibleEdges.map((e) => ({ source: e.from, target: e.to })), ...topicLinks]
+    // Clamp nodes inside the canvas so they can't drift up under the top bar (the
+    // graph starts below it, but the sim could otherwise push a node to the edge).
+    layout?.setBounds(w, h, 18, 24)
+    layout?.update(t, links, new Set(pinned), settings.cohesion)
   })
 
   // Connect replies: pull in the parents of any loaded reply we don't have yet
   // (skipping dismissed ones). As fetched parents reveal their own parents, this
   // climbs the chain toward the thread root over successive runs.
   $effect(() => {
-    if (!settings.connectReplies) return
+    if (!settings.connectReplies && !settings.replyChains) return
     const present = new Set(allItems.map((i) => i.post.uri))
+    // A reply whose immediate parent isn't loaded → fetch its WHOLE ancestor
+    // chain in one call (ancestors.ensure resolves the full chain to root).
     const wanted = new Set<string>()
     for (const it of allItems) {
       const p = parentUriOf(it)
-      if (p && !present.has(p) && !read.isDismissed(p)) wanted.add(p)
+      if (p && !present.has(p) && !read.isDismissed(p)) wanted.add(it.post.uri)
     }
     if (wanted.size) ancestors.ensure([...wanted])
   })
@@ -289,6 +647,7 @@
     if (loading) return
     try {
       const page = await getTimeline()
+      void archive.record(page.items)
       const have = new Set(items.map((i) => i.post.uri))
       const fresh = page.items.filter((i) => !have.has(i.post.uri))
       if (fresh.length) items = [...fresh, ...items]
@@ -303,12 +662,42 @@
     return () => clearInterval(id)
   })
 
+  // Auto-cadence: in Continuous digest mode, ingest new posts into the rolling
+  // engine on a timer — hands-free. The engine dedups already-seen posts and the
+  // gate skips the LLM when nothing is new, so most ticks are cheap. Toggling
+  // Continuous on triggers the initial establish; the live poll then feeds new
+  // posts in over time.
+  const DIGEST_CADENCE_MS = 60_000
+  async function runDigestTick() {
+    if (loading || digest.loading || feedItems.length === 0) return
+    // First establish fills the window so the initial clustering is rich.
+    if (digest.engine.clusters.length === 0) {
+      let guard = 0
+      while (feedItems.length < digest.window && cursor && !loading && guard++ < 12) {
+        await load(true)
+      }
+    }
+    await digest.summarize(classifierInput(feedItems), contextByUri)
+  }
+  $effect(() => {
+    if (!digest.continuous) return
+    // Only `digest.continuous` is read synchronously here, so the interval isn't
+    // torn down every time the feed changes; the ticks read the feed at call time.
+    const t0 = setTimeout(runDigestTick, 400)
+    const id = setInterval(runDigestTick, DIGEST_CADENCE_MS)
+    return () => {
+      clearTimeout(t0)
+      clearInterval(id)
+    }
+  })
+
   async function load(append: boolean) {
     if (loading) return
     loading = true
     error = undefined
     try {
       const page = await getTimeline(append ? cursor : undefined)
+      void archive.record(page.items)
       items = append ? [...items, ...page.items] : page.items
       cursor = page.cursor
     } catch (err) {
@@ -383,6 +772,22 @@
     if (hovered && all.includes(hovered)) hovered = null
   }
 
+  // Dismiss a whole conversation from its topic node: every member post (plus
+  // reply subtrees) is marked read at once.
+  function dismissTopic(convoId: string) {
+    const m = topicMembership.find((t) => t.id === convoId)
+    if (!m) return
+    const all = new Set<string>()
+    for (const u of m.uris) {
+      all.add(u)
+      for (const d of threadDescendants(allItems, u)) all.add(d)
+    }
+    read.dismissMany([...all])
+    revealedTopics.delete(convoId)
+    pinned.delete(`topic:${convoId}`) // mirror toggleReveal's pin so it doesn't leak
+    if (hovered && all.has(hovered)) hovered = null
+  }
+
   // Distinguish single click (pin the node) from double click (open on bsky.app):
   // a lone click waits ~220ms for a possible double.
   let clickTimer: ReturnType<typeof setTimeout> | undefined
@@ -417,7 +822,8 @@
     if (e.key === 'Escape') {
       hovered = null
       showConfig = false
-    } else if (k === 'd' && hovered) dismiss(hovered)
+    } else if (k === 'd' && hoveredTopic) dismissTopic(hoveredTopic)
+    else if (k === 'd' && hovered) dismiss(hovered)
     else if (k === 'r') load(true)
     else if (k === 'n') nextBatch()
     else if (k === 'l') turnoverOffset = 0
@@ -428,9 +834,22 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="graph" bind:this={graphEl} bind:clientWidth={w} bind:clientHeight={h}>
-  {#if !settings.clusterForce}
-    <div class="axis y-axis">louder ↑ · ↓ quieter</div>
+<div
+  class="graph"
+  bind:this={graphEl}
+  bind:clientWidth={w}
+  bind:clientHeight={h}
+  onclickcapture={(e) => {
+    // A click on empty canvas (not a node, card, panel, or control) collapses
+    // any open/pinned posts. Node/card handlers live on their own elements.
+    const t = e.target as HTMLElement
+    // Click outside the config popover closes it (the gear's own click toggles).
+    if (showConfig && !t.closest('.config-wrap')) showConfig = false
+    if (!t.closest('.wrap, .card, .config-wrap, .hud, .panel, .digest-btn, .topic-node')) clearAll()
+  }}
+>
+  {#if settings.cohesion < 0.5}
+    <div class="axis y-axis">← quieter · louder →</div>
     <div class="axis x-axis">← older · newer →</div>
   {/if}
   <div class="axis legend"><span class="dot"></span> size = replies</div>
@@ -450,13 +869,20 @@
       </marker>
     </defs>
     {#each edgeLines as line (line.id)}
-      <line
-        x1={line.x1}
-        y1={line.y1}
-        x2={line.x2}
-        y2={line.y2}
-        marker-end="url(#reply-arrow)"
-      />
+      <path d={line.d} fill="none" marker-end="url(#reply-arrow)" />
+    {/each}
+  </svg>
+
+  <!-- Topic edges: each conversation's node links to its member posts. -->
+  <svg class="annotations" width={w} height={h}>
+    {#each topics as a (a.id)}
+      {#each a.members as m}
+        <path
+          d={curvePath(a.tx, a.ty, m.x, m.y, settings.curvedEdges ? 0.18 : 0, 40)}
+          fill="none"
+          stroke={a.color}
+        />
+      {/each}
     {/each}
   </svg>
 
@@ -478,6 +904,34 @@
       ondragmove={onNodeDrag}
       ondragend={onNodeDragEnd}
     />
+  {/each}
+
+  <!-- One-off topic labels: a caption tucked just under the post, no pill/edge. -->
+  {#each placed as p (p.node.uri)}
+    {@const cap = nodeCaptions.get(p.node.uri)}
+    {#if cap}
+      <div
+        class="node-caption"
+        style="left: {p.px}px; top: {p.py + p.size / 2 + 3}px; --c: {cap.color}"
+      >
+        {cap.label}
+      </div>
+    {/if}
+  {/each}
+
+  {#each topics as a (a.id)}
+    <button
+      class="topic-node"
+      class:pinned={pinned.has(a.sid)}
+      class:revealed={revealedTopics.has(a.id)}
+      style="left: {a.tx}px; top: {a.ty}px; --c: {a.color}"
+      title="Click to reveal all {a.uris.length} posts · drag to move · D to dismiss the whole conversation"
+      onmouseenter={() => (hoveredTopic = a.id)}
+      onmouseleave={() => (hoveredTopic = null)}
+      onpointerdown={(e) => onTopicPointerDown(e, a.sid, a.id)}
+    >
+      {a.label}<span class="topic-count">{a.uris.length}</span>
+    </button>
   {/each}
 
   {#each cards as c (c.node.uri)}
@@ -570,11 +1024,28 @@
         <p class="hint">Bring in the posts replies are replying to, drawing edges.</p>
 
         <div class="row">
-          <span class="label">Cluster</span>
-          <input type="checkbox" bind:checked={settings.clusterForce} />
+          <span class="label">Reply chains</span>
+          <input type="checkbox" bind:checked={settings.replyChains} />
           <span class="val"></span>
         </div>
-        <p class="hint">Let connected posts pull together, loosening the time/engagement axes.</p>
+        <p class="hint">Show each reply's full parent chain to the thread root (won't collapse those threads).</p>
+
+        <div class="row">
+          <span class="label">Cohesion</span>
+          <input type="range" min="0" max="1" step="0.05" bind:value={settings.cohesion} />
+          <span class="val">{Math.round(settings.cohesion * 100)}%</span>
+        </div>
+        <p class="hint">
+          Left: posts hold to the time/engagement axes. Right: connections pull connected posts
+          together into clumps.
+        </p>
+
+        <div class="row">
+          <span class="label">Curved edges</span>
+          <input type="checkbox" bind:checked={settings.curvedEdges} />
+          <span class="val"></span>
+        </div>
+        <p class="hint">Bow edges so they arc clear of nodes in between; off draws straight lines.</p>
 
         <div class="row">
           <span class="label">Reposts</span>
@@ -596,6 +1067,23 @@
           <span class="val"></span>
         </div>
         <p class="hint">Label every card's provenance; click the 🧭 line to copy the raw post JSON.</p>
+
+        <div class="archive-box">
+          <div class="archive-head">
+            <span class="label">Corpus</span>
+            {#if backfilling}<span class="pulse">importing… {backfillStatus?.pages ?? 0}p</span>{/if}
+          </div>
+          {#if archiveStats}
+            <p class="hint archive-stats">
+              {archiveStats.posts.toLocaleString()} posts · {archiveStats.counts.toLocaleString()} count-samples ·
+              {archiveStats.follows} follows-snapshot{archiveStats.follows === 1 ? '' : 's'}
+              {#if backfillStatus}<br />backfill: {backfillStatus.imported} imported{backfillStatus.hitCap ? ' (hit page cap)' : ''}{/if}
+            </p>
+          {:else}
+            <p class="hint archive-stats">archive not open yet…</p>
+          {/if}
+          <button class="export-btn" onclick={exportArchive} disabled={!archiveStats?.posts}>Export corpus (JSON)</button>
+        </div>
       </div>
     {/if}
   </div>
@@ -604,10 +1092,22 @@
     {#if read.dismissed.size > 0}
       <span class="dismissed-count">{read.dismissed.size} dismissed</span>
     {/if}
+    <button class="digest-btn" onclick={() => (showDigest ? (showDigest = false) : summarize())} title="Summarize conversations">
+      ✦ Digest
+    </button>
     <button class="load-more" onclick={() => load(true)} disabled={loading || !cursor}>
       {loading ? 'Loading…' : 'Load more'}
     </button>
   </div>
+
+  {#if showDigest}
+    <DigestPanel
+      items={feedItems}
+      onclose={() => (showDigest = false)}
+      onsummarize={summarize}
+      onfocus={focusPost}
+    />
+  {/if}
   {#if error && items.length > 0}
     <div class="err-toast">{error}</div>
   {/if}
@@ -625,10 +1125,80 @@
     inset: 0;
     pointer-events: none;
   }
-  .edges line {
-    stroke: var(--text-dim);
-    stroke-width: 1.6;
+  .annotations {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .annotations path {
+    fill: none;
+    stroke-width: 1.5;
     opacity: 0.65;
+    stroke-dasharray: 3 4;
+  }
+  /* Topic node: sits like a node at the centroid of its conversation, edges
+     radiating to member posts. Clickable to reveal the whole conversation. */
+  .topic-node {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    max-width: 8rem;
+    padding: 0.3rem 0.6rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    line-height: 1.15;
+    color: var(--c);
+    background: color-mix(in srgb, var(--bg-elev) 90%, transparent);
+    border: 2px solid var(--c);
+    border-radius: 999px;
+    text-align: center;
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+    backdrop-filter: blur(3px);
+    z-index: 3;
+  }
+  .topic-node:hover {
+    background: color-mix(in srgb, var(--c) 22%, var(--bg-elev));
+  }
+  /* A one-off topic's label, centered just beneath its post node. */
+  .node-caption {
+    position: absolute;
+    transform: translate(-50%, 0);
+    max-width: 8rem;
+    font-size: 0.62rem;
+    font-weight: 600;
+    line-height: 1.1;
+    color: var(--c);
+    text-align: center;
+    pointer-events: none;
+    text-shadow:
+      0 1px 3px var(--bg),
+      0 0 4px var(--bg);
+    z-index: 2;
+  }
+  .topic-node.pinned {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--c) 60%, transparent);
+  }
+  .topic-node.revealed {
+    background: color-mix(in srgb, var(--c) 30%, var(--bg-elev));
+    color: var(--text);
+  }
+  .topic-count {
+    display: inline-block;
+    margin-left: 0.35rem;
+    padding: 0 0.3rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--c) 35%, transparent);
+    font-size: 0.62rem;
+    font-variant-numeric: tabular-nums;
+    vertical-align: baseline;
+  }
+  .edges path {
+    fill: none;
+    stroke: var(--text-dim);
+    stroke-width: 1.4;
+    opacity: 0.7;
+    stroke-dasharray: 5 4;
   }
   .edges marker path {
     fill: var(--text-dim);
@@ -678,6 +1248,7 @@
     position: absolute;
     left: 16px;
     bottom: 16px;
+    z-index: 30; /* above topic nodes (z-index 3) and the digest panel */
   }
   .gear {
     display: flex;
@@ -697,7 +1268,10 @@
     position: absolute;
     left: 0;
     bottom: calc(100% + 8px);
-    width: 260px;
+    width: 500px;
+    max-width: 92vw;
+    max-height: calc(100vh - 120px);
+    overflow-y: auto;
     padding: 0.9rem;
     background: var(--bg-elev);
     border: 1px solid var(--border);
@@ -707,7 +1281,6 @@
     flex-direction: column;
     gap: 0.35rem;
     font-size: 0.8rem;
-    overflow: hidden;
   }
   .config .row {
     display: flex;
@@ -761,6 +1334,41 @@
     background: var(--accent);
     color: #fff;
   }
+  .archive-box {
+    margin-top: 0.3rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border);
+  }
+  .archive-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .archive-head .label {
+    color: var(--text-dim);
+  }
+  .pulse {
+    color: var(--accent);
+    font-size: 0.7rem;
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    50% {
+      opacity: 0.4;
+    }
+  }
+  .archive-stats {
+    margin: 0.35rem 0 0.5rem;
+    line-height: 1.5;
+  }
+  .export-btn {
+    width: 100%;
+    font-size: 0.75rem;
+    padding: 0.35rem;
+  }
+  .export-btn:disabled {
+    opacity: 0.5;
+  }
   .hud {
     position: absolute;
     right: 16px;
@@ -769,10 +1377,16 @@
     align-items: center;
     gap: 0.75rem;
     font-size: 0.85rem;
+    z-index: 30; /* above topic nodes */
   }
   .dismissed-count {
     color: var(--text-dim);
     font-size: 0.78rem;
+  }
+  .digest-btn {
+    background: color-mix(in srgb, var(--bg-elev) 88%, transparent);
+    backdrop-filter: blur(6px);
+    font-size: 0.82rem;
   }
   .err-toast {
     position: absolute;

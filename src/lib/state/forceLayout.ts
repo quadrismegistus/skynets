@@ -43,6 +43,9 @@ export class ForceLayout {
   readonly sim: Simulation<SimNode, SimLink>
   #nodes: SimNode[] = []
   #byId = new Map<string, SimNode>()
+  // Canvas bounds — nodes are clamped fully inside so they can't drift up behind
+  // the top bar (or off any edge). Set via setBounds; 0 = unbounded.
+  #bounds = { w: 0, h: 0, top: 0, bottom: 0 }
 
   constructor(onTick: () => void) {
     this.sim = forceSimulation<SimNode, SimLink>([])
@@ -51,8 +54,26 @@ export class ForceLayout {
       .force('x', forceX<SimNode>((d) => d.tx).strength(0.08))
       .force('y', forceY<SimNode>((d) => d.ty).strength(0.08))
       .force('collide', forceCollide<SimNode>((d) => d.r + 9).strength(0.9))
-      .on('tick', onTick)
+      .on('tick', () => {
+        this.#clamp()
+        onTick()
+      })
     this.sim.stop()
+  }
+
+  /** Keep every node fully within the canvas (below `top`, above `bottom`, and
+   * inside the left/right edges), respecting its radius. */
+  setBounds(w: number, h: number, top: number, bottom: number) {
+    this.#bounds = { w, h, top, bottom }
+  }
+  #clamp() {
+    const { w, h, top, bottom } = this.#bounds
+    if (!w || !h) return
+    for (const n of this.#nodes) {
+      const r = n.r
+      if (n.x != null) n.x = Math.max(r + 2, Math.min(w - r - 2, n.x))
+      if (n.y != null) n.y = Math.max(top + r, Math.min(h - bottom - r, n.y))
+    }
   }
 
   /**
@@ -68,7 +89,9 @@ export class ForceLayout {
     targets: Target[],
     links: SimLink[],
     pinned: ReadonlySet<string> = new Set(),
-    cluster = false,
+    /** 0 = nodes glued to their recency/engagement targets; 1 = links + charge
+     * dominate and connected posts clump. Interpolated, not a switch. */
+    cohesion = 0,
   ) {
     // For a new node, find an already-placed anchor: follow the reply→parent
     // chain (a freshly mapped thread anchors to the clicked post), else any
@@ -122,19 +145,22 @@ export class ForceLayout {
 
     this.sim.nodes(this.#nodes)
 
-    // Cluster mode: loosen the semantic anchoring and let strong links + charge
-    // pull connected posts together. Default (strict) mode keeps positions
-    // tightly on the recency × engagement axes with only a whisper of link pull.
-    ;(this.sim.force('x') as ForceX<SimNode>).strength(cluster ? 0.03 : 0.08)
-    ;(this.sim.force('y') as ForceY<SimNode>).strength(cluster ? 0.03 : 0.08)
+    // Cohesion dial: at 0 the recency × engagement axes dominate and links are a
+    // whisper (the axis anchor OUTWEIGHS the edges, so reply/topic edges can't
+    // drag the graph into a central knot); at 1 strong links + charge pull
+    // connected posts into clumps and the axes go slack. Everything in between is
+    // a smooth blend, not a switch.
+    const k = Math.max(0, Math.min(1, cohesion))
+    ;(this.sim.force('x') as ForceX<SimNode>).strength(0.18 - 0.16 * k)
+    ;(this.sim.force('y') as ForceY<SimNode>).strength(0.18 - 0.16 * k)
     this.sim.force(
       'link',
       forceLink<SimNode, SimLink>(safeLinks)
         .id((d) => d.id)
-        .distance(cluster ? 46 : 54)
-        .strength(cluster ? 0.5 : 0.18),
+        .distance(60 - 14 * k)
+        .strength(0.02 + 0.53 * k),
     )
-    this.sim.force('charge', cluster ? forceManyBody<SimNode>().strength(-24) : null)
+    this.sim.force('charge', k > 0.05 ? forceManyBody<SimNode>().strength(-30 * k) : null)
     this.sim.alpha(0.7).restart()
   }
 

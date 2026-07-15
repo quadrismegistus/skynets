@@ -5,11 +5,14 @@ import { followUser, unfollowUser } from '../api/interactions'
 interface FollowState {
   following: boolean
   followUri?: string
+  /** They follow you (viewer.followedBy). One-directional from your side — you
+   * can't change it — so it's only ever read, never toggled. */
+  followedBy?: boolean
 }
 
 interface Author {
   did: string
-  viewer?: { following?: string }
+  viewer?: { following?: string; followedBy?: string }
 }
 
 /**
@@ -30,6 +33,12 @@ class Follows {
 
   following(author: Author): boolean {
     return this.#map.get(author.did)?.following ?? !!author.viewer?.following
+  }
+
+  /** Whether this account follows *you* (viewer.followedBy). Prefers the
+   * verified profile record, falling back to whatever the feed carried. */
+  followsYou(author: Author): boolean {
+    return this.#map.get(author.did)?.followedBy ?? !!author.viewer?.followedBy
   }
 
   /** True only for an explicit unfollow action this session — safe to prune on. */
@@ -54,7 +63,7 @@ class Follows {
           // Don't clobber an optimistic toggle already in the overlay.
           if (this.#map.has(p.did)) continue
           const f = p.viewer?.following
-          this.#map.set(p.did, { following: !!f, followUri: f })
+          this.#map.set(p.did, { following: !!f, followUri: f, followedBy: !!p.viewer?.followedBy })
         }
       } catch {
         for (const d of chunk) this.#checked.delete(d) // retry on a later pass
@@ -67,10 +76,12 @@ class Follows {
     const cur = this.#map.get(did) ?? {
       following: !!author.viewer?.following,
       followUri: author.viewer?.following,
+      followedBy: !!author.viewer?.followedBy,
     }
+    const fb = cur.followedBy // preserve "follows you" across the toggle
     if (cur.following) {
       const del = cur.followUri
-      this.#map.set(did, { following: false, followUri: undefined })
+      this.#map.set(did, { following: false, followUri: undefined, followedBy: fb })
       this.#unfollowed.add(did)
       if (del)
         await unfollowUser(del).catch(() => {
@@ -78,11 +89,11 @@ class Follows {
           this.#unfollowed.delete(did)
         })
     } else {
-      this.#map.set(did, { following: true, followUri: cur.followUri })
+      this.#map.set(did, { following: true, followUri: cur.followUri, followedBy: fb })
       this.#unfollowed.delete(did)
       try {
         const res = await followUser(did)
-        this.#map.set(did, { following: true, followUri: res.uri })
+        this.#map.set(did, { following: true, followUri: res.uri, followedBy: fb })
       } catch {
         this.#map.set(did, cur)
       }

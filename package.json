@@ -20,6 +20,7 @@
     "@tsconfig/svelte": "^5.0.4",
     "@types/d3-force": "^3.0.10",
     "@types/node": "^26.1.1",
+    "fake-indexeddb": "^6.2.5",
     "playwright": "^1.61.1",
     "svelte": "^5.19.0",
     "svelte-check": "^4.1.4",
@@ -31,6 +32,7 @@
     "@atproto/api": "^0.13.35",
     "@atproto/oauth-client-browser": "^0.4.8",
     "d3-force": "^3.0.0",
+    "idb": "^8.0.3",
     "idb-keyval": "^6.3.0"
   }
 }

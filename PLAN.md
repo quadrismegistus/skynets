@@ -247,6 +247,32 @@ and E-minimal can actually ship first (see ordering note at the end).
 
 Persist every timeline post locally so nothing is lost between sessions.
 
+**Scoping (2026-07-14, after building the digest engine — do it in increments):**
+The digest engine (`state/digestEngine.svelte.ts`) already retains every ingested
+`FeedItem` and its embedding in memory (`#item`, `#vec`) and never evicts — so a lot of
+Phase A's value is really about *persisting that across reloads*, not building it from
+scratch. Three increments, smallest first:
+
+- **A0 — off-window reveal (no persistence, ~½ day).** The reported "clicking a digest
+  post does nothing when it's scrolled off" is fixable now: expose `engine.getItem(uri)`
+  and have `Graph.focusPost` inject that held `FeedItem` as a context node when the uri
+  isn't already on the graph. Fixes the click; does not survive reload.
+- **A1 — persistent archive + engine rehydration (the real foundation, ~1–2 days).**
+  A `posts` KV store (reuse `idb-keyval`, already a dep): `uri → {item, firstSeen, lastSeen}`,
+  written on every timeline/poll/thread/ancestor fetch and every engine ingest. Persist
+  the engine's cluster state (id/label/status/member-uris) and its vectors
+  (`uri → Float32Array`, so no re-embed on load). On startup, rehydrate clusters +
+  centroids from the store. `navigator.storage.persist()` to resist eviction. **This is
+  what turns Continuous mode from "rolls over the current window" into "rolls over your
+  whole feed history" and survives reloads.** A1's simple KV is forward-compatible with
+  A2's normalized schema (A2 migrates it).
+- **A2 — research corpus (later, multi-day).** Everything below: the normalized
+  three-table schema via `idb` proper, gap-healing backfill, count snapshots, deletes
+  (needs Phase B), follows-snapshots, export. The diachronic-corpus version.
+
+Recommended: **A0 now** (quick, fixes the bug), **A1 next** (makes the continuous digest
+persistent), **A2 when the corpus itself is the goal**. The rest of this section is A2.
+
 1. **Schema — normalized, three tables (this is the load-bearing decision).** A single
    post reaches you many times (reposted by several follows, plus pulled in as thread
    context); storing the whole `FeedViewPost` JSON per encounter duplicates the content
@@ -340,10 +366,15 @@ Client-side vectors as the always-on cheap signal.
    That's Phase E's job. If LLM clustering (E) proves good and cheap enough, C+D can
    be skipped or demoted to the offline-analysis path — decide after E-minimal ships.
 
-### Phase E — LLM digest (BYO key)
+### Phase E — LLM digest
 
-The interpreter. ~100 posts ≈ 10–15k input tokens ≈ a cent per call on a small model;
-cost is not the constraint.
+The interpreter. **Target: all-local, so it can run continuously for $0** (Ollama).
+The BYO-cloud path below still works and is the best *quality* if a user opts in, but
+local-first is the design goal. See **§7** for the full model/prompt/rolling investigation
+that settled how to make the local path reliable — read it before building here.
+
+~100 posts ≈ 10–15k input tokens ≈ a cent per call on a cloud model; on local it's free
+but latency-bound (prefill dominates), which is what makes the rolling + gating in §7 matter.
 
 1. **BYO Anthropic key** in the config popover. The browser calls Anthropic directly,
    which needs the `anthropic-dangerous-direct-browser-access: true` header — and the
@@ -401,3 +432,150 @@ full E (continuous digest) by which itch is stronger; C/D only if the LLM-only
 clustering proves inadequate or the archive grows past what per-call LLM reading
 can cheaply cover (the embedder's real advantage is re-clustering a month of vectors
 instantly — an *analysis* feature more than a *triage* one).
+
+---
+
+## 7. Investigation log: the all-local continuous digest (2026-07-14)
+
+A long empirical session (on a real 100-post home feed, cached to a fixed set so runs
+were comparable) to answer: **can the digest run all-local, continuously, for $0, and
+stay cheap by updating incrementally?** Findings below are load-bearing — several
+contradict earlier guesses in Phases C–E, and each cost real benchmark time, so don't
+re-litigate them without new evidence.
+
+### What shipped (E-minimal, branch `feat/llm-digest`, unmerged)
+
+Digest panel (conversations + graph-annotation rings), Ollama **and** Anthropic providers,
+raw-token streaming with an elapsed timer, tolerant JSON extraction, a persisted
+summarize-window (default 70), `num_ctx` scaled to the prompt, and `qwen3.5:4b-mlx` as the
+local default. 62 unit + 18 e2e green. Iterate here before merging.
+
+### Model selection (local)
+
+- **`qwen3.5:4b-mlx` is the pick.** ~31 tok/s on Apple Silicon, ~13–28s for a full
+  100-post digest, and it resolves real subtweets (an ICE-killing thread discussed via
+  posts that never say "ICE"). Benchmarked head-to-head:
+  - **9b-mlx**: richer clustering, reliable, but ~2× slower (17 tok/s) — and on wall-clock
+    its rolling barely beats its own full digest, so the extra size doesn't pay off.
+  - **2b-mlx**: unstable — two identical-input runs gave a 79-post mega-cluster vs 6
+    scattered ones; also emitted schema-invalid JSON. Rejected.
+  - **phi3.5 (3.8B GGUF)**: over-clusters (13 conversations, ignored the 2–6 cap), slow
+    (66s full), *worse* rolling consistency (Rand 0.57). Rejected despite summary tuning.
+  - **llama3.2:1b**: collapses everything into one bogus cluster. Floor confirmation only.
+- **MLX ≥ GGUF on Apple Silicon for speed** — MLX is the native path, not a handicap. An
+  earlier guess that GGUF would be faster was wrong.
+
+### The MLX soft-schema gotcha (this caused most of the pain)
+
+Ollama's `format` JSON-schema is a **hard grammar only on the llama.cpp/GGUF engine**. On
+the **MLX engine it is soft** — the model *usually* follows it but can emit: ```json
+fences, a bare `[…]` array without the wrapper object, a missing required field (`posts`
+instead of `postIds`), a repetition loop, or — worst — **plain prose instead of JSON**.
+Consequences and fixes:
+
+- **The app parser must be tolerant** (shipped a balance-scanner; should upgrade to a JS
+  `jsonrepair` lib + schema-validate, mirroring `largeliterarymodels/llm.py`).
+  `json_repair` fixes malformed *JSON* but **cannot** rescue prose output.
+- **KEEP THE SCHEMA LEAN — this is the single biggest local-reliability lever.** Measured
+  on `4b-mlx` over three feed slices, 5 seeds each: a 5-required-field schema
+  (`id,label,summary,status,postIds`) produced valid JSON **0/5 every time**; a 2-field
+  schema (`label,postIds`) produced valid JSON **5/5 every time**. MLX's soft grammar chokes
+  on heavy schemas and drops to prose. So **ask the local model for only what only it can
+  do — group posts into `{label, postIds}` — and derive the rest client-side** (status from
+  members' engagement velocity, id from a slug, summary via an optional cheap second pass or
+  skip it). This mostly obviates retry; keep retry-until-valid as a cheap backstop anyway.
+- A strict parser that silently returns empty **undercounts the model** — it reads as
+  "model produced nothing" when the model produced a lot in the wrong shape. This
+  contaminated an earlier "4b is unstable" conclusion.
+
+### Two settings that are non-negotiable on local
+
+- **`think: false`** — qwen3/deepseek thinking models spend *minutes* reasoning before the
+  JSON for zero quality gain on this task (a >3min call drops to ~15s). Non-thinking models
+  ignore the flag. Verified `message.thinking` is absent when off.
+- **`num_ctx` scaled to the prompt** — Ollama's 2048 default (and even a fixed 8192)
+  silently truncates a large feed from the left, dropping the oldest posts.
+
+### The rolling digest: dead ends, then it works
+
+Idea: instead of re-reading all posts each update, send a compact picture of existing
+conversations (label + summary + a few exemplars) plus only the *new* posts, and ask
+"continue an existing conversation or start a new one?" Prefill ≈ halves (2.5k vs 5.4k
+tokens on 100 posts).
+
+What we learned, in order:
+1. **Assignments-only output (one entry per post) backfired** — verbose output ate the
+   prefill savings. The compact *cluster-delta* form (one entry per changed/new cluster
+   with a postId array) is the efficient one.
+2. **Prompt framing controls granularity entirely.** Conservative language
+   ("ignore one-offs, prefer existing, only genuinely new") → lazy under-clustering
+   (misdiagnosed as a model limit). Encouraging + no cap → over-clustering (15 convs, many
+   singletons). **The winning prompt applies the full-digest discipline to the rolling
+   task: "2–6 conversations, merge related, ≥2 posts each, prefer extending an existing
+   one."**
+3. **Continuation is NOT the hard part** — the whole earlier "local can't continue"
+   conclusion was wrong. Given a *clean* establish, `4b-mlx` continues 2–3 clusters
+   consistently (4–11s) and `9b-mlx` continues 4–5. The "0 continuations" seen repeatedly
+   was an artifact of the **establish step failing upstream** (prose/empty output), leaving
+   no clusters to continue into — not a continuation failure.
+4. **So the one real local defect is establish-step format reliability**, fixed by
+   retry-until-valid (+ `json_repair`). Everything else works locally.
+5. **Cloud (Haiku) is flawless** at all of this (reliable, 7.8s full / 2.5s rolling, Rand
+   0.99) — useful as an oracle/comparison, but not the $0 target.
+
+### Embeddings: a coarse gate, NOT a per-post continuer
+
+Tested `all-minilm` (the MiniLM-L6 the app would run) and `mxbai-embed-large` against a
+fixed LLM ground truth:
+- **Assigning a known continuation to the right existing cluster: all-minilm ~82%** — the
+  cheap model does this well. (mxbai *worse*, 64% — its compressed 0.45–0.67 cosine range
+  hurts discrimination. Use all-minilm.)
+- **But the continue-vs-novel *gate* has overlapping distributions** (true-continue sim
+  0.19–0.81, novel 0.07–0.68; best F1 only 0.67). A post that continues a cluster via
+  subtweet/multilingual reference embeds *far* from it; a novel post can embed near. So
+  **embeddings cannot silently auto-assign per post** — the subtweet problem the LLM was
+  chosen for is exactly where the embedder fails.
+- **The aggregate signal is strong though** (continue mean 0.40 vs novel 0.20). Enough for
+  the **coarse change-gate**: embed new posts cheaply as they arrive; only fire an LLM
+  (re-)digest when enough of them sit far from every existing centroid. That's the high-
+  value use — skip whole LLM runs when nothing changed — and it's robust to per-post noise.
+
+### The corrected all-local architecture
+
+**Validated end-to-end 2026-07-14** (`scratchpad/loop.py`): lean-schema establish on 40
+posts → 3 rolling batches of 20 → a coherent 6-cluster digest, 43/100 placed, ~20s total,
+all-local, $0. Establish reliable with the lean schema; rolling continues + spawns cleanly
+at ~5s/step; exact-label matching kept continuations clean enough the dedup never fired.
+The coarse gate's *skip* case is now **validated too** (`scratchpad/gate_skip.py`): with
+`all-minilm` centroids, a batch of re-shown/established posts scores 0–2/12 "novel"
+(mean-sim ~0.48) and a genuinely-new batch scores 9/12 (mean-sim ~0.29). Decision rule:
+**skip the LLM roll when the novel-fraction is below ~0.4** (equivalently mean centroid-sim
+above ~0.4). Per-post routing stays too noisy to use, but the batch-aggregate signal is
+clean. So every piece of the loop — establish, roll, gate-skip, gate-roll — is proven.
+
+1. **Establish / full re-digest** (occasional): `qwen3.5:4b-mlx`, **lean schema
+   (`{label, postIds}`)** + retry-until-valid backstop (parse + `jsonrepair` + validate).
+   Derive status/summary/id client-side. Produces the cluster set.
+2. **Rolling continuation** (frequent): `qwen3.5:4b-mlx`, balanced prompt (full-digest
+   discipline), compact cluster-delta output. Extends clusters + spawns new ones. Proven
+   to work; ~50% cheaper prefill; 4–11s.
+3. **Coarse embedder gate** (`all-minilm`, always-on, cheap): decide *when* to roll vs sit
+   still, and when a full re-establish is warranted (drift / enough novelty).
+4. **Periodic full re-establish** to reset drift (rolling never reconsiders old posts).
+
+This mirrors the user's own `largeliterarymodels`: `SequentialTask`
+(`build_state → format_context → format_passages → update_state → aggregate`, chunked
+feedforward state, `prompt_version` cache-busting) *is* this rolling pattern, and
+`llm.py`'s strip-fence → parse → bracket-match → `json_repair` → pydantic-validate is the
+reliability layer the establish step needs. Port both patterns to TS.
+
+### Methodology notes (so the next session doesn't repeat mistakes)
+
+- **Cache a FIXED input set.** The live `getTimeline` drifts between fetches; every
+  "single run" earlier used different posts, confounding all consistency claims. Fixed
+  cache (`scratchpad/feed100.json`, no credentials) made results comparable.
+- **Tolerant parsing before measuring** — a strict parser reports model failures that are
+  really parser failures.
+- **Repeat runs at fixed input** — single runs flipped conclusions twice; Rand-index over
+  ≥3 identical-input runs is the real consistency signal (and watch coverage, not just
+  Rand — empty runs trivially "agree").

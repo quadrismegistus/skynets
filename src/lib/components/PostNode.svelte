@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { AppBskyFeedPost } from '@atproto/api'
   import type { GraphNode } from '../state/graph'
   import { authorName, reposterProfile } from '../api/post'
 
@@ -38,6 +39,10 @@
 
   const avatar = $derived(node.item.post.author.avatar)
   const repost = $derived(reposterProfile(node.item))
+  const isReply = $derived.by(() => {
+    const rec = node.item.post.record
+    return AppBskyFeedPost.isRecord(rec) && !!rec.reply
+  })
 
   function dismiss(e: MouseEvent) {
     e.stopPropagation()
@@ -105,6 +110,10 @@
     {/if}
   </button>
 
+  {#if isReply}
+    <span class="reply-badge" title="This post is a reply">↩</span>
+  {/if}
+
   {#if node.collapsedCount > 0}
     <span class="badge" title="{node.collapsedCount} more in thread — click to expand"
       >+{node.collapsedCount}</span
@@ -165,7 +174,7 @@
   }
   .wrap.unfollowed img,
   .wrap.unfollowed .initial {
-    opacity: 0.5;
+    opacity: 0.8;
   }
   /* Repost: the reposter tucked behind the reposted post's top-left shoulder. */
   .reposter {
@@ -223,6 +232,23 @@
     border: 1.5px solid var(--bg);
     pointer-events: none;
     white-space: nowrap;
+  }
+  /* Bottom-right marker that this post is a reply. */
+  .reply-badge {
+    position: absolute;
+    bottom: -3px;
+    right: -3px;
+    width: 17px;
+    height: 17px;
+    display: grid;
+    place-items: center;
+    background: var(--bg-elev);
+    color: var(--text-dim);
+    border: 1.5px solid var(--border);
+    border-radius: 50%;
+    font-size: 0.62rem;
+    line-height: 1;
+    pointer-events: none;
   }
   .dismiss {
     position: absolute;

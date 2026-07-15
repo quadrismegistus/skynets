@@ -231,6 +231,7 @@ const mkNode = (
   isThreadRoot: false,
   collapsedCount: 0,
   expanded,
+  manualExpand: expanded,
   primary,
 })
 
@@ -272,6 +273,30 @@ describe('selectVisible', () => {
       mkNode('d', 4, 4, 'R', 0, true), // expanded
     ]
     expect(ids(selectVisible(th, 'top', 2, 0))).toBe('a,b,c,d')
+  })
+  it('does NOT force-include auto-expanded (non-manual) nodes past the window', () => {
+    // "Reply chains" marks whole threads expanded to prevent collapse, but that
+    // must not blow past the limit — only manually mapped threads force-show.
+    const auto = (uri: string, s: number, ts: number) => ({
+      ...mkNode(uri, s, ts, 'R', 0, true), // expanded (not collapsed)…
+      manualExpand: false, // …but auto, not user-mapped
+    })
+    const th = [mkNode('a', 10, 1), mkNode('b', 8, 2), auto('c', 6, 3), auto('d', 4, 4)]
+    expect(ids(selectVisible(th, 'top', 2, 0))).toBe('a,b')
+  })
+  it('buildGraph flags manualExpand only for the forceShow set, not all expanded', () => {
+    const items = [
+      mkPost({ uri: 'at://t/root' }),
+      mkPost({ uri: 'at://t/r1', parent: 'at://t/root', root: 'at://t/root' }),
+      mkPost({ uri: 'at://t/r2', parent: 'at://t/r1', root: 'at://t/root' }),
+    ]
+    // expanded (all) prevents collapse; forceShow is empty → nothing is manual.
+    const auto = buildGraph(items, new Set(['at://t/root']), undefined, new Set())
+    expect(auto.nodes.length).toBeGreaterThan(1) // not collapsed
+    expect(auto.nodes.every((n) => !n.manualExpand)).toBe(true)
+    // Same thread, but the user mapped it → manualExpand set.
+    const manual = buildGraph(items, new Set(['at://t/root']), undefined, new Set(['at://t/root']))
+    expect(manual.nodes.some((n) => n.manualExpand)).toBe(true)
   })
   it('never selects a context (non-primary) node on its own, however loud', () => {
     const th = [
