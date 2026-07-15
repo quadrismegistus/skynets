@@ -12,6 +12,7 @@ import { DEFAULT_MERGE_THRESHOLD, groupByEmbedding, groupByLabel } from '../api/
 import { embedTexts } from '../api/embed'
 import type { FeedItem } from '../api/timeline'
 import { DigestEngine } from './digestEngine.svelte'
+import { listOllamaModels, pickDefaultModel, type OllamaModel } from '../api/ollama'
 
 const KEY = 'skynets.llm'
 
@@ -19,6 +20,9 @@ interface Persisted {
   provider: Provider
   model: string
   ollamaModel: string
+  /** True once the user hand-picks a model — until then we auto-select the
+   * smallest installed one. */
+  ollamaModelPinned: boolean
   ollamaUrl: string
   window: number
   continuous: boolean
@@ -53,6 +57,12 @@ class DigestState {
   provider = $state<Provider>('anthropic')
   model = $state(DEFAULT_MODEL)
   ollamaModel = $state(DEFAULT_OLLAMA_MODEL)
+  /** Models installed in the local Ollama (smallest first), fetched from
+   * /api/tags for the picker. */
+  ollamaModels = $state<OllamaModel[]>([])
+  /** Set once the user manually chooses a model; before that we keep the
+   * ollamaModel synced to the smallest installed one. */
+  ollamaModelPinned = $state(false)
   ollamaUrl = $state(DEFAULT_OLLAMA_URL)
   window = $state(DEFAULT_WINDOW)
   /** Continuous mode: maintain a rolling digest via the engine (embed → gate →
@@ -93,6 +103,7 @@ class DigestState {
     if (p.provider === 'anthropic' || p.provider === 'ollama') this.provider = p.provider
     if (typeof p.model === 'string') this.model = p.model
     if (typeof p.ollamaModel === 'string') this.ollamaModel = p.ollamaModel
+    if (typeof p.ollamaModelPinned === 'boolean') this.ollamaModelPinned = p.ollamaModelPinned
     if (typeof p.ollamaUrl === 'string') this.ollamaUrl = p.ollamaUrl
     if (typeof p.window === 'number' && p.window > 0) this.window = p.window
     if (typeof p.continuous === 'boolean') this.continuous = p.continuous
@@ -107,6 +118,7 @@ class DigestState {
             provider: this.provider,
             model: this.model,
             ollamaModel: this.ollamaModel,
+            ollamaModelPinned: this.ollamaModelPinned,
             ollamaUrl: this.ollamaUrl,
             window: this.window,
             continuous: this.continuous,
@@ -118,6 +130,26 @@ class DigestState {
         })
       })
     }
+  }
+
+  /** Query the local Ollama for installed models. Until the user hand-picks a
+   * model, keep `ollamaModel` synced to the smallest sensible one (MLX-preferred
+   * on a Mac). Also re-syncs if the persisted model isn't actually installed. */
+  async refreshOllamaModels() {
+    const models = await listOllamaModels(this.ollamaUrl)
+    this.ollamaModels = models
+    if (models.length === 0) return
+    const installed = models.some((m) => m.name === this.ollamaModel)
+    if (!this.ollamaModelPinned || !installed) {
+      const pick = pickDefaultModel(models)
+      if (pick) this.ollamaModel = pick
+    }
+  }
+
+  /** The user explicitly chose a model (typed or picked) — stop auto-selecting. */
+  chooseModel(name: string) {
+    this.ollamaModel = name
+    this.ollamaModelPinned = true
   }
 
   #opts(previous?: Digest, postByUri?: Map<string, FeedItem>): SummarizeOpts {

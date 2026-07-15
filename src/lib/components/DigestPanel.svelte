@@ -1,6 +1,7 @@
 <script lang="ts">
   import { digest } from '../state/digest.svelte'
-  import { convoColor, exemplars, MODELS, OLLAMA_MODELS, type Conversation } from '../api/llm'
+  import { convoColor, exemplars, MODELS, type Conversation } from '../api/llm'
+  import { formatSize } from '../api/ollama'
   import { reposter } from '../api/post'
   import type { FeedItem } from '../api/timeline'
   import { AppBskyFeedPost } from '@atproto/api'
@@ -48,6 +49,16 @@
     rolling: 'rolling in new posts…',
     skipped: 'nothing new — skipped',
   }
+
+  // When the Ollama provider is active, query its installed models (once per
+  // provider switch) so the picker is populated and the smallest is auto-chosen.
+  let queriedFor = ''
+  $effect(() => {
+    if (digest.provider === 'ollama' && queriedFor !== digest.ollamaUrl) {
+      queriedFor = digest.ollamaUrl
+      digest.refreshOllamaModels()
+    }
+  })
 
   // Elapsed timer while a summary is in flight — the point of the raw stream is
   // to see how fast this actually is.
@@ -202,18 +213,40 @@
       </p>
     {:else}
       <label class="field">
-        <span>Model</span>
-        <input list="ollama-models" bind:value={digest.ollamaModel} placeholder="llama3.1:8b" autocomplete="off" />
+        <span>
+          Model
+          {#if digest.ollamaModels.length}
+            <span class="model-meta">
+              · {digest.ollamaModels.length} installed{digest.ollamaModelPinned ? '' : ' · smallest auto-picked'}
+            </span>
+          {/if}
+        </span>
+        <input
+          list="ollama-models"
+          value={digest.ollamaModel}
+          oninput={(e) => digest.chooseModel(e.currentTarget.value)}
+          placeholder="type or pick a model"
+          autocomplete="off"
+        />
         <datalist id="ollama-models">
-          {#each OLLAMA_MODELS as m}
-            <option value={m.id}>{m.label}</option>
+          {#each digest.ollamaModels as m}
+            <option value={m.name}>{formatSize(m.size)}</option>
           {/each}
         </datalist>
       </label>
       <label class="field">
         <span>Ollama URL</span>
-        <input bind:value={digest.ollamaUrl} placeholder="http://localhost:11434" autocomplete="off" />
+        <input
+          value={digest.ollamaUrl}
+          oninput={(e) => (digest.ollamaUrl = e.currentTarget.value)}
+          onblur={() => digest.refreshOllamaModels()}
+          placeholder="http://localhost:11434"
+          autocomplete="off"
+        />
       </label>
+      {#if digest.ollamaModels.length === 0}
+        <p class="note">No models found — is Ollama running at this URL? Pick one after it connects, or type a name.</p>
+      {/if}
       <p class="note">
         Runs locally on up to {digest.window} posts — nothing leaves your machine. Start Ollama with
         the app's origin allowed (<code>OLLAMA_ORIGINS={originHint} ollama serve</code>) and pull the
@@ -360,6 +393,10 @@
   .field span {
     color: var(--text-dim);
     font-size: 0.72rem;
+  }
+  .model-meta {
+    font-size: 0.62rem;
+    opacity: 0.8;
   }
   .field input,
   select {

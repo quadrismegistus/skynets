@@ -47,14 +47,6 @@ export const DEFAULT_OLLAMA_MODEL = 'qwen3.5:4b-mlx'
 export const DEFAULT_OLLAMA_URL = 'http://localhost:11434'
 
 /** Suggested local models, ordered by appetite, for the panel's datalist. */
-export const OLLAMA_MODELS: { id: string; label: string }[] = [
-  { id: 'qwen3.5:4b-mlx', label: 'qwen3.5:4b-mlx — ~4GB, fast, best tested pick' },
-  { id: 'qwen3.5:9b-mlx', label: 'qwen3.5:9b-mlx — ~9GB, richer but ~2× slower' },
-  { id: 'llama3.1:8b', label: 'llama3.1:8b — ~5GB, GGUF, needs 16GB RAM' },
-  { id: 'qwen2.5:7b', label: 'qwen2.5:7b — ~5GB, strong at JSON' },
-  { id: 'gemma3:4b', label: 'gemma3:4b — ~3GB, for 8GB RAM' },
-]
-
 const ENDPOINT = 'https://api.anthropic.com/v1/messages'
 
 /** LEAN schema for the local (Ollama) path, handed to `format`. Only the two
