@@ -541,7 +541,7 @@ function demoRoll(newItems: FeedItem[]): RollUpdate[] {
 // client-side in labelGroup.ts, so the model never has to emit an array.
 
 const LABEL_SYSTEM =
-  'You label a single social-media post with its topic. Reply with ONLY a 2–4 word topic label in sentence case (capitalize the first word; keep proper nouns and acronyms as-is) — no quotes, no punctuation, no explanation, no "Label:" prefix. If the post replies to or quotes another post (shown in brackets), the topic is what the exchange is ABOUT — use that content, not the reaction (a bare "I have thoughts" quoting a post about gendered cooking is "Gendered cooking habits"). Prefer the concrete subject (a person, event, or thing) over a vague category.'
+  'You label a single social-media post with its topic. Reply with ONLY a 2–4 word topic label in sentence case (capitalize the first word; keep proper nouns and acronyms as-is) — no quotes, no punctuation, no explanation, no "Label:" prefix. When the post replies to or quotes another post (shown in brackets), base the label on what that referenced content is about, not on the reaction itself. Prefer the concrete subject (a person, event, or thing) over a vague category. Derive the label from THIS post only; never reuse wording from these instructions.'
 
 const LABEL_STOP = new Set([
   'the', 'a', 'an', 'to', 'of', 'in', 'on', 'and', 'is', 'it', 'for', 'with',
