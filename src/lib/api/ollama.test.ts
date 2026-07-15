@@ -1,5 +1,39 @@
-import { describe, it, expect } from 'vitest'
-import { pickDefaultModel, pickClusterModel, isMlxModel, formatSize, type OllamaModel } from './ollama'
+import { afterEach, describe, it, expect, vi } from 'vitest'
+import { pickDefaultModel, pickClusterModel, isMlxModel, formatSize, listOllamaModels, type OllamaModel } from './ollama'
+
+function tagsResponse(body: unknown, ok = true, status = 200) {
+  return { ok, status, statusText: 'OK', json: async () => body, text: async () => '' } as Response
+}
+
+describe('listOllamaModels', () => {
+  afterEach(() => vi.restoreAllMocks())
+  it('returns installed models, smallest first', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        tagsResponse({ models: [{ name: 'big', size: 9e9 }, { name: 'small', size: 1e9 }] }),
+      ),
+    )
+    const out = await listOllamaModels('http://x')
+    expect(out.map((m) => m.name)).toEqual(['small', 'big'])
+  })
+  it('falls back to the `model` field for the name', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(tagsResponse({ models: [{ model: 'foo:latest', size: 5 }] })))
+    expect((await listOllamaModels('http://x'))[0].name).toBe('foo:latest')
+  })
+  it('returns [] on a non-ok response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(tagsResponse({}, false, 500)))
+    expect(await listOllamaModels('http://x')).toEqual([])
+  })
+  it('returns [] when fetch throws (Ollama down)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')))
+    expect(await listOllamaModels('http://x')).toEqual([])
+  })
+  it('tolerates a missing/empty models array', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(tagsResponse({})))
+    expect(await listOllamaModels('http://x')).toEqual([])
+  })
+})
 
 const M = (name: string, gb: number): OllamaModel => ({ name, size: gb * 1e9 })
 
@@ -19,9 +53,9 @@ describe('pickDefaultModel', () => {
     expect(pickDefaultModel(noMlx, true)).toBe('gemma3:4b')
   })
 
-  it('off a Mac with only MLX builds, still returns the smallest overall', () => {
+  it('off a Mac with only MLX builds, returns undefined (none can run)', () => {
     const onlyMlx = [M('qwen3.5:9b-mlx', 9), M('qwen3.5:2b-mlx', 2)]
-    expect(pickDefaultModel(onlyMlx, false)).toBe('qwen3.5:2b-mlx')
+    expect(pickDefaultModel(onlyMlx, false)).toBeUndefined()
   })
 
   it('returns undefined when nothing is installed', () => {

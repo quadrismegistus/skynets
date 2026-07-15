@@ -638,6 +638,11 @@
     void w
     void h
     void loading
+    // The gear/hud widen as their labels change (node count, dismissed count),
+    // so re-measure on those too, or the keep-out goes stale.
+    void visibleNodes.length
+    void total
+    void read.dismissed.size
     if (!graphEl || !layout) return
     const g = graphEl.getBoundingClientRect()
     let leftW = 0

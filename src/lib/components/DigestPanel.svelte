@@ -50,12 +50,18 @@
     skipped: 'nothing new — skipped',
   }
 
-  // When the Ollama provider is active, query its installed models (once per
-  // provider switch) so the picker is populated and the smallest is auto-chosen.
-  let queriedFor = ''
+  // When the Ollama provider becomes active, query its installed models once so
+  // the picker is populated and the smallest is auto-chosen. URL edits re-query
+  // on blur (below) — NOT per keystroke, which would spam fetches to partial
+  // URLs and blank the list mid-type.
+  let queried = false
   $effect(() => {
-    if (digest.provider === 'ollama' && queriedFor !== digest.ollamaUrl) {
-      queriedFor = digest.ollamaUrl
+    if (digest.provider !== 'ollama') {
+      queried = false
+      return
+    }
+    if (!queried) {
+      queried = true
       digest.refreshOllamaModels()
     }
   })
@@ -254,8 +260,7 @@
       <label class="field">
         <span>Ollama URL</span>
         <input
-          value={digest.ollamaUrl}
-          oninput={(e) => (digest.ollamaUrl = e.currentTarget.value)}
+          bind:value={digest.ollamaUrl}
           onblur={() => digest.refreshOllamaModels()}
           placeholder="http://localhost:11434"
           autocomplete="off"

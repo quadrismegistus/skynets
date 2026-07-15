@@ -46,9 +46,12 @@ export const CLUSTER_MIN_BYTES = 3e9
  * tiny is ideal. Undefined if nothing is installed.
  */
 export function pickDefaultModel(models: OllamaModel[], mac: boolean = isMac()): string | undefined {
-  if (models.length === 0) return undefined
-  const preferred = models.filter((m) => (mac ? isMlxModel(m.name) : !isMlxModel(m.name)))
-  const pool = preferred.length ? preferred : models
+  // Off a Mac, MLX won't run — never return one. On a Mac, prefer MLX but fall
+  // back to any (non-MLX) runnable model.
+  const runnable = mac ? models : models.filter((m) => !isMlxModel(m.name))
+  if (runnable.length === 0) return undefined
+  const preferred = mac ? runnable.filter((m) => isMlxModel(m.name)) : runnable
+  const pool = preferred.length ? preferred : runnable
   return [...pool].sort((a, b) => a.size - b.size)[0]?.name
 }
 

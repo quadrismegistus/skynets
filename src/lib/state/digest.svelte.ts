@@ -97,6 +97,9 @@ class DigestState {
   /** The OP set from the last label pass, so a threshold change can re-group
    * without re-labeling. */
   #lastLabelItems: FeedItem[] = []
+  /** Which model produced the cached labels — if the user switches the label
+   * model, the cache is invalidated so posts get re-labeled by the new model. */
+  #labelModelUsed = ''
   digest = $state<Digest | undefined>(undefined)
   loading = $state(false)
   error = $state<string | undefined>(undefined)
@@ -156,9 +159,16 @@ class DigestState {
     const clusterPick = pickClusterModel(models)
     const labelPick = pickDefaultModel(models)
     const has = (name: string) => models.some((m) => m.name === name)
-    if (clusterPick && (!this.ollamaModelPinned || !has(this.ollamaModel))) this.ollamaModel = clusterPick
+    // Auto-pick when unpinned, OR when a pinned model has vanished (uninstalled)
+    // — in the latter case drop the pin too, so it resumes auto-tracking rather
+    // than claiming an auto value is user-pinned.
+    if (clusterPick && (!this.ollamaModelPinned || !has(this.ollamaModel))) {
+      this.ollamaModel = clusterPick
+      this.ollamaModelPinned = false
+    }
     if (labelPick && (!this.ollamaLabelModelPinned || !has(this.ollamaLabelModel))) {
       this.ollamaLabelModel = labelPick
+      this.ollamaLabelModelPinned = false
     }
   }
 
@@ -227,6 +237,14 @@ class DigestState {
    * drop out. */
   async #labelIngest(items: FeedItem[], contextByUri?: Map<string, FeedItem>) {
     this.#lastLabelItems = items
+    // If the label model changed, the cached labels (and their embeddings) are
+    // from a different model — drop them so the new model re-labels.
+    const model = this.provider === 'ollama' ? this.ollamaLabelModel || this.ollamaModel : this.model
+    if (model !== this.#labelModelUsed) {
+      this.#labels.clear()
+      this.#labelVecs.clear()
+      this.#labelModelUsed = model
+    }
     const posts = () =>
       items.map((i) => ({ uri: i.post.uri, label: this.#labels.get(i.post.uri) ?? '' }))
     this.digest = groupByLabel(posts()) // reflect cached labels immediately
