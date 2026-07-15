@@ -1,6 +1,7 @@
 import { AppBskyFeedPost } from '@atproto/api'
 import type { FeedItem } from './timeline'
 import { isDemo } from './demo'
+import { postQuote } from './post'
 import { postScoreRate } from '../state/score'
 
 /**
@@ -85,6 +86,15 @@ function postText(item: FeedItem): string {
   return AppBskyFeedPost.isRecord(rec) ? rec.text : ''
 }
 
+/** If a post quote-reposts another, the quoted text as an inline tag — a quote
+ * post is often just "this 👇" and is meaningless to the classifier without the
+ * post it's quoting. Empty string when there's no quote. */
+function quoteContext(item: FeedItem): string {
+  const q = postQuote(item)
+  if (!q || !q.text) return ''
+  return ` [quoting @${q.handle}: "${q.text.replace(/\s+/g, ' ').slice(0, 160)}"]`
+}
+
 /** Choose an Ollama context window that fits the whole prompt plus room for the
  * JSON answer. Estimate ~4 chars/token, add output headroom, round to a 4k step,
  * and clamp — small enough not to waste memory on a short feed, large enough
@@ -117,6 +127,7 @@ function promptLines(items: FeedItem[], postByUri?: Map<string, FeedItem>): stri
         const pt = postText(parent).replace(/\s+/g, ' ').slice(0, 160)
         t = `[re @${parent.post.author.handle}: "${pt}"] ${t}`
       }
+      t += quoteContext(i)
       return `[${n}]\t@${handle}\t♥${p.likeCount ?? 0} ↻${p.repostCount ?? 0} ↺${p.replyCount ?? 0}\t${t}`
     })
     .join('\n')
@@ -596,7 +607,7 @@ async function chatText(system: string, content: string, opts: SummarizeOpts): P
  * when the cloud provider has no key. */
 async function labelOne(item: FeedItem, opts: SummarizeOpts): Promise<string> {
   if (isDemo() || (opts.provider === 'anthropic' && !opts.apiKey)) return demoLabel(item)
-  const content = `Post by @${item.post.author.handle}:\n"${postText(item).replace(/\s+/g, ' ').slice(0, 400)}"`
+  const content = `Post by @${item.post.author.handle}:\n"${postText(item).replace(/\s+/g, ' ').slice(0, 400)}"${quoteContext(item)}`
   return cleanLabel(await chatText(LABEL_SYSTEM, content, opts))
 }
 

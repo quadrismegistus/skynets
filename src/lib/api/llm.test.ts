@@ -34,6 +34,31 @@ describe('summarizeFeed', () => {
     expect(digest.conversations[0].postUris).toEqual(['at://real/1', 'at://real/2'])
   })
 
+  it('inlines a quoted post so the classifier sees what a quote-post is about', async () => {
+    const a = mkPost({ uri: 'at://real/1', text: 'this 👇', author: 'quoter.test' })
+    // Attach a quote embed (a viewRecord of another post).
+    ;(a.post as unknown as { embed: unknown }).embed = {
+      $type: 'app.bsky.embed.record#view',
+      record: {
+        $type: 'app.bsky.embed.record#viewRecord',
+        uri: 'at://quoted/1',
+        cid: 'cid-q',
+        author: { did: 'did:plc:bob', handle: 'bob.test' },
+        value: { $type: 'app.bsky.feed.post', text: 'the original insight', createdAt: '2026-07-12T12:00:00.000Z' },
+        indexedAt: '2026-07-12T12:00:00.000Z',
+      },
+    }
+    const fetchMock = vi.fn().mockResolvedValue(
+      apiResponse({ conversations: [{ id: 'c', label: 'L', summary: 's', status: 'steady', postIds: [0] }] }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await summarizeFeed([a], { provider: 'anthropic', apiKey: 'sk-ant-test', model: 'm' })
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string)
+    const content = body.messages[0].content as string
+    expect(content).toContain('quoting @bob.test')
+    expect(content).toContain('the original insight')
+  })
+
   it('drops a conversation whose indices are all out of range', async () => {
     const a = mkPost({ uri: 'at://real/1' })
     const fetchMock = vi.fn().mockResolvedValue(
