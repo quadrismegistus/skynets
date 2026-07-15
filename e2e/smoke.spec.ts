@@ -308,6 +308,24 @@ test('pressing D on a topic node dismisses its whole conversation', async ({ pag
   await expect(page.locator('.dismissed-count')).toBeVisible()
 })
 
+test('D still dismisses a post after dismissing a topic (no stuck hover)', async ({ page }) => {
+  await graphReady(page)
+  await page.locator('.digest-btn').click()
+  await page.locator('.topic-node').first().waitFor()
+  await page.locator('.topic-node').first().hover()
+  await page.keyboard.press('d') // dismiss the topic; the pill vanishes
+  await page.waitForTimeout(400)
+  const dismissed = async () =>
+    parseInt((await page.locator('.dismissed-count').innerText()).replace(/\D/g, ''), 10) || 0
+  const before = await dismissed()
+  // Dismiss a plain post with D — this used to be swallowed by the stale
+  // hoveredTopic (the topic branch of onKey kept winning). The counter must grow.
+  await page.locator('.wrap').first().hover()
+  await page.keyboard.press('d')
+  await page.waitForTimeout(600)
+  expect(await dismissed()).toBeGreaterThan(before)
+})
+
 test('hovering a card avatar opens a profile preview', async ({ page }) => {
   await graphReady(page)
   await page.locator('.wrap').first().hover()

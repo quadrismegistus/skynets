@@ -775,6 +775,11 @@
   // Dismiss a whole conversation from its topic node: every member post (plus
   // reply subtrees) is marked read at once.
   function dismissTopic(convoId: string) {
+    // The pill vanishes once dismissed, so its onmouseleave never fires — clear
+    // the hover ourselves, or `hoveredTopic` stays stuck on the gone topic and
+    // swallows every later `d` press (the topic branch of onKey wins over the
+    // post-dismiss branch).
+    hoveredTopic = null
     const m = topicMembership.find((t) => t.id === convoId)
     if (!m) return
     const all = new Set<string>()
