@@ -1,5 +1,6 @@
 <script lang="ts">
   import { digest } from '../state/digest.svelte'
+  import { deploy } from '../state/deploy.svelte'
   import { convoColor, exemplars, MODELS, type Conversation } from '../api/llm'
   import { formatSize } from '../api/ollama'
   import { reposter } from '../api/post'
@@ -31,8 +32,9 @@
           : 'Summarize',
   )
   const originHint = typeof location !== 'undefined' ? location.origin : 'http://localhost:1997'
-  // Streamed raw text comes from the engine in continuous mode, else the store.
-  const liveStream = $derived(digest.continuous ? digest.engine.streamText : digest.streamText)
+  // Label mode doesn't stream a single response (it's many tiny labels), so the
+  // raw stream stays empty; kept for the (currently-disabled) cluster path.
+  const liveStream = $derived(digest.streamText)
 
   function text(item: FeedItem): string {
     const rec = item.post.record
@@ -43,13 +45,6 @@
     cooling: '▼',
     steady: '■',
   }
-  const phaseLabel: Record<string, string> = {
-    embedding: 'embedding new posts…',
-    establishing: 'establishing conversations…',
-    rolling: 'rolling in new posts…',
-    skipped: 'nothing new — skipped',
-  }
-
   // When the Ollama provider becomes active, query its installed models once so
   // the picker is populated and the smallest is auto-chosen. URL edits re-query
   // on blur (below) — NOT per keystroke, which would spam fetches to partial
@@ -113,25 +108,29 @@
   {#if digest.continuous && !showConfig}
     <p class="engine-status slim">
       {#if digest.loading}
-        {phaseLabel[digest.engine.phase] ?? 'working…'}
-      {:else if digest.engine.clusters.length}
-        {digest.engine.clusters.length} conversations tracked · auto-updating
+        labeling posts…
+      {:else if convos.length}
+        {convos.length} conversations · auto-updating
       {:else}
-        starting the rolling digest…
+        auto-updating…
       {/if}
     </p>
   {/if}
 
   {#if showConfig}
   <div class="controls">
-    <div class="seg">
-      <button class:on={digest.provider === 'anthropic'} onclick={() => (digest.provider = 'anthropic')}>
-        Anthropic
-      </button>
-      <button class:on={digest.provider === 'ollama'} onclick={() => (digest.provider = 'ollama')}>
-        Ollama (local)
-      </button>
-    </div>
+    {#if deploy.locked}
+      <p class="note">This instance runs a shared model — nothing to configure. Just press Digest.</p>
+    {:else if !deploy.hideOllama}
+      <div class="seg">
+        <button class:on={digest.provider === 'anthropic'} onclick={() => (digest.provider = 'anthropic')}>
+          Anthropic
+        </button>
+        <button class:on={digest.provider === 'ollama'} onclick={() => (digest.provider = 'ollama')}>
+          Ollama (local)
+        </button>
+      </div>
+    {/if}
 
     <div class="row window">
       <span>Posts</span>
@@ -141,27 +140,15 @@
 
     <label class="row toggle">
       <input type="checkbox" bind:checked={digest.continuous} />
-      <span>Continuous (rolling)</span>
+      <span>Auto-update</span>
       {@render info(
-        'Updates automatically as new posts arrive (turn on Live in the graph settings to keep the feed flowing). Most checks are free — the LLM only runs when something new appears.',
+        'Re-labels new posts automatically as the feed flows (turn on Live in the graph settings). Cheap — only genuinely new posts get sent to the model.',
       )}
     </label>
 
-    <label class="row toggle">
-      <input type="checkbox" bind:checked={digest.opsOnly} />
-      <span>Cluster on originals only</span>
-      {@render info(
-        "Feeds the classifier each thread's original post, not the replies — reply text is noisy and tends to muddy the conversations.",
-      )}
-    </label>
-
-    <label class="row toggle">
-      <input type="checkbox" bind:checked={digest.labelMode} />
-      <span>Label each post</span>
-      {@render info(
-        'Tags every original post with its own short topic (many tiny prompts instead of one big one), then groups shared topics into conversations. A one-off topic sits as a caption under its post rather than getting its own pill.',
-      )}
-    </label>
+    <!-- Cluster mode disabled for now — label mode is the only path. The
+         "Label each post" and "Cluster on originals only" toggles are hidden;
+         restore them (and the store's labelMode restore) to bring it back. -->
 
     {#if digest.labelMode}
       <div class="row window sub">
@@ -185,19 +172,13 @@
 
     {#if digest.continuous}
       <p class="engine-status">
-        {#if digest.loading}
-          {phaseLabel[digest.engine.phase] ?? 'working…'}
-        {:else if digest.engine.lastGate && !digest.engine.lastGate.shouldRoll}
-          nothing new last check ({digest.engine.bufferedCount} buffered)
-        {:else if digest.engine.clusters.length}
-          {digest.engine.clusters.length} conversations tracked · auto-updating
-        {:else}
-          starting the rolling digest…
-        {/if}
+        {digest.loading ? 'labeling new posts…' : `${convos.length} conversations · auto-updating`}
       </p>
     {/if}
 
-    {#if digest.provider === 'anthropic'}
+    {#if deploy.locked}
+      <!-- Model/provider/URL are fixed by the deployment — no controls. -->
+    {:else if digest.provider === 'anthropic'}
       <label class="field">
         <span>
           Anthropic key
@@ -220,19 +201,21 @@
         </select>
       </div>
     {:else}
+      <!-- One model field: label mode is the only path, so this IS the label
+           model (a tiny model is ideal — one short prompt per post). -->
       <label class="field">
         <span>
-          {digest.labelMode ? 'Clustering model' : 'Model'}
+          Model
           {#if digest.ollamaModels.length}
             <span class="model-meta">
-              · {digest.ollamaModels.length} installed{digest.ollamaModelPinned ? '' : ' · auto-picked'}
+              · {digest.ollamaModels.length} installed{digest.ollamaLabelModelPinned ? '' : ' · smallest auto-picked'}
             </span>
           {/if}
         </span>
         <input
           list="ollama-models"
-          value={digest.ollamaModel}
-          oninput={(e) => digest.chooseModel(e.currentTarget.value)}
+          value={digest.ollamaLabelModel || digest.ollamaModel}
+          oninput={(e) => digest.chooseLabelModel(e.currentTarget.value)}
           placeholder="type or pick a model"
           autocomplete="off"
         />
@@ -242,21 +225,6 @@
           {/each}
         </datalist>
       </label>
-      {#if digest.labelMode}
-        <label class="field">
-          <span>
-            Label model
-            <span class="model-meta">· one tiny prompt per post — smaller is fine</span>
-          </span>
-          <input
-            list="ollama-models"
-            value={digest.ollamaLabelModel}
-            oninput={(e) => digest.chooseLabelModel(e.currentTarget.value)}
-            placeholder="defaults to the clustering model"
-            autocomplete="off"
-          />
-        </label>
-      {/if}
       <label class="field">
         <span>Ollama URL</span>
         <input
@@ -293,8 +261,8 @@
   {#if digest.loading}
     <div class="stream-wrap">
       <div class="stream-head">
-        <span>{liveStream ? 'streaming…' : 'waiting for first token…'}</span>
-        <span class="clock">{elapsed.toFixed(1)}s · {liveStream.length} chars</span>
+        <span>labeling posts…</span>
+        <span class="clock">{elapsed.toFixed(1)}s</span>
       </div>
       {#if liveStream}
         <pre class="stream">{liveStream}</pre>

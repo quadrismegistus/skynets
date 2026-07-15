@@ -291,8 +291,8 @@ test('continuous mode auto-establishes without pressing Update (demo)', async ({
   await graphReady(page)
   await page.locator('.digest-btn').click()
   await page.locator('.convos > li').first().waitFor()
-  // Turn on continuous — auto-cadence should establish on its own (no Update click).
-  await page.locator('.toggle', { hasText: 'Continuous' }).locator('input[type=checkbox]').check()
+  // Turn on auto-update — the cadence should re-label on its own (no Update click).
+  await page.locator('.toggle', { hasText: 'Auto-update' }).locator('input[type=checkbox]').check()
   await expect(page.locator('.engine-status')).toContainText(/auto-updating/, { timeout: 5000 })
   await expect(page.locator('.convos > li').first()).toBeVisible()
 })
@@ -365,7 +365,6 @@ test('a mutual is marked "follows you" on its card', async ({ page }) => {
 test('per-post label mode tags nodes and groups by topic', async ({ page }) => {
   await graphReady(page)
   await page.locator('.digest-btn').click()
-  await page.locator('.toggle', { hasText: 'Label each post' }).locator('input').check()
   await page.locator('button.go').first().click()
   // Labels land, then group by embedding: shared topics become pills, one-offs
   // become captions under their node. At least the caption path should show.
@@ -379,7 +378,6 @@ test('per-post label mode tags nodes and groups by topic', async ({ page }) => {
 test('merge slider re-groups labels without re-labeling', async ({ page }) => {
   await graphReady(page)
   await page.locator('.digest-btn').click()
-  await page.locator('.toggle', { hasText: 'Label each post' }).locator('input').check()
   await page.locator('button.go').first().click()
   await page.locator('.convos > li').first().waitFor()
   const before = await page.locator('.convos > li').count()
@@ -393,7 +391,6 @@ test('merge slider re-groups labels without re-labeling', async ({ page }) => {
 test('clicking a topic pill reveals all its posts', async ({ page }) => {
   await graphReady(page)
   await page.locator('.digest-btn').click()
-  await page.locator('.toggle', { hasText: 'Label each post' }).locator('input').check()
   await page.locator('button.go').first().click()
   const pill = page.locator('.topic-node').first()
   await pill.waitFor({ timeout: 8000 })

@@ -12,6 +12,7 @@ import { DEFAULT_MERGE_THRESHOLD, groupByEmbedding, groupByLabel } from '../api/
 import { embedTexts } from '../api/embed'
 import type { FeedItem } from '../api/timeline'
 import { DigestEngine } from './digestEngine.svelte'
+import { deploy } from './deploy.svelte'
 import { listOllamaModels, pickClusterModel, pickDefaultModel, type OllamaModel } from '../api/ollama'
 
 const KEY = 'skynets.llm'
@@ -85,8 +86,11 @@ class DigestState {
   opsOnly = $state(true)
   /** Per-post labeling mode: label each OP individually (many tiny prompts),
    * then group shared labels into conversations (PLAN §7 variant). More robust
-   * on a small local model than the one-shot clustering prompt. */
-  labelMode = $state(false)
+   * on a small local model than the one-shot clustering prompt.
+   * NOTE: cluster mode is disabled for now — label mode is the only path (better
+   * quality + far cheaper on a CPU box). Forced on below; the cluster code
+   * (summarizeFeed / rollFeed / the rolling engine) is left intact to restore. */
+  labelMode = $state(true)
   /** Cosine cutoff for merging two labels into one topic (label mode). Tunable
    * because it's the one knob that wants per-feed calibration. */
   mergeThreshold = $state(DEFAULT_MERGE_THRESHOLD)
@@ -122,7 +126,9 @@ class DigestState {
     if (typeof p.window === 'number' && p.window > 0) this.window = p.window
     if (typeof p.continuous === 'boolean') this.continuous = p.continuous
     if (typeof p.opsOnly === 'boolean') this.opsOnly = p.opsOnly
-    if (typeof p.labelMode === 'boolean') this.labelMode = p.labelMode
+    // Cluster mode disabled for now — ignore any persisted labelMode:false so it
+    // can't get stuck off. Re-enable by restoring this line + the panel toggle.
+    // if (typeof p.labelMode === 'boolean') this.labelMode = p.labelMode
     if (typeof p.mergeThreshold === 'number') this.mergeThreshold = p.mergeThreshold
 
     if (typeof localStorage !== 'undefined') {
@@ -143,6 +149,26 @@ class DigestState {
             mergeThreshold: this.mergeThreshold,
           }
           localStorage.setItem(KEY, JSON.stringify(data))
+        })
+
+        // Apply the per-deployment config once it loads (overrides persisted +
+        // auto-picked values, so a hosted instance pins its own model/provider).
+        $effect(() => {
+          const c = deploy.config
+          if (!c) return
+          if (c.provider === 'anthropic' || c.provider === 'ollama') this.provider = c.provider
+          if (c.hideOllama && this.provider === 'ollama') this.provider = 'anthropic'
+          if (typeof c.ollamaUrl === 'string') this.ollamaUrl = c.ollamaUrl
+          if (typeof c.model === 'string') {
+            if (this.provider === 'ollama') {
+              this.ollamaModel = c.model
+              this.ollamaLabelModel = c.model
+              this.ollamaModelPinned = true
+              this.ollamaLabelModelPinned = true
+            } else {
+              this.model = c.model
+            }
+          }
         })
       })
     }
