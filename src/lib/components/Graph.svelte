@@ -61,6 +61,10 @@
 
   let w = $state(0)
   let h = $state(0)
+  // Bottom UI chrome, measured so the sim keeps nodes out of the corners it
+  // occupies (see the setBottomChrome effect).
+  let gearEl = $state<HTMLElement>()
+  let hudEl = $state<HTMLElement>()
 
   // Live node positions, written by the simulation each tick.
   let positions = $state<Map<string, { x: number; y: number }>>(new Map())
@@ -593,6 +597,32 @@
     layout?.update(t, links, new Set(pinned), settings.cohesion)
   })
 
+  // Measure the bottom UI chrome (gear bottom-left, Digest/Load-more
+  // bottom-right) and reserve a keep-out in just those corners so nodes stop
+  // hiding behind them — the bottom-center stays open. Re-measures on resize and
+  // when the load-more label changes width.
+  $effect(() => {
+    void w
+    void h
+    void loading
+    if (!graphEl || !layout) return
+    const g = graphEl.getBoundingClientRect()
+    let leftW = 0
+    let rightW = 0
+    let bottom = 0
+    const gr = gearEl?.getBoundingClientRect()
+    if (gr) {
+      leftW = Math.max(leftW, gr.right - g.left + 10)
+      bottom = Math.max(bottom, g.bottom - gr.top + 10)
+    }
+    const hr = hudEl?.getBoundingClientRect()
+    if (hr) {
+      rightW = Math.max(rightW, g.right - hr.left + 10)
+      bottom = Math.max(bottom, g.bottom - hr.top + 10)
+    }
+    layout.setBottomChrome(leftW, rightW, bottom)
+  })
+
   // Connect replies: pull in the parents of any loaded reply we don't have yet
   // (skipping dismissed ones). As fetched parents reveal their own parents, this
   // climbs the chain toward the thread root over successive runs.
@@ -964,7 +994,7 @@
   {/if}
 
   <div class="config-wrap">
-    <button class="gear" onclick={() => (showConfig = !showConfig)} title="View settings">
+    <button bind:this={gearEl} class="gear" onclick={() => (showConfig = !showConfig)} title="View settings">
       ⚙ <span class="counts">{visibleNodes.length}{queued > 0 ? ` / ${total}` : ''}</span>
     </button>
 
@@ -1093,7 +1123,7 @@
     {/if}
   </div>
 
-  <div class="hud">
+  <div class="hud" bind:this={hudEl}>
     {#if read.dismissed.size > 0}
       <span class="dismissed-count">{read.dismissed.size} dismissed</span>
     {/if}
