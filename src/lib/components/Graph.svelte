@@ -312,9 +312,16 @@
       if (seen.has(anchor.post.uri)) continue
       seen.add(anchor.post.uri)
       out.push(anchor)
-      if (out.length >= digest.window) break
     }
-    return out
+    // Label mode labels posts one-by-one, so front-load the OPs that are on
+    // screen right now — their captions land first, on the nodes you're looking
+    // at — then take the window from the reordered list (stable within groups).
+    if (digest.labelMode) {
+      out.sort(
+        (a, b) => Number(visibleUris.has(b.post.uri)) - Number(visibleUris.has(a.post.uri)),
+      )
+    }
+    return out.slice(0, digest.window)
   }
 
   async function summarize() {
