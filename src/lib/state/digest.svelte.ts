@@ -15,7 +15,7 @@ import { DigestEngine } from './digestEngine.svelte'
 import { deploy } from './deploy.svelte'
 import { listOllamaModels, pickClusterModel, pickDefaultModel, type OllamaModel } from '../api/ollama'
 
-const KEY = 'skynets.llm'
+const KEY = 'skynets.llm' // legacy name from before the Mothtrap rename — do not change (users' digest state)
 
 interface Persisted {
   provider: Provider

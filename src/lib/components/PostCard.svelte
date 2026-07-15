@@ -174,7 +174,7 @@
         onclick={() => {
           const raw = JSON.stringify(item, null, 2)
           navigator.clipboard?.writeText(raw)
-          console.log('[skynets] raw feed item\n' + raw)
+          console.log('[mothtrap] raw feed item\n' + raw)
           copied = true
           setTimeout(() => (copied = false), 1500)
         }}

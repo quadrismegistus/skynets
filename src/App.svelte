@@ -21,13 +21,13 @@
 {:else}
   <div class="app">
     <header class="topbar">
-      <div class="brand"><strong>Skynets</strong></div>
+      <div class="brand"><strong>Mothtrap</strong></div>
       <div class="tabs">
         <button class:on={view === 'graph'} onclick={() => (view = 'graph')}>Graph</button>
         <button class:on={view === 'list'} onclick={() => (view = 'list')}>List</button>
       </div>
       <div class="who">
-        <button class="help" title="How Skynets works" aria-label="Help" onclick={() => (showHelp = true)}>?</button>
+        <button class="help" title="How Mothtrap works" aria-label="Help" onclick={() => (showHelp = true)}>?</button>
         <button class="compose-btn" onclick={() => compose.openNew()}>New post</button>
         <span>@{session.handle}</span>
         <button onclick={() => session.logout()}>Sign out</button>

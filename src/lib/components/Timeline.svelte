@@ -14,7 +14,7 @@
     try {
       const page = await getTimeline(cursor)
       // Milestone 1 sanity check: see the raw shape in the console.
-      console.log('[skynets] timeline page', page)
+      console.log('[mothtrap] timeline page', page)
       items = [...items, ...page.items]
       cursor = page.cursor
     } catch (err) {

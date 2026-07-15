@@ -1,9 +1,10 @@
 import type { Provider } from '../api/llm'
 
 /**
- * Per-deployment config, fetched once at startup from `skynets.config.json` at
- * the app root. Each host drops a different file; the UI adapts. No file (dev /
- * localhost) → everything is unlocked and configurable, exactly as before.
+ * Per-deployment config, fetched once at startup from `mothtrap.config.json` at
+ * the app root (falling back to the pre-rename `skynets.config.json`). Each
+ * host drops a different file; the UI adapts. No file (dev / localhost) →
+ * everything is unlocked and configurable, exactly as before.
  *
  *   // a hosted instance with a co-located, proxied Ollama (e.g. lltk.net):
  *   { "provider": "ollama", "ollamaUrl": "/ollama", "model": "qwen2.5:1.5b", "lock": true }
@@ -43,8 +44,13 @@ class Deploy {
       return
     }
     const base = import.meta.env.BASE_URL ?? '/'
-    fetch(`${base}skynets.config.json`, { cache: 'no-store' })
-      .then((r) => (r.ok && r.headers.get('content-type')?.includes('json') ? (r.json() as Promise<DeployConfig>) : null))
+    const tryFetch = (name: string): Promise<DeployConfig | null> =>
+      fetch(`${base}${name}`, { cache: 'no-store' })
+        .then((r) => (r.ok && r.headers.get('content-type')?.includes('json') ? (r.json() as Promise<DeployConfig>) : null))
+        .catch(() => null)
+    // pre-rename filename kept as a fallback so existing deploys keep working
+    tryFetch('mothtrap.config.json')
+      .then((c) => c ?? tryFetch('skynets.config.json'))
       .then((c) => (this.config = c))
       .catch(() => {}) // no file / bad JSON → stay unlocked (dev default)
       .finally(() => (this.loaded = true))

@@ -1,4 +1,9 @@
-# Skynets: Mastotron reborn as a Bluesky client
+# Mothtrap: Mastotron reborn as a Bluesky client
+
+*(Named **Skynets** for most of this document's life; renamed **Mothtrap** 2026-07 and
+deployed to https://mothtrap.blue. Prose below uses either name for the same app.
+Persistent-storage keys keep the `skynets` prefix deliberately — renaming them would
+orphan users' local data.)*
 
 A planning document: what Mastotron was, what its essential spirit is, and how to rebuild
 it — much smaller — as a Svelte web client for Bluesky.
@@ -81,7 +86,7 @@ a stated privacy feature anyway.
 
 ---
 
-## 3. Proposed architecture: Skynets
+## 3. Proposed architecture
 
 A **pure client-side SPA**. No server, no desktop wrapper, no websockets of our own.
 Deployable as static files (GitHub Pages / Netlify / localhost).
@@ -193,15 +198,14 @@ jQuery-UI + socket.io + vis-network.
      reposter's avatar tucked behind-and-left of the reposted node; a **pulled-in
      reply-parent** is only shown while it's still attached to a post that's actually in
      your feed (conversations with no primary post of your own are dropped).
-5. **Live + polish** ✅ (mostly) — **OAuth login**, **deployed** to GitHub Pages at
-   ryanheuser.com/skynets/, **open-in-bsky.app** on double-click, and **60s live polling**
+5. **Live + polish** ✅ (mostly) — **OAuth login**, **deployed** — primary at https://mothtrap.blue (see docs/DEPLOY.md), secondary GitHub Pages at ryanheuser.com/mothtrap/, **open-in-bsky.app** on double-click, and **60s live polling**
    that slides new posts into the graph (persisted toggle in the config popover). Still
    optional: Jetstream firehose instead of polling, follower-weighted scoring.
 
 6. **Backlog (not critical)** — from Dan Abramov's atproto AMA (2026-07-13):
    - **Granular OAuth scopes**: replace the legacy `transition:generic` catch-all with
      the granular permission scopes (create/delete records for post/like/repost/follow,
-     blob upload, feed reads) so the consent screen honestly describes what Skynets can
+     blob upload, feed reads) so the consent screen honestly describes what Mothtrap can
      do and a leaked browser token carries less blast radius.
    - **Jetstream live mode**: replace the 60s `getTimeline` poll with a Jetstream
      websocket subscription filtered by `wantedDids` (your ~600 follows fit its limits)
@@ -227,7 +231,7 @@ Each milestone is a working app; 1–3 recreate the daily-driver experience.
   the hover card (interactive, hover-persistent), optimistic with rollback. **Rich text**
   ✅ — outbound facet detection (links/@mentions post correctly) and inbound rendering
   (clickable links/mentions), plus **image embeds** in the card. (Mastotron was read-only;
-  Skynets is not.) **Quote-embed cards** ✅ and **external link-preview cards** ✅ render
+  Mothtrap is not.) **Quote-embed cards** ✅ and **external link-preview cards** ✅ render
   inline in the hover card. **Image upload** ✅ — attach up to 4 images with per-image alt
   text, client-side downscale/compress. **Thread composer** ✅ — "+ Add post" writes a
   multi-post self-reply chain (each segment its own text + images); it lands in the graph
@@ -237,7 +241,7 @@ Each milestone is a working app; 1–3 recreate the daily-driver experience.
 
 ## 6. Roadmap: the corpus turn (archive → embeddings → LLM digest)
 
-Skynets so far is a *live view*: it shows what the timeline serves right now and forgets
+Mothtrap so far is a *live view*: it shows what the timeline serves right now and forgets
 the rest. The next arc turns it into a **personal corpus with an interpreter** — the feed
 persisted locally, organized into "conversations" (the few discourse-events in play on a
 given day), and summarized on demand. Six phases; A is the foundation, E is the payoff,
@@ -431,7 +435,7 @@ but latency-bound (prefill dominates), which is what makes the rolling + gating 
 1. **BYO Anthropic key** in the config popover. The browser calls Anthropic directly,
    which needs the `anthropic-dangerous-direct-browser-access: true` header — and the
    header is named "dangerous" for a real reason that bites *this* app specifically:
-   Skynets renders rich user content (facets, quote-embeds, external link cards, images),
+   Mothtrap renders rich user content (facets, quote-embeds, external link cards, images),
    which is a live XSS surface, and a key in `localStorage` is exfiltratable through any
    injection. Mitigations, in order of paranoia: keep the key in session memory only
    (re-enter per session), or `sessionStorage` (narrower than `localStorage`), or — the

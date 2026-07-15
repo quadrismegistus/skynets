@@ -79,7 +79,7 @@ class SessionState {
       }
     } catch (err) {
       // A failed OAuth callback shouldn't strand the user on a blank screen.
-      console.warn('[skynets] OAuth init failed', err)
+      console.warn('[mothtrap] OAuth init failed', err)
     }
 
     if (await resumeAppPassword()) {

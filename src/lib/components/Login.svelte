@@ -35,7 +35,7 @@
 
 <div class="wrap">
   <div class="card">
-    <h1>Skynets</h1>
+    <h1>Mothtrap</h1>
     <p class="tagline">A network map for your Bluesky timeline.</p>
 
     <form onsubmit={oauthSubmit}>
@@ -56,7 +56,7 @@
     </form>
 
     <p class="hint">
-      Sign in on Bluesky's own page — Skynets never sees your password.
+      Sign in on Bluesky's own page — Mothtrap never sees your password.
     </p>
 
     {#if session.error}

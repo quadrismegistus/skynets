@@ -430,9 +430,9 @@ test('archive coverage view opens with a histogram', async ({ page }) => {
 test('help dialog opens and closes', async ({ page }) => {
   await graphReady(page)
   await page.locator('.help').click()
-  await expect(page.getByText('How Skynets works')).toBeVisible()
+  await expect(page.getByText('How Mothtrap works')).toBeVisible()
   await page.keyboard.press('Escape')
-  await expect(page.getByText('How Skynets works')).toHaveCount(0)
+  await expect(page.getByText('How Mothtrap works')).toHaveCount(0)
 })
 
 test('settings persist across reload', async ({ page }) => {
