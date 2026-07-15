@@ -16,6 +16,19 @@
 
   const byUri = $derived(new Map(items.map((i) => [i.post.uri, i])))
   const convos = $derived(digest.digest?.conversations ?? [])
+  // Config folds away once there's a digest, so the results get the room.
+  let showConfig = $state(digest.digest == null)
+  const actionLabel = $derived(
+    digest.loading
+      ? digest.continuous
+        ? 'Updating…'
+        : 'Reading…'
+      : digest.continuous
+        ? 'Update digest'
+        : digest.digest
+          ? 'Re-summarize'
+          : 'Summarize',
+  )
   const originHint = typeof location !== 'undefined' ? location.origin : 'http://localhost:1997'
   // Streamed raw text comes from the engine in continuous mode, else the store.
   const liveStream = $derived(digest.continuous ? digest.engine.streamText : digest.streamText)
@@ -61,6 +74,34 @@
     </div>
   </header>
 
+  <div class="actionbar">
+    <button class="go wide" onclick={onsummarize} disabled={digest.loading || items.length === 0}>
+      {actionLabel}
+    </button>
+    <button
+      class="cfg-toggle"
+      class:on={showConfig}
+      onclick={() => (showConfig = !showConfig)}
+      title="Digest settings"
+      aria-label="Digest settings"
+    >
+      ⚙
+    </button>
+  </div>
+
+  {#if digest.continuous && !showConfig}
+    <p class="engine-status slim">
+      {#if digest.loading}
+        {phaseLabel[digest.engine.phase] ?? 'working…'}
+      {:else if digest.engine.clusters.length}
+        {digest.engine.clusters.length} conversations tracked · auto-updating
+      {:else}
+        starting the rolling digest…
+      {/if}
+    </p>
+  {/if}
+
+  {#if showConfig}
   <div class="controls">
     <div class="seg">
       <button class:on={digest.provider === 'anthropic'} onclick={() => (digest.provider = 'anthropic')}>
@@ -135,9 +176,6 @@
             <option value={m.id}>{m.label}</option>
           {/each}
         </select>
-        <button class="go" onclick={onsummarize} disabled={digest.loading || items.length === 0}>
-          {digest.loading ? (digest.continuous ? 'Updating…' : 'Reading…') : digest.continuous ? 'Update digest' : digest.digest ? 'Re-summarize' : 'Summarize'}
-        </button>
       </div>
       <p class="note">
         Sends up to {digest.window} posts to Anthropic (fetches more if needed). The key stays in
@@ -157,11 +195,6 @@
         <span>Ollama URL</span>
         <input bind:value={digest.ollamaUrl} placeholder="http://localhost:11434" autocomplete="off" />
       </label>
-      <div class="row">
-        <button class="go wide" onclick={onsummarize} disabled={digest.loading || items.length === 0}>
-          {digest.loading ? (digest.continuous ? 'Updating…' : 'Reading…') : digest.continuous ? 'Update digest' : digest.digest ? 'Re-summarize' : 'Summarize'}
-        </button>
-      </div>
       <p class="note">
         Runs locally on up to {digest.window} posts — nothing leaves your machine. Start Ollama with
         the app's origin allowed (<code>OLLAMA_ORIGINS={originHint} ollama serve</code>) and pull the
@@ -171,6 +204,7 @@
       </p>
     {/if}
   </div>
+  {/if}
 
   {#if digest.error}
     <p class="err">{digest.error}</p>
@@ -265,8 +299,35 @@
     border-color: var(--danger, #e0684f);
     color: var(--danger, #e0684f);
   }
+  .actionbar {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.7rem 0.9rem;
+  }
+  .cfg-toggle {
+    flex: none;
+    width: 2.1rem;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--text-dim);
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+  .cfg-toggle:hover {
+    color: var(--text);
+    border-color: var(--accent);
+  }
+  .cfg-toggle.on {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .engine-status.slim {
+    margin: 0;
+    padding: 0 0.9rem 0.6rem;
+  }
   .controls {
-    padding: 0.8rem 0.9rem;
+    padding: 0.2rem 0.9rem 0.8rem;
     border-bottom: 1px solid var(--border);
     display: flex;
     flex-direction: column;
