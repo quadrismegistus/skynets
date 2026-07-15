@@ -1,5 +1,6 @@
 <script lang="ts">
   import { digest } from '../state/digest.svelte'
+  import { deploy } from '../state/deploy.svelte'
   import { convoColor, exemplars, MODELS, type Conversation } from '../api/llm'
   import { formatSize } from '../api/ollama'
   import { reposter } from '../api/post'
@@ -118,14 +119,18 @@
 
   {#if showConfig}
   <div class="controls">
-    <div class="seg">
-      <button class:on={digest.provider === 'anthropic'} onclick={() => (digest.provider = 'anthropic')}>
-        Anthropic
-      </button>
-      <button class:on={digest.provider === 'ollama'} onclick={() => (digest.provider = 'ollama')}>
-        Ollama (local)
-      </button>
-    </div>
+    {#if deploy.locked}
+      <p class="note">This instance runs a shared model — nothing to configure. Just press Digest.</p>
+    {:else if !deploy.hideOllama}
+      <div class="seg">
+        <button class:on={digest.provider === 'anthropic'} onclick={() => (digest.provider = 'anthropic')}>
+          Anthropic
+        </button>
+        <button class:on={digest.provider === 'ollama'} onclick={() => (digest.provider = 'ollama')}>
+          Ollama (local)
+        </button>
+      </div>
+    {/if}
 
     <div class="row window">
       <span>Posts</span>
@@ -171,7 +176,9 @@
       </p>
     {/if}
 
-    {#if digest.provider === 'anthropic'}
+    {#if deploy.locked}
+      <!-- Model/provider/URL are fixed by the deployment — no controls. -->
+    {:else if digest.provider === 'anthropic'}
       <label class="field">
         <span>
           Anthropic key

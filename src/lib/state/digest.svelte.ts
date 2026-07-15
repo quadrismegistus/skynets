@@ -12,6 +12,7 @@ import { DEFAULT_MERGE_THRESHOLD, groupByEmbedding, groupByLabel } from '../api/
 import { embedTexts } from '../api/embed'
 import type { FeedItem } from '../api/timeline'
 import { DigestEngine } from './digestEngine.svelte'
+import { deploy } from './deploy.svelte'
 import { listOllamaModels, pickClusterModel, pickDefaultModel, type OllamaModel } from '../api/ollama'
 
 const KEY = 'skynets.llm'
@@ -148,6 +149,26 @@ class DigestState {
             mergeThreshold: this.mergeThreshold,
           }
           localStorage.setItem(KEY, JSON.stringify(data))
+        })
+
+        // Apply the per-deployment config once it loads (overrides persisted +
+        // auto-picked values, so a hosted instance pins its own model/provider).
+        $effect(() => {
+          const c = deploy.config
+          if (!c) return
+          if (c.provider === 'anthropic' || c.provider === 'ollama') this.provider = c.provider
+          if (c.hideOllama && this.provider === 'ollama') this.provider = 'anthropic'
+          if (typeof c.ollamaUrl === 'string') this.ollamaUrl = c.ollamaUrl
+          if (typeof c.model === 'string') {
+            if (this.provider === 'ollama') {
+              this.ollamaModel = c.model
+              this.ollamaLabelModel = c.model
+              this.ollamaModelPinned = true
+              this.ollamaLabelModelPinned = true
+            } else {
+              this.model = c.model
+            }
+          }
         })
       })
     }
