@@ -243,7 +243,32 @@ persisted locally, organized into "conversations" (the few discourse-events in p
 given day), and summarized on demand. Six phases; A is the foundation, E is the payoff,
 and E-minimal can actually ship first (see ordering note at the end).
 
-### Phase A — Archive foundation
+> **Status — 2026-07-15 (merged to `main`).** The corpus turn is largely built and
+> shipped (PRs #13 → #15). Done:
+> - **Phase A — Archive** ✅ (A0/A1/A2 all shipped): normalized IndexedDB
+>   (`state/archive.ts`: posts/appearances/counts/follows/vectors/digest), engine
+>   rehydration across reloads, off-window revive, gap-healing backfill (`state/backfill.ts`),
+>   follows-over-time snapshots, archive stats UI + JSON export.
+> - **Phase C — Embeddings** ✅ (in-scope parts): `all-minilm` via Ollama (`api/embed.ts`),
+>   used as the novelty **gate** and for label-merge similarity. Document construction
+>   (parent/quote/alt text) is inlined into the LLM prompt rather than a separate embedding
+>   pipeline. transformers.js/WebGPU path NOT built — Ollama covers it locally.
+> - **Phase D — Conversation detection** ✅ (via E, not embeddings): conversations come
+>   from the LLM (cluster mode) or per-post labels + embedding merge (label mode), rendered
+>   as topic pills/captions on the force graph. The standalone C/D clustering path was
+>   demoted per the "skip if E is good enough" note — E is good enough.
+> - **Phase E — LLM digest** ✅ **and extended**: single-shot + continuous rolling engine
+>   (embed → novelty gate → establish/roll/skip), **per-post label mode**, auto-cadence,
+>   Ollama model auto-picker (smallest / cluster-capability-floor / MLX-aware) + a separate
+>   smaller **label model**. 130 unit + 30 e2e green.
+>
+> **Still open:** **Phase B (Jetstream)** — the "capture every post even while the app is
+> closed / catch deletes" piece, discussed below. **Phase F (Tauri)** — only if
+> capture-while-closed proves it's needed (B first). Smaller follow-ups tracked inline:
+> calibrate the label-mode merge-threshold default; consider a size-vs-capability floor for
+> the cluster model.
+
+### Phase A — Archive foundation ✅ SHIPPED (PR #13)
 
 Persist every timeline post locally so nothing is lost between sessions.
 
@@ -314,7 +339,7 @@ persistent), **A2 when the corpus itself is the goal**. The rest of this section
 6. Tests: upsert dedup, appearance-append, the (tunable) stop condition, gap-heal against
    a mocked paginated timeline, throttle/backoff.
 
-### Phase B — Jetstream capture (backlog item, promoted)
+### Phase B — Jetstream capture (backlog item, promoted) ⏳ NEXT — not built
 
 Near-lossless capture while the app is open; replay heals short gaps.
 
@@ -328,9 +353,12 @@ Near-lossless capture while the app is open; replay heals short gaps.
 4. Polling remains the fallback when the socket is down; both funnel into the same
    archive write path.
 
-### Phase C — Embedding layer
+### Phase C — Embedding layer ✅ SHIPPED (in-scope parts, via Ollama)
 
-Client-side vectors as the always-on cheap signal.
+Client-side vectors as the always-on cheap signal. *Built as `all-minilm` through Ollama
+(`api/embed.ts`) — the novelty gate + label-merge similarity. The transformers.js/WebGPU
+in-browser path below was NOT built (Ollama covers local); revisit only if we want
+embeddings without an Ollama dependency.*
 
 1. **transformers.js** with a small model (bge-small or MiniLM class, ~25MB quantized),
    WebGPU with WASM fallback, lazy-loaded behind a setting (off by default — 25MB is
@@ -345,10 +373,14 @@ Client-side vectors as the always-on cheap signal.
    resident; a day or a week of vectors at a time is what any live view needs.
 4. Similarity utilities: cosine, top-k neighbors over a time window.
 
-### Phase D — Conversation detection
+### Phase D — Conversation detection ✅ SHIPPED (via E, not standalone clustering)
 
 "There are a few conversations in play today" made computable: a conversation is a
-**semantic cluster × a time burst**.
+**semantic cluster × a time burst**. *Delivered through the LLM (E), not the embedding
+clustering below: cluster mode (one LLM pass) or label mode (per-post label → embedding
+merge). The standalone agglomerative/kNN path was demoted per §D.4's "skip if E is good
+enough" — it is. The burst/time-decay dimension is approximated by the recency×engagement
+axes + the rolling engine's novelty gate.*
 
 1. Reply threads are ground-truth conversations already; clustering's job is to *join
    threads and singletons* into discourse-events (greedy agglomerative over cosine, or
@@ -366,7 +398,7 @@ Client-side vectors as the always-on cheap signal.
    That's Phase E's job. If LLM clustering (E) proves good and cheap enough, C+D can
    be skipped or demoted to the offline-analysis path — decide after E-minimal ships.
 
-### Phase E — LLM digest
+### Phase E — LLM digest ✅ SHIPPED + EXTENDED (PRs #13, #15)
 
 The interpreter. **Target: all-local, so it can run continuously for $0** (Ollama).
 The BYO-cloud path below still works and is the best *quality* if a user opts in, but
@@ -407,7 +439,7 @@ but latency-bound (prefill dominates), which is what makes the rolling + gating 
 6. Tests: digest-state round-trip with a mocked API; label stability across calls;
    URI-integrity (fabricated exemplar URIs are dropped).
 
-### Phase F — Desktop wrap (Tauri) — only if needed
+### Phase F — Desktop wrap (Tauri) — only if needed ⏳ DEFERRED (do B first)
 
 Browser limits for always-on capture: background tabs throttle timers (~1/min; sockets
 usually survive), IndexedDB is evictable in principle. **Tauri** wraps the existing
@@ -443,14 +475,36 @@ stay cheap by updating incrementally?** Findings below are load-bearing — seve
 contradict earlier guesses in Phases C–E, and each cost real benchmark time, so don't
 re-litigate them without new evidence.
 
-### What shipped (E-minimal, branch `feat/llm-digest`, unmerged)
+### What shipped (MERGED to `main` — PRs #13, #14, #15)
 
-Digest panel (conversations + graph-annotation rings), Ollama **and** Anthropic providers,
-raw-token streaming with an elapsed timer, tolerant JSON extraction, a persisted
-summarize-window (default 70), `num_ctx` scaled to the prompt, and `qwen3.5:4b-mlx` as the
-local default. 62 unit + 18 e2e green. Iterate here before merging.
+E-minimal grew into the full pipeline. On `main` now:
+- Digest panel (conversations list + graph topic **pills** for 2+-post topics, **captions**
+  under one-off posts), Ollama **and** Anthropic providers, raw-token streaming + elapsed
+  timer, tolerant JSON extraction, persisted window (default 70), `num_ctx` scaled to prompt.
+- **Continuous rolling engine** (embed → novelty gate → establish/roll/skip+buffer →
+  dedup-merge) with auto-cadence; **single-shot** mode too.
+- **Per-post label mode**: label each OP with a tiny model, group by embedding cosine
+  (tunable merge slider), replies anchored to their thread OP, parent/quote text inlined.
+- **Ollama model auto-picker** (`api/ollama.ts`): lists installed models, auto-picks the
+  smallest for labeling and the smallest ≥3GB for clustering, MLX-aware (preferred on Mac,
+  excluded off), independently pinnable; a separate smaller **label model**.
+- **Phase A archive** (persist/rehydrate/backfill) underneath it all.
+- **130 unit + 30 e2e** green. `qwen3.5:4b-mlx` was the original local default; selection is
+  now automatic from installed models. Reviewed twice adversarially; findings fixed.
 
 ### Model selection (local)
+
+> **Addendum (2026-07-15): cluster model vs label model are different jobs.** The findings
+> below are for **cluster mode** (one-shot JSON over the whole feed) — `4b-mlx` is the pick
+> there, and `2b`/`1b` are rejected for exactly the instability seen. But **label mode**
+> (one tiny prompt → a 2–4 word topic per post, grouping done by embeddings) is a far easier
+> task, and a **sub-1B model** (`qwen3.5:0.8b-mlx`) is viable for it — low footprint, and
+> quality is "good enough" once replies carry their parent context. Two real caveats at that
+> size, both observed: (a) it **parrots concrete examples** put in the system prompt (had to
+> strip an example that it copied verbatim onto unrelated posts) → keep label prompts
+> example-free; (b) **inconsistent capitalization** (normalized in `cleanLabel`). The picker
+> now defaults label mode to the smallest installed and clustering to the smallest ≥3GB, both
+> overridable. Bottom line: **pick model size per task difficulty**, not one size for both.
 
 - **`qwen3.5:4b-mlx` is the pick.** ~31 tok/s on Apple Silicon, ~13–28s for a full
   100-post digest, and it resolves real subtweets (an ICE-killing thread discussed via
