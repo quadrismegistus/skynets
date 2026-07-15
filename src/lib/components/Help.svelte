@@ -15,12 +15,12 @@
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="modal" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()}>
     <div class="head">
-      <strong>How Skynets works</strong>
+      <strong>How Mothtrap works</strong>
       <button class="close" aria-label="Close" onclick={onclose}>✕</button>
     </div>
 
     <p class="intro">
-      Skynets shows your Bluesky timeline as a map of conversations instead of a scrolling
+      Mothtrap shows your Bluesky timeline as a map of conversations instead of a scrolling
       feed — so you can triage, not doomscroll.
     </p>
 

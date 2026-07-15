@@ -1,6 +1,6 @@
 import { Agent, AtpAgent, type AtpSessionData, type AtpSessionEvent } from '@atproto/api'
 
-const SESSION_KEY = 'skynets.session'
+const SESSION_KEY = 'skynets.session' // legacy name from before the Mothtrap rename — do not change (active logins)
 const SERVICE = 'https://bsky.social'
 
 /**

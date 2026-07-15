@@ -104,6 +104,7 @@ export class Archive {
   async open(did: string): Promise<void> {
     if (this.#db && this.#did === did) return
     this.#did = did || 'anon'
+    // DB name is the legacy pre-Mothtrap-rename one — do not change (users' local archives)
     this.#db = await openDB<ArchiveSchema>(`skynets-archive-${this.#did}`, 1, {
       upgrade(db) {
         const posts = db.createObjectStore('posts', { keyPath: 'uri' })

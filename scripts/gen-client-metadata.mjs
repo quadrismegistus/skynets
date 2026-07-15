@@ -3,21 +3,21 @@
 // served from, so it must be generated to match the deploy URL exactly — no
 // hand-maintained copy that can drift out of sync.
 //
-// Usage: APP_URL=https://ryanheuser.com/skynets/ node scripts/gen-client-metadata.mjs
+// Usage: APP_URL=https://mothtrap.blue/ node scripts/gen-client-metadata.mjs
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const appUrl = process.env.APP_URL
 if (!appUrl) {
-  console.error('APP_URL env var is required, e.g. https://ryanheuser.com/skynets/')
+  console.error('APP_URL env var is required, e.g. https://mothtrap.blue/')
   process.exit(1)
 }
 const base = appUrl.endsWith('/') ? appUrl : `${appUrl}/`
 
 const metadata = {
   client_id: `${base}client-metadata.json`,
-  client_name: 'Skynets',
+  client_name: 'Mothtrap',
   client_uri: base,
   application_type: 'web',
   dpop_bound_access_tokens: true,

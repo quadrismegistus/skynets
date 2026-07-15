@@ -621,7 +621,7 @@
     const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
     const a = document.createElement('a')
     a.href = url
-    a.download = `skynets-corpus-${new Date().toISOString().slice(0, 10)}.json`
+    a.download = `mothtrap-corpus-${new Date().toISOString().slice(0, 10)}.json`
     a.click()
     URL.revokeObjectURL(url)
   }

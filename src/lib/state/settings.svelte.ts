@@ -1,6 +1,6 @@
 import type { SelectMode } from './graph'
 
-const KEY = 'skynets.settings'
+const KEY = 'skynets.settings' // legacy name from before the Mothtrap rename — do not change (users' saved settings)
 
 interface Persisted {
   nodeLimit: number

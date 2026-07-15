@@ -16,7 +16,7 @@ class ReadState {
   #did: string | undefined
 
   #key(did: string) {
-    return `skynets:dismissed:${did}`
+    return `skynets:dismissed:${did}` // legacy prefix from before the Mothtrap rename — do not change (users' read state)
   }
 
   /** Load the dismissed set for a user. Call on login. */

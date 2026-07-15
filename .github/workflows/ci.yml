@@ -48,13 +48,14 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
-    # Deploy target. To move to a subdomain (e.g. https://skynets.ryanheuser.com/),
-    # set APP_URL to that root and BASE_PATH to "/", and point the OAuth client id
-    # at the new URL — nothing else changes.
+    # Deploy target: the GitHub Pages instance (secondary; the primary deploy is
+    # https://mothtrap.blue — see docs/DEPLOY.md). Pages project paths follow the
+    # repo name. To move to a subdomain, set APP_URL to that root and BASE_PATH
+    # to "/", and point the OAuth client id at the new URL — nothing else changes.
     env:
-      APP_URL: https://ryanheuser.com/skynets/
-      BASE_PATH: /skynets/
-      VITE_OAUTH_CLIENT_ID: https://ryanheuser.com/skynets/client-metadata.json
+      APP_URL: https://ryanheuser.com/mothtrap/
+      BASE_PATH: /mothtrap/
+      VITE_OAUTH_CLIENT_ID: https://ryanheuser.com/mothtrap/client-metadata.json
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -64,6 +65,9 @@ jobs:
       - run: npm ci
       - run: npm run gen:metadata
       - run: npm run build
+      # This instance is a static cloud deploy: no reachable Ollama, so hide it
+      - run: |
+          echo '{ "provider": "anthropic", "hideOllama": true }' > dist/mothtrap.config.json
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
