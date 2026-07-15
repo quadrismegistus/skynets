@@ -262,11 +262,27 @@ and E-minimal can actually ship first (see ordering note at the end).
 >   Ollama model auto-picker (smallest / cluster-capability-floor / MLX-aware) + a separate
 >   smaller **label model**. 130 unit + 30 e2e green.
 >
-> **Still open:** **Phase B (Jetstream)** — the "capture every post even while the app is
-> closed / catch deletes" piece, discussed below. **Phase F (Tauri)** — only if
-> capture-while-closed proves it's needed (B first). Smaller follow-ups tracked inline:
-> calibrate the label-mode merge-threshold default; consider a size-vs-capability floor for
-> the cluster model.
+> **Deferred (decided 2026-07-15, with data):** **Phase B (Jetstream).** The archive
+> **coverage view** (PR #17) let us look at the real feed: capture uptime is near-continuous
+> (2 empty hours vs. 101 empty *posted* hours — the app is open most of the time), and the
+> diurnal dips are genuine network-quiet (the 06:00 UTC/BST trough = US asleep), NOT capture
+> gaps. So Jetstream would have little to "fill." Its marginal value narrows to: **deletes**
+> (the one thing backfill can't see) and **inter-poll completeness during the dense hours**
+> (posts buried between 60s polls). Revisit only if those specifically matter.
+>
+> A second, stronger reason to keep **polling** central over Jetstream: **multi-feed support.**
+> Jetstream captures posts *by your follows* (a `wantedDids` filter) and cannot reproduce an
+> algorithmic/custom feed — Discover, "What's Hot", topical feed-generators are computed
+> server-side and are ONLY reachable via `app.bsky.feed.getFeed(uri)` polling. The app is
+> already feed-agnostic below the fetch (`getFeed` returns the same `FeedViewPost[]` as
+> `getTimeline`), so a **feed picker** (read saved feeds from `getPreferences`, swap
+> `getTimeline`→`getFeed`) is a small change with large research value: archive the broader
+> cultural stream (Discover / topical feeds), not just your own network. This is a more
+> promising direction than Jetstream, and the two are somewhat at odds. See §6.5 below.
+>
+> **Also open:** **Phase F (Tauri)** — only if capture-while-closed proves it's needed.
+> Smaller follow-ups tracked inline: calibrate the label-mode merge-threshold default;
+> size-vs-capability floor for the cluster model.
 
 ### Phase A — Archive foundation ✅ SHIPPED (PR #13)
 
@@ -339,7 +355,11 @@ persistent), **A2 when the corpus itself is the goal**. The rest of this section
 6. Tests: upsert dedup, appearance-append, the (tunable) stop condition, gap-heal against
    a mocked paginated timeline, throttle/backoff.
 
-### Phase B — Jetstream capture (backlog item, promoted) ⏳ NEXT — not built
+### Phase B — Jetstream capture (backlog item, promoted) ⏸ DEFERRED (see the §6 status banner)
+
+*Deferred: the coverage view showed near-continuous capture uptime and genuine network-quiet
+dips, so Jetstream has little to fill; and it can't do multi-feed (Following-only). Kept here
+for if deletes / inter-poll density ever justify it.*
 
 Near-lossless capture while the app is open; replay heals short gaps.
 
@@ -447,6 +467,31 @@ Vite/Svelte app nearly unchanged — SQLite for the archive, tray residence, cap
 while "closed" — and the web deployment stays the same codebase with archive features
 degrading gracefully. Deliberately last: Phase A's backfill-on-open covers most of the
 value, so build this only when capture-while-closed demonstrably matters.
+
+### 6.5 Multi-feed capture (candidate — a better next step than B) 🔎 IDEA
+
+Right now the app reads only "Following" (`getTimeline`). But **every other feed** — Discover,
+"What's Hot", and the thousands of custom feed-generators — is fetched with
+`app.bsky.feed.getFeed({ feed: <at-uri> })`, which returns the **same `FeedViewPost[]`** shape.
+The whole app (graph, archive, digest, coverage) is already feed-agnostic below the fetch, so
+this is a small, high-leverage change:
+
+1. **Feed picker.** Read the user's saved/pinned feeds from `app.bsky.actor.getPreferences`
+   (savedFeeds), list them, and let the graph source swap `getTimeline` → `getFeed(uri)`.
+   "Following" stays the default (it's its own endpoint).
+2. **Archive per feed.** Posts go in the same `posts` store (dedup by uri); note *which feed*
+   surfaced a post in `appearances` (extend `kind` beyond timeline/repost/context to include a
+   feed id). A post can appear via several feeds — that's signal, not duplication.
+3. **Digest/coverage per feed or merged.** Probably a per-feed scope with a merged option.
+
+**Why this beats Jetstream (Phase B):** Jetstream is Following-only (a `wantedDids` filter over
+your follows) and *cannot* reproduce an algorithmic feed — Discover is computed server-side.
+So polling `getFeed` is the ONLY route to non-Following feeds; the general archive path is
+polling, not the firehose. **Research value:** archiving Discover / topical feeds captures the
+broader cultural stream beyond your own network — for discourse/aesthetics work, potentially
+much richer than the Following graph alone. Open questions: feed-generator rate limits and
+pagination depth (same caveats as timeline backfill); whether the *graph* view is meaningful
+for a fast-churning algorithmic feed (Discover has weaker thread structure than Following).
 
 ### Ordering
 
