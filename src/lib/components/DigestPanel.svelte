@@ -72,6 +72,10 @@
   })
 </script>
 
+{#snippet info(text: string)}
+  <span class="info" title={text} aria-label={text}>ⓘ</span>
+{/snippet}
+
 <aside class="panel">
   <header>
     <strong>Conversations</strong>
@@ -132,30 +136,35 @@
     <label class="row toggle">
       <input type="checkbox" bind:checked={digest.continuous} />
       <span>Continuous (rolling)</span>
+      {@render info(
+        'Updates automatically as new posts arrive (turn on Live in the graph settings to keep the feed flowing). Most checks are free — the LLM only runs when something new appears.',
+      )}
     </label>
 
     <label class="row toggle">
       <input type="checkbox" bind:checked={digest.opsOnly} />
       <span>Cluster on originals only</span>
+      {@render info(
+        "Feeds the classifier each thread's original post, not the replies — reply text is noisy and tends to muddy the conversations.",
+      )}
     </label>
-    <p class="note sub">
-      Feeds the classifier each thread's original post, not the replies — reply text is noisy and
-      tends to muddy the conversations.
-    </p>
 
     <label class="row toggle">
       <input type="checkbox" bind:checked={digest.labelMode} />
       <span>Label each post</span>
+      {@render info(
+        'Tags every original post with its own short topic (many tiny prompts instead of one big one), then groups shared topics into conversations. A one-off topic sits as a caption under its post rather than getting its own pill.',
+      )}
     </label>
-    <p class="note sub">
-      Tags every original post with its own short topic (many tiny prompts instead of one big
-      one), then groups shared topics into conversations. A one-off topic sits as a caption under
-      its post rather than getting its own pill.
-    </p>
 
     {#if digest.labelMode}
       <div class="row window sub">
-        <span>Merge</span>
+        <span>
+          Merge
+          {@render info(
+            'How alike two topics must be (by meaning) to merge into one conversation. Lower = more merging (fewer, broader topics); higher = stricter (more one-off captions).',
+          )}
+        </span>
         <input
           type="range"
           min="0.4"
@@ -166,10 +175,6 @@
         />
         <span class="wval">{digest.mergeThreshold.toFixed(2)}</span>
       </div>
-      <p class="note sub">
-        How alike two topics must be (by meaning) to merge into one conversation. Lower = more
-        merging (fewer, broader topics); higher = stricter (more one-off captions).
-      </p>
     {/if}
 
     {#if digest.continuous}
@@ -184,15 +189,16 @@
           starting the rolling digest…
         {/if}
       </p>
-      <p class="note">
-        Updates automatically as new posts arrive (turn on <b>Live</b> in the graph settings to keep
-        the feed flowing). Most checks are free — the LLM only runs when something new appears.
-      </p>
     {/if}
 
     {#if digest.provider === 'anthropic'}
       <label class="field">
-        <span>Anthropic key</span>
+        <span>
+          Anthropic key
+          {@render info(
+            `Sends up to ${digest.window} posts to Anthropic (fetches more if needed). The key stays in this tab's memory only (re-enter next session); without one, a demo digest is shown.`,
+          )}
+        </span>
         <input
           type="password"
           placeholder="sk-ant-… (kept in memory only)"
@@ -207,17 +213,13 @@
           {/each}
         </select>
       </div>
-      <p class="note">
-        Sends up to {digest.window} posts to Anthropic (fetches more if needed). The key stays in
-        this tab's memory only (re-enter next session); without one, a demo digest is shown.
-      </p>
     {:else}
       <label class="field">
         <span>
           {digest.labelMode ? 'Clustering model' : 'Model'}
           {#if digest.ollamaModels.length}
             <span class="model-meta">
-              · {digest.ollamaModels.length} installed{digest.ollamaModelPinned ? '' : ' · smallest auto-picked'}
+              · {digest.ollamaModels.length} installed{digest.ollamaModelPinned ? '' : ' · auto-picked'}
             </span>
           {/if}
         </span>
@@ -260,15 +262,21 @@
         />
       </label>
       {#if digest.ollamaModels.length === 0}
-        <p class="note">No models found — is Ollama running at this URL? Pick one after it connects, or type a name.</p>
+        <!-- Not connected: show the setup instructions they need right now. -->
+        <p class="note">
+          No models found — is Ollama running at this URL? Start it with the app's origin allowed
+          (<code>OLLAMA_ORIGINS={originHint} ollama serve</code>) and pull a model
+          (<code>ollama pull {digest.ollamaModel || 'qwen3.5:4b-mlx'}</code>). Only works over
+          http://localhost — a deployed https page can't reach local Ollama.
+        </p>
+      {:else}
+        <p class="note connected">
+          {digest.ollamaModels.length} models · runs locally, nothing leaves your machine
+          {@render info(
+            'Bigger windows read more of the feed but wait longer before the first token. Only works over http://localhost — a deployed https page can’t reach local Ollama.',
+          )}
+        </p>
       {/if}
-      <p class="note">
-        Runs locally on up to {digest.window} posts — nothing leaves your machine. Start Ollama with
-        the app's origin allowed (<code>OLLAMA_ORIGINS={originHint} ollama serve</code>) and pull the
-        model first (<code>ollama pull {digest.ollamaModel || 'qwen3.5:4b-mlx'}</code>). Only works
-        when Skynets is served over http://localhost — a deployed https page can't reach local Ollama.
-        Bigger windows read more of the feed but wait longer before the first token.
-      </p>
     {/if}
   </div>
   {/if}
@@ -518,6 +526,19 @@
     color: var(--text-dim);
     font-size: 0.68rem;
     line-height: 1.4;
+  }
+  /* Compact info affordance — the description rides in its title tooltip so the
+     panel stays short. */
+  .info {
+    cursor: help;
+    color: var(--text-dim);
+    opacity: 0.55;
+    font-size: 0.7rem;
+    user-select: none;
+  }
+  .info:hover {
+    opacity: 1;
+    color: var(--accent);
   }
   .note.sub {
     margin-top: -0.2rem;

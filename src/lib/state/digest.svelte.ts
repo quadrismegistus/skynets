@@ -12,7 +12,7 @@ import { DEFAULT_MERGE_THRESHOLD, groupByEmbedding, groupByLabel } from '../api/
 import { embedTexts } from '../api/embed'
 import type { FeedItem } from '../api/timeline'
 import { DigestEngine } from './digestEngine.svelte'
-import { listOllamaModels, pickDefaultModel, type OllamaModel } from '../api/ollama'
+import { listOllamaModels, pickClusterModel, pickDefaultModel, type OllamaModel } from '../api/ollama'
 
 const KEY = 'skynets.llm'
 
@@ -152,11 +152,14 @@ class DigestState {
     const models = await listOllamaModels(this.ollamaUrl)
     this.ollamaModels = models
     if (models.length === 0) return
-    const pick = pickDefaultModel(models)
-    if (!pick) return
+    // Clustering wants a capability floor; labeling is happy with the smallest.
+    const clusterPick = pickClusterModel(models)
+    const labelPick = pickDefaultModel(models)
     const has = (name: string) => models.some((m) => m.name === name)
-    if (!this.ollamaModelPinned || !has(this.ollamaModel)) this.ollamaModel = pick
-    if (!this.ollamaLabelModelPinned || !has(this.ollamaLabelModel)) this.ollamaLabelModel = pick
+    if (clusterPick && (!this.ollamaModelPinned || !has(this.ollamaModel))) this.ollamaModel = clusterPick
+    if (labelPick && (!this.ollamaLabelModelPinned || !has(this.ollamaLabelModel))) {
+      this.ollamaLabelModel = labelPick
+    }
   }
 
   /** The user explicitly chose a model (typed or picked) — stop auto-selecting. */

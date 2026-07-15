@@ -36,17 +36,37 @@ export function isMlxModel(name: string): boolean {
   return /mlx/i.test(name)
 }
 
+/** A clustering model wants some capability floor (the one-shot JSON task is
+ * hard for tiny models); labeling one post does not. */
+export const CLUSTER_MIN_BYTES = 3e9
+
 /**
- * Pick a sensible default model from what's installed: the SMALLEST, preferring
- * MLX builds on a Mac and excluding MLX off a Mac (they won't run). Falls back
- * to the smallest overall if the preferred pool is empty. Undefined if nothing
- * is installed.
+ * Default LABEL model: the SMALLEST installed build, preferring MLX on a Mac and
+ * excluding MLX off a Mac (they won't run). Labeling one post is trivial, so
+ * tiny is ideal. Undefined if nothing is installed.
  */
 export function pickDefaultModel(models: OllamaModel[], mac: boolean = isMac()): string | undefined {
   if (models.length === 0) return undefined
   const preferred = models.filter((m) => (mac ? isMlxModel(m.name) : !isMlxModel(m.name)))
   const pool = preferred.length ? preferred : models
   return [...pool].sort((a, b) => a.size - b.size)[0]?.name
+}
+
+/**
+ * Default CLUSTERING model: the smallest build that clears the capability floor
+ * (the one-shot JSON task is hard for tiny models), else the largest available.
+ * Unlike the label pick, the floor takes precedence over MLX — on a Mac the big
+ * models are often plain GGUF, which still run fine there; MLX is only a
+ * tiebreak among equally-sized candidates. Off a Mac, MLX is excluded.
+ */
+export function pickClusterModel(models: OllamaModel[], mac: boolean = isMac()): string | undefined {
+  const runnable = mac ? models : models.filter((m) => !isMlxModel(m.name))
+  if (runnable.length === 0) return undefined
+  const sorted = [...runnable].sort(
+    (a, b) => a.size - b.size || Number(isMlxModel(b.name)) - Number(isMlxModel(a.name)),
+  )
+  const aboveFloor = sorted.filter((m) => m.size >= CLUSTER_MIN_BYTES)
+  return (aboveFloor[0] ?? sorted[sorted.length - 1]).name
 }
 
 /** Human-readable size, e.g. 1.9 GB. */
