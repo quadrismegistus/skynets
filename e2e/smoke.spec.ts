@@ -407,6 +407,22 @@ test('clicking a topic pill reveals all its posts', async ({ page }) => {
   await expect(pill).not.toHaveClass(/revealed/)
 })
 
+test('archive coverage view opens with a histogram', async ({ page }) => {
+  await graphReady(page)
+  await page.waitForTimeout(1500) // let the archive capture the loaded feed
+  await page.locator('.gear').click()
+  const cov = page.locator('.export-btn', { hasText: 'Coverage' })
+  await cov.scrollIntoViewIfNeeded()
+  await expect(cov).toBeEnabled({ timeout: 5000 }) // archive populated → enabled
+  await cov.click({ force: true })
+  await expect(page.locator('.cov')).toBeVisible()
+  await expect(page.locator('.hist rect').first()).toBeVisible()
+  await expect(page.locator('.summary')).toContainText('posts')
+  // Granularity toggle re-bins.
+  await page.locator('.grans button', { hasText: 'hour' }).click()
+  await expect(page.locator('.hist rect').first()).toBeVisible()
+})
+
 test('help dialog opens and closes', async ({ page }) => {
   await graphReady(page)
   await page.locator('.help').click()

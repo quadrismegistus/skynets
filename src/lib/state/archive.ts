@@ -268,6 +268,20 @@ export class Archive {
     }
   }
 
+  /** Every archived post's creation time (ms) AND the time we first saw it, for
+   * the coverage histogram. Read via a key-cursor on the createdAt index, so no
+   * post JSON is loaded — cheap even for a large corpus. `firstSeen` lets the
+   * view distinguish "posted then" from "captured then" (a gap between the two
+   * is where backfill filled in vs. live capture). */
+  async coverage(): Promise<{ createdAt: number; firstSeen: number }[]> {
+    const db = this.#db
+    if (!db) return []
+    // The createdAt index only carries createdAt; firstSeen lives in the record,
+    // so pull both from the full rows (still just two numbers we keep).
+    const rows = await db.getAll('posts')
+    return rows.map((r) => ({ createdAt: r.createdAt, firstSeen: r.firstSeen }))
+  }
+
   /** Full JSON export — the corpus, portable to notebooks/pandas. */
   async exportJSON(): Promise<string> {
     const db = this.#db

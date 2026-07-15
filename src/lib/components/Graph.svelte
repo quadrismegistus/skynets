@@ -20,6 +20,7 @@
   import { follows } from '../state/follows.svelte'
   import { session } from '../state/session.svelte'
   import { archive } from '../state/archive'
+  import CoverageView from './CoverageView.svelte'
   import { backfill, type BackfillResult } from '../state/backfill'
   import { getFollowDids } from '../api/actors'
 
@@ -57,6 +58,21 @@
   let backfillStatus = $state<BackfillResult | undefined>(undefined)
   let backfilling = $state(false)
   let archiveStats = $state<{ posts: number; appearances: number; counts: number; follows: number } | undefined>(undefined)
+  let showCoverage = $state(false)
+  let archiveReady = $state(false)
+  // Capture the already-loaded feed once the archive opens — the first load()'s
+  // record() ran before the DB was ready (a no-op), and a static feed (demo, or
+  // Live off) never polls again to backfill it. Idempotent (upsert by uri).
+  let capturedInitial = false
+  $effect(() => {
+    if (archiveReady && feedItems.length && !capturedInitial) {
+      capturedInitial = true
+      // Snapshot out of $state — the derived feedItems are reactive proxies,
+      // which IndexedDB can't structured-clone (the raw poll path stores plain
+      // fetch results, so it's unaffected).
+      void archive.record($state.snapshot(feedItems) as FeedItem[])
+    }
+  })
   const modes: SelectMode[] = ['top', 'recent', 'mix']
 
   let w = $state(0)
@@ -572,6 +588,7 @@
       .open(did)
       .then(async () => {
         await digest.engine.rehydrate()
+        archiveReady = true
         // Snapshot the follows list for the corpus (network-over-time). Runs
         // once per session in the background; recordFollows skips if unchanged.
         archive.recordFollows(await getFollowDids(did)).catch(() => {})
@@ -1156,11 +1173,18 @@
           {:else}
             <p class="hint archive-stats">archive not open yet…</p>
           {/if}
-          <button class="export-btn" onclick={exportArchive} disabled={!archiveStats?.posts}>Export corpus (JSON)</button>
+          <div class="archive-actions">
+            <button class="export-btn" onclick={() => (showCoverage = true)} disabled={!archiveStats?.posts}>Coverage…</button>
+            <button class="export-btn" onclick={exportArchive} disabled={!archiveStats?.posts}>Export JSON</button>
+          </div>
         </div>
       </div>
     {/if}
   </div>
+
+  {#if showCoverage}
+    <CoverageView onclose={() => (showCoverage = false)} />
+  {/if}
 
   <div class="hud" bind:this={hudEl}>
     {#if read.dismissed.size > 0}
@@ -1435,8 +1459,12 @@
     margin: 0.35rem 0 0.5rem;
     line-height: 1.5;
   }
+  .archive-actions {
+    display: flex;
+    gap: 0.4rem;
+  }
   .export-btn {
-    width: 100%;
+    flex: 1 1 0;
     font-size: 0.75rem;
     padding: 0.35rem;
   }
