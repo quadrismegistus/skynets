@@ -12,6 +12,7 @@ import { DEFAULT_MERGE_THRESHOLD, groupByEmbedding, groupByLabel } from '../api/
 import { embedTexts } from '../api/embed'
 import type { FeedItem } from '../api/timeline'
 import { DigestEngine } from './digestEngine.svelte'
+import { listOllamaModels, pickClusterModel, pickDefaultModel, type OllamaModel } from '../api/ollama'
 
 const KEY = 'skynets.llm'
 
@@ -19,6 +20,14 @@ interface Persisted {
   provider: Provider
   model: string
   ollamaModel: string
+  /** True once the user hand-picks a model — until then we auto-select the
+   * smallest installed one. */
+  ollamaModelPinned: boolean
+  /** A separate (typically smaller) model for label mode — the per-post label
+   * task is trivial, so a tiny model is ideal there while clustering keeps a
+   * capable one. Empty falls back to `ollamaModel`. */
+  ollamaLabelModel: string
+  ollamaLabelModelPinned: boolean
   ollamaUrl: string
   window: number
   continuous: boolean
@@ -53,6 +62,16 @@ class DigestState {
   provider = $state<Provider>('anthropic')
   model = $state(DEFAULT_MODEL)
   ollamaModel = $state(DEFAULT_OLLAMA_MODEL)
+  /** Models installed in the local Ollama (smallest first), fetched from
+   * /api/tags for the picker. */
+  ollamaModels = $state<OllamaModel[]>([])
+  /** Set once the user manually chooses a model; before that we keep the
+   * ollamaModel synced to the smallest installed one. */
+  ollamaModelPinned = $state(false)
+  /** Separate model for label mode (smaller is fine — it just tags one post).
+   * Empty falls back to `ollamaModel`. Auto-synced to smallest until pinned. */
+  ollamaLabelModel = $state('')
+  ollamaLabelModelPinned = $state(false)
   ollamaUrl = $state(DEFAULT_OLLAMA_URL)
   window = $state(DEFAULT_WINDOW)
   /** Continuous mode: maintain a rolling digest via the engine (embed → gate →
@@ -78,6 +97,9 @@ class DigestState {
   /** The OP set from the last label pass, so a threshold change can re-group
    * without re-labeling. */
   #lastLabelItems: FeedItem[] = []
+  /** Which model produced the cached labels — if the user switches the label
+   * model, the cache is invalidated so posts get re-labeled by the new model. */
+  #labelModelUsed = ''
   digest = $state<Digest | undefined>(undefined)
   loading = $state(false)
   error = $state<string | undefined>(undefined)
@@ -93,6 +115,9 @@ class DigestState {
     if (p.provider === 'anthropic' || p.provider === 'ollama') this.provider = p.provider
     if (typeof p.model === 'string') this.model = p.model
     if (typeof p.ollamaModel === 'string') this.ollamaModel = p.ollamaModel
+    if (typeof p.ollamaModelPinned === 'boolean') this.ollamaModelPinned = p.ollamaModelPinned
+    if (typeof p.ollamaLabelModel === 'string') this.ollamaLabelModel = p.ollamaLabelModel
+    if (typeof p.ollamaLabelModelPinned === 'boolean') this.ollamaLabelModelPinned = p.ollamaLabelModelPinned
     if (typeof p.ollamaUrl === 'string') this.ollamaUrl = p.ollamaUrl
     if (typeof p.window === 'number' && p.window > 0) this.window = p.window
     if (typeof p.continuous === 'boolean') this.continuous = p.continuous
@@ -107,6 +132,9 @@ class DigestState {
             provider: this.provider,
             model: this.model,
             ollamaModel: this.ollamaModel,
+            ollamaModelPinned: this.ollamaModelPinned,
+            ollamaLabelModel: this.ollamaLabelModel,
+            ollamaLabelModelPinned: this.ollamaLabelModelPinned,
             ollamaUrl: this.ollamaUrl,
             window: this.window,
             continuous: this.continuous,
@@ -120,6 +148,40 @@ class DigestState {
     }
   }
 
+  /** Query the local Ollama for installed models. Until the user hand-picks a
+   * model, keep `ollamaModel` synced to the smallest sensible one (MLX-preferred
+   * on a Mac). Also re-syncs if the persisted model isn't actually installed. */
+  async refreshOllamaModels() {
+    const models = await listOllamaModels(this.ollamaUrl)
+    this.ollamaModels = models
+    if (models.length === 0) return
+    // Clustering wants a capability floor; labeling is happy with the smallest.
+    const clusterPick = pickClusterModel(models)
+    const labelPick = pickDefaultModel(models)
+    const has = (name: string) => models.some((m) => m.name === name)
+    // Auto-pick when unpinned, OR when a pinned model has vanished (uninstalled)
+    // — in the latter case drop the pin too, so it resumes auto-tracking rather
+    // than claiming an auto value is user-pinned.
+    if (clusterPick && (!this.ollamaModelPinned || !has(this.ollamaModel))) {
+      this.ollamaModel = clusterPick
+      this.ollamaModelPinned = false
+    }
+    if (labelPick && (!this.ollamaLabelModelPinned || !has(this.ollamaLabelModel))) {
+      this.ollamaLabelModel = labelPick
+      this.ollamaLabelModelPinned = false
+    }
+  }
+
+  /** The user explicitly chose a model (typed or picked) — stop auto-selecting. */
+  chooseModel(name: string) {
+    this.ollamaModel = name
+    this.ollamaModelPinned = true
+  }
+  chooseLabelModel(name: string) {
+    this.ollamaLabelModel = name
+    this.ollamaLabelModelPinned = true
+  }
+
   #opts(previous?: Digest, postByUri?: Map<string, FeedItem>): SummarizeOpts {
     return {
       provider: this.provider,
@@ -131,6 +193,14 @@ class DigestState {
     }
   }
 
+  /** Opts for the per-post label task — same as #opts but with the (usually
+   * smaller) label model on the Ollama path; falls back to the main model. */
+  #labelOpts(postByUri?: Map<string, FeedItem>): SummarizeOpts {
+    const o = this.#opts(undefined, postByUri)
+    if (this.provider === 'ollama') o.model = this.ollamaLabelModel || this.ollamaModel
+    return o
+  }
+
   /** `contextByUri` resolves reply parents so their text is fed to the classifier. */
   async summarize(items: FeedItem[], contextByUri?: Map<string, FeedItem>) {
     if (this.loading || items.length === 0) return
@@ -139,7 +209,7 @@ class DigestState {
     this.streamText = ''
     try {
       if (this.labelMode) {
-        await this.#labelIngest(items)
+        await this.#labelIngest(items, contextByUri)
       } else if (this.continuous) {
         // Rolling engine: embed → gate → establish/roll/skip. It maintains its
         // own clusters across calls; we surface them as the digest.
@@ -165,14 +235,22 @@ class DigestState {
    * pass re-groups more accurately (merging topics that share no literal word).
    * The digest is rebuilt over the CURRENT window so posts that scrolled off
    * drop out. */
-  async #labelIngest(items: FeedItem[]) {
+  async #labelIngest(items: FeedItem[], contextByUri?: Map<string, FeedItem>) {
     this.#lastLabelItems = items
+    // If the label model changed, the cached labels (and their embeddings) are
+    // from a different model — drop them so the new model re-labels.
+    const model = this.provider === 'ollama' ? this.ollamaLabelModel || this.ollamaModel : this.model
+    if (model !== this.#labelModelUsed) {
+      this.#labels.clear()
+      this.#labelVecs.clear()
+      this.#labelModelUsed = model
+    }
     const posts = () =>
       items.map((i) => ({ uri: i.post.uri, label: this.#labels.get(i.post.uri) ?? '' }))
     this.digest = groupByLabel(posts()) // reflect cached labels immediately
     const todo = items.filter((i) => !this.#labels.has(i.post.uri))
     if (todo.length) {
-      await labelFeed(todo, this.#opts(), (uri, label) => {
+      await labelFeed(todo, this.#labelOpts(contextByUri), (uri, label) => {
         this.#labels.set(uri, label)
         this.digest = groupByLabel(posts()) // fast live grouping while streaming
       })

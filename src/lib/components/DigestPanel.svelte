@@ -1,6 +1,7 @@
 <script lang="ts">
   import { digest } from '../state/digest.svelte'
-  import { convoColor, exemplars, MODELS, OLLAMA_MODELS, type Conversation } from '../api/llm'
+  import { convoColor, exemplars, MODELS, type Conversation } from '../api/llm'
+  import { formatSize } from '../api/ollama'
   import { reposter } from '../api/post'
   import type { FeedItem } from '../api/timeline'
   import { AppBskyFeedPost } from '@atproto/api'
@@ -49,6 +50,22 @@
     skipped: 'nothing new — skipped',
   }
 
+  // When the Ollama provider becomes active, query its installed models once so
+  // the picker is populated and the smallest is auto-chosen. URL edits re-query
+  // on blur (below) — NOT per keystroke, which would spam fetches to partial
+  // URLs and blank the list mid-type.
+  let queried = false
+  $effect(() => {
+    if (digest.provider !== 'ollama') {
+      queried = false
+      return
+    }
+    if (!queried) {
+      queried = true
+      digest.refreshOllamaModels()
+    }
+  })
+
   // Elapsed timer while a summary is in flight — the point of the raw stream is
   // to see how fast this actually is.
   let elapsed = $state(0)
@@ -60,6 +77,10 @@
     return () => clearInterval(id)
   })
 </script>
+
+{#snippet info(text: string)}
+  <span class="info" title={text} aria-label={text}>ⓘ</span>
+{/snippet}
 
 <aside class="panel">
   <header>
@@ -121,30 +142,35 @@
     <label class="row toggle">
       <input type="checkbox" bind:checked={digest.continuous} />
       <span>Continuous (rolling)</span>
+      {@render info(
+        'Updates automatically as new posts arrive (turn on Live in the graph settings to keep the feed flowing). Most checks are free — the LLM only runs when something new appears.',
+      )}
     </label>
 
     <label class="row toggle">
       <input type="checkbox" bind:checked={digest.opsOnly} />
       <span>Cluster on originals only</span>
+      {@render info(
+        "Feeds the classifier each thread's original post, not the replies — reply text is noisy and tends to muddy the conversations.",
+      )}
     </label>
-    <p class="note sub">
-      Feeds the classifier each thread's original post, not the replies — reply text is noisy and
-      tends to muddy the conversations.
-    </p>
 
     <label class="row toggle">
       <input type="checkbox" bind:checked={digest.labelMode} />
       <span>Label each post</span>
+      {@render info(
+        'Tags every original post with its own short topic (many tiny prompts instead of one big one), then groups shared topics into conversations. A one-off topic sits as a caption under its post rather than getting its own pill.',
+      )}
     </label>
-    <p class="note sub">
-      Tags every original post with its own short topic (many tiny prompts instead of one big
-      one), then groups shared topics into conversations. A one-off topic sits as a caption under
-      its post rather than getting its own pill.
-    </p>
 
     {#if digest.labelMode}
       <div class="row window sub">
-        <span>Merge</span>
+        <span>
+          Merge
+          {@render info(
+            'How alike two topics must be (by meaning) to merge into one conversation. Lower = more merging (fewer, broader topics); higher = stricter (more one-off captions).',
+          )}
+        </span>
         <input
           type="range"
           min="0.4"
@@ -155,10 +181,6 @@
         />
         <span class="wval">{digest.mergeThreshold.toFixed(2)}</span>
       </div>
-      <p class="note sub">
-        How alike two topics must be (by meaning) to merge into one conversation. Lower = more
-        merging (fewer, broader topics); higher = stricter (more one-off captions).
-      </p>
     {/if}
 
     {#if digest.continuous}
@@ -173,15 +195,16 @@
           starting the rolling digest…
         {/if}
       </p>
-      <p class="note">
-        Updates automatically as new posts arrive (turn on <b>Live</b> in the graph settings to keep
-        the feed flowing). Most checks are free — the LLM only runs when something new appears.
-      </p>
     {/if}
 
     {#if digest.provider === 'anthropic'}
       <label class="field">
-        <span>Anthropic key</span>
+        <span>
+          Anthropic key
+          {@render info(
+            `Sends up to ${digest.window} posts to Anthropic (fetches more if needed). The key stays in this tab's memory only (re-enter next session); without one, a demo digest is shown.`,
+          )}
+        </span>
         <input
           type="password"
           placeholder="sk-ant-… (kept in memory only)"
@@ -196,31 +219,69 @@
           {/each}
         </select>
       </div>
-      <p class="note">
-        Sends up to {digest.window} posts to Anthropic (fetches more if needed). The key stays in
-        this tab's memory only (re-enter next session); without one, a demo digest is shown.
-      </p>
     {:else}
       <label class="field">
-        <span>Model</span>
-        <input list="ollama-models" bind:value={digest.ollamaModel} placeholder="llama3.1:8b" autocomplete="off" />
+        <span>
+          {digest.labelMode ? 'Clustering model' : 'Model'}
+          {#if digest.ollamaModels.length}
+            <span class="model-meta">
+              · {digest.ollamaModels.length} installed{digest.ollamaModelPinned ? '' : ' · auto-picked'}
+            </span>
+          {/if}
+        </span>
+        <input
+          list="ollama-models"
+          value={digest.ollamaModel}
+          oninput={(e) => digest.chooseModel(e.currentTarget.value)}
+          placeholder="type or pick a model"
+          autocomplete="off"
+        />
         <datalist id="ollama-models">
-          {#each OLLAMA_MODELS as m}
-            <option value={m.id}>{m.label}</option>
+          {#each digest.ollamaModels as m}
+            <option value={m.name}>{formatSize(m.size)}</option>
           {/each}
         </datalist>
       </label>
+      {#if digest.labelMode}
+        <label class="field">
+          <span>
+            Label model
+            <span class="model-meta">· one tiny prompt per post — smaller is fine</span>
+          </span>
+          <input
+            list="ollama-models"
+            value={digest.ollamaLabelModel}
+            oninput={(e) => digest.chooseLabelModel(e.currentTarget.value)}
+            placeholder="defaults to the clustering model"
+            autocomplete="off"
+          />
+        </label>
+      {/if}
       <label class="field">
         <span>Ollama URL</span>
-        <input bind:value={digest.ollamaUrl} placeholder="http://localhost:11434" autocomplete="off" />
+        <input
+          bind:value={digest.ollamaUrl}
+          onblur={() => digest.refreshOllamaModels()}
+          placeholder="http://localhost:11434"
+          autocomplete="off"
+        />
       </label>
-      <p class="note">
-        Runs locally on up to {digest.window} posts — nothing leaves your machine. Start Ollama with
-        the app's origin allowed (<code>OLLAMA_ORIGINS={originHint} ollama serve</code>) and pull the
-        model first (<code>ollama pull {digest.ollamaModel || 'qwen3.5:4b-mlx'}</code>). Only works
-        when Skynets is served over http://localhost — a deployed https page can't reach local Ollama.
-        Bigger windows read more of the feed but wait longer before the first token.
-      </p>
+      {#if digest.ollamaModels.length === 0}
+        <!-- Not connected: show the setup instructions they need right now. -->
+        <p class="note">
+          No models found — is Ollama running at this URL? Start it with the app's origin allowed
+          (<code>OLLAMA_ORIGINS={originHint} ollama serve</code>) and pull a model
+          (<code>ollama pull {digest.ollamaModel || 'qwen3.5:4b-mlx'}</code>). Only works over
+          http://localhost — a deployed https page can't reach local Ollama.
+        </p>
+      {:else}
+        <p class="note connected">
+          {digest.ollamaModels.length} models · runs locally, nothing leaves your machine
+          {@render info(
+            'Bigger windows read more of the feed but wait longer before the first token. Only works over http://localhost — a deployed https page can’t reach local Ollama.',
+          )}
+        </p>
+      {/if}
     {/if}
   </div>
   {/if}
@@ -361,6 +422,10 @@
     color: var(--text-dim);
     font-size: 0.72rem;
   }
+  .model-meta {
+    font-size: 0.62rem;
+    opacity: 0.8;
+  }
   .field input,
   select {
     background: var(--bg);
@@ -466,6 +531,19 @@
     color: var(--text-dim);
     font-size: 0.68rem;
     line-height: 1.4;
+  }
+  /* Compact info affordance — the description rides in its title tooltip so the
+     panel stays short. */
+  .info {
+    cursor: help;
+    color: var(--text-dim);
+    opacity: 0.55;
+    font-size: 0.7rem;
+    user-select: none;
+  }
+  .info:hover {
+    opacity: 1;
+    color: var(--accent);
   }
   .note.sub {
     margin-top: -0.2rem;

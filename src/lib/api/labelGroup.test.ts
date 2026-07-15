@@ -149,11 +149,17 @@ describe('cleanLabel', () => {
   it('strips quotes, prefixes, and trailing punctuation', () => {
     expect(cleanLabel('"Trump tariffs"')).toBe('Trump tariffs')
     expect(cleanLabel('Label: ICE raids')).toBe('ICE raids')
-    expect(cleanLabel('Topic: climate.')).toBe('climate')
-    expect(cleanLabel('**bold topic**')).toBe('bold topic')
+    expect(cleanLabel('Topic: climate.')).toBe('Climate')
+    expect(cleanLabel('**bold topic**')).toBe('Bold topic')
   })
   it('takes the first non-empty line and caps length', () => {
     expect(cleanLabel('\n\nFirst topic\nSecond line')).toBe('First topic')
-    expect(cleanLabel('one two three four five six seven')).toBe('one two three four five')
+    expect(cleanLabel('one two three four five six seven')).toBe('One two three four five')
+  })
+  it('sentence-cases the first letter but leaves the rest (acronyms/proper nouns)', () => {
+    expect(cleanLabel('phonology')).toBe('Phonology')
+    expect(cleanLabel('ICE raids')).toBe('ICE raids')
+    expect(cleanLabel('MF DOOM demo')).toBe('MF DOOM demo')
+    expect(cleanLabel('iOS 19')).toBe('iOS 19') // mixed-case first word left as-is
   })
 })

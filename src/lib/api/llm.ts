@@ -47,14 +47,6 @@ export const DEFAULT_OLLAMA_MODEL = 'qwen3.5:4b-mlx'
 export const DEFAULT_OLLAMA_URL = 'http://localhost:11434'
 
 /** Suggested local models, ordered by appetite, for the panel's datalist. */
-export const OLLAMA_MODELS: { id: string; label: string }[] = [
-  { id: 'qwen3.5:4b-mlx', label: 'qwen3.5:4b-mlx — ~4GB, fast, best tested pick' },
-  { id: 'qwen3.5:9b-mlx', label: 'qwen3.5:9b-mlx — ~9GB, richer but ~2× slower' },
-  { id: 'llama3.1:8b', label: 'llama3.1:8b — ~5GB, GGUF, needs 16GB RAM' },
-  { id: 'qwen2.5:7b', label: 'qwen2.5:7b — ~5GB, strong at JSON' },
-  { id: 'gemma3:4b', label: 'gemma3:4b — ~3GB, for 8GB RAM' },
-]
-
 const ENDPOINT = 'https://api.anthropic.com/v1/messages'
 
 /** LEAN schema for the local (Ollama) path, handed to `format`. Only the two
@@ -549,7 +541,7 @@ function demoRoll(newItems: FeedItem[]): RollUpdate[] {
 // client-side in labelGroup.ts, so the model never has to emit an array.
 
 const LABEL_SYSTEM =
-  'You label a single social-media post with its topic. Reply with ONLY a 2–4 word topic label — no quotes, no punctuation, no explanation, no "Label:" prefix. Prefer the concrete subject (a person, event, or thing) over a vague category.'
+  'You label a single social-media post with its topic. Reply with ONLY a 2–4 word topic label in sentence case (capitalize the first word; keep proper nouns and acronyms as-is) — no quotes, no punctuation, no explanation, no "Label:" prefix. When the post replies to or quotes another post (shown in brackets), base the label on what that referenced content is about, not on the reaction itself. Prefer the concrete subject (a person, event, or thing) over a vague category. Derive the label from THIS post only; never reuse wording from these instructions.'
 
 const LABEL_STOP = new Set([
   'the', 'a', 'an', 'to', 'of', 'in', 'on', 'and', 'is', 'it', 'for', 'with',
@@ -563,7 +555,12 @@ export function cleanLabel(raw: string): string {
   s = s.replace(/^(label|topic)\s*:\s*/i, '')
   s = s.replace(/^["'`*\s]+|["'`*.\s]+$/g, '')
   s = s.replace(/\s+/g, ' ')
-  return s.split(' ').slice(0, 5).join(' ').slice(0, 48)
+  s = s.split(' ').slice(0, 5).join(' ').slice(0, 48)
+  // Consistent capitalization across a weak model's varied casing: sentence-case
+  // ONLY when the first word is all-lowercase, so ICE, MF DOOM, iOS keep theirs.
+  const first = s.split(' ')[0]
+  if (first && first === first.toLowerCase()) s = s.charAt(0).toUpperCase() + s.slice(1)
+  return s
 }
 
 /** Offline/demo label: the first couple of content words, Title-cased. */
@@ -624,7 +621,15 @@ async function chatText(system: string, content: string, opts: SummarizeOpts): P
  * when the cloud provider has no key. */
 async function labelOne(item: FeedItem, opts: SummarizeOpts): Promise<string> {
   if (isDemo() || (opts.provider === 'anthropic' && !opts.apiKey)) return demoLabel(item)
-  const content = `Post by @${item.post.author.handle}:\n"${postText(item).replace(/\s+/g, ' ').slice(0, 400)}"${quoteContext(item)}`
+  const body = postText(item).replace(/\s+/g, ' ').slice(0, 400)
+  // A bare reply ("this", "exactly") is unlabelable without what it replies to —
+  // inline the parent text, same as the clustering prompt does.
+  const pu = parentUriOf(item)
+  const parent = pu && opts.postByUri ? opts.postByUri.get(pu) : undefined
+  const parentCtx = parent
+    ? ` [replying to @${parent.post.author.handle}: "${postText(parent).replace(/\s+/g, ' ').slice(0, 200)}"]`
+    : ''
+  const content = `Post by @${item.post.author.handle}:\n"${body}"${parentCtx}${quoteContext(item)}`
   return cleanLabel(await chatText(LABEL_SYSTEM, content, opts))
 }
 

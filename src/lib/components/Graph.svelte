@@ -61,6 +61,10 @@
 
   let w = $state(0)
   let h = $state(0)
+  // Bottom UI chrome, measured so the sim keeps nodes out of the corners it
+  // occupies (see the setBottomChrome effect).
+  let gearEl = $state<HTMLElement>()
+  let hudEl = $state<HTMLElement>()
 
   // Live node positions, written by the simulation each tick.
   let positions = $state<Map<string, { x: number; y: number }>>(new Map())
@@ -317,17 +321,35 @@
     }),
   )
 
-  // What the classifier actually sees. With opsOnly, a reply is represented by
-  // its thread root (the substantive OP), deduped — so sibling replies + their
-  // OP collapse to one clean anchor instead of N noisy "lol yes" lines that the
-  // model tries (badly) to cluster. Replies whose root we haven't fetched fall
-  // back to themselves (their parent text is still inlined by promptLines).
+  // The OP a reply should be represented by: its thread root if we've loaded it,
+  // else the highest ancestor we DO have (climbing parent links), else the post
+  // itself. `ensureThreadRoots` fetches these before a digest so we land on the
+  // real OP rather than falling back to a reply.
+  function anchorOf(it: FeedItem): FeedItem {
+    const root = contextByUri.get(rootUriOf(it))
+    if (root) return root
+    let cur = it
+    const guard = new Set<string>([it.post.uri])
+    for (let i = 0; i < 40; i++) {
+      const p = parentUriOf(cur)
+      if (!p || guard.has(p)) break
+      const parent = contextByUri.get(p)
+      if (!parent) break
+      guard.add(p)
+      cur = parent
+    }
+    return cur
+  }
+
+  // What the classifier actually sees. With opsOnly/label mode, a reply is
+  // represented by its thread OP (see anchorOf), deduped — so sibling replies +
+  // their OP collapse to one clean anchor instead of N noisy "lol yes" lines.
   function classifierInput(items: FeedItem[]): FeedItem[] {
     if (!digest.opsOnly && !digest.labelMode) return items.slice(0, digest.window)
     const seen = new Set<string>()
     const out: FeedItem[] = []
     for (const it of items) {
-      const anchor = contextByUri.get(rootUriOf(it)) ?? it
+      const anchor = anchorOf(it)
       if (seen.has(anchor.post.uri)) continue
       seen.add(anchor.post.uri)
       out.push(anchor)
@@ -343,6 +365,16 @@
     return out.slice(0, digest.window)
   }
 
+  // Fetch the parent chains of the window's replies so opsOnly/label anchoring
+  // lands on the real thread OP (root) rather than falling back to the reply.
+  // Deduped inside ancestors.ensure, so continuous ticks only pay for new ones.
+  async function ensureThreadRoots() {
+    if (!digest.opsOnly && !digest.labelMode) return
+    await ancestors.ensure(
+      feedItems.slice(0, digest.window).filter((i) => parentUriOf(i)).map((i) => i.post.uri),
+    )
+  }
+
   async function summarize() {
     showDigest = true
     // Pull more pages until we have enough posts to fill the digest window (or
@@ -353,6 +385,7 @@
     while (feedItems.length < digest.window && cursor && !loading && guard++ < 12) {
       await load(true)
     }
+    await ensureThreadRoots()
     digest.summarize(classifierInput(feedItems), contextByUri)
   }
 
@@ -406,21 +439,25 @@
     // window (revive from the engine/archive), mirroring focusPost.
     const pill = topicMembership.find((m) => m.id === convoId)
     if (!pill) return
-    const graphUris = new Set(graph.nodes.map((n) => n.uri))
+    const loaded = new Set(allItems.map((i) => i.post.uri))
     const added: string[] = []
     const toRevive: string[] = []
     for (const u of pill.uris) {
-      if (graphUris.has(u)) continue // already a node → revealedUris shows it
-      if (allItems.some((i) => i.post.uri === u)) {
-        if (!expanded.has(u)) {
-          expanded.add(u)
-          added.push(u)
-        }
-      } else {
-        toRevive.push(u)
+      if (!loaded.has(u)) {
+        toRevive.push(u) // off the loaded window → revive below
+        continue
+      }
+      // Un-collapse the member's thread so a reply shows CONNECTED to its parent
+      // chain (buildGraph caps a shown thread, so this can't explode).
+      if (!expanded.has(u)) {
+        expanded.add(u)
+        added.push(u)
       }
     }
     revealExpanded.set(convoId, added)
+    // Fetch the parent chain of any reply members we don't have yet (no-op for
+    // non-replies) so the un-collapsed thread actually has parents to show.
+    ancestors.ensure(pill.uris)
     if (toRevive.length) {
       const fromArchive = await archive.getPosts(toRevive).catch(() => new Map<string, FeedItem>())
       const add: FeedItem[] = []
@@ -593,6 +630,37 @@
     layout?.update(t, links, new Set(pinned), settings.cohesion)
   })
 
+  // Measure the bottom UI chrome (gear bottom-left, Digest/Load-more
+  // bottom-right) and reserve a keep-out in just those corners so nodes stop
+  // hiding behind them — the bottom-center stays open. Re-measures on resize and
+  // when the load-more label changes width.
+  $effect(() => {
+    void w
+    void h
+    void loading
+    // The gear/hud widen as their labels change (node count, dismissed count),
+    // so re-measure on those too, or the keep-out goes stale.
+    void visibleNodes.length
+    void total
+    void read.dismissed.size
+    if (!graphEl || !layout) return
+    const g = graphEl.getBoundingClientRect()
+    let leftW = 0
+    let rightW = 0
+    let bottom = 0
+    const gr = gearEl?.getBoundingClientRect()
+    if (gr) {
+      leftW = Math.max(leftW, gr.right - g.left + 10)
+      bottom = Math.max(bottom, g.bottom - gr.top + 10)
+    }
+    const hr = hudEl?.getBoundingClientRect()
+    if (hr) {
+      rightW = Math.max(rightW, g.right - hr.left + 10)
+      bottom = Math.max(bottom, g.bottom - hr.top + 10)
+    }
+    layout.setBottomChrome(leftW, rightW, bottom)
+  })
+
   // Connect replies: pull in the parents of any loaded reply we don't have yet
   // (skipping dismissed ones). As fetched parents reveal their own parents, this
   // climbs the chain toward the thread root over successive runs.
@@ -677,6 +745,7 @@
         await load(true)
       }
     }
+    await ensureThreadRoots()
     await digest.summarize(classifierInput(feedItems), contextByUri)
   }
   $effect(() => {
@@ -964,7 +1033,7 @@
   {/if}
 
   <div class="config-wrap">
-    <button class="gear" onclick={() => (showConfig = !showConfig)} title="View settings">
+    <button bind:this={gearEl} class="gear" onclick={() => (showConfig = !showConfig)} title="View settings">
       ⚙ <span class="counts">{visibleNodes.length}{queued > 0 ? ` / ${total}` : ''}</span>
     </button>
 
@@ -1093,7 +1162,7 @@
     {/if}
   </div>
 
-  <div class="hud">
+  <div class="hud" bind:this={hudEl}>
     {#if read.dismissed.size > 0}
       <span class="dismissed-count">{read.dismissed.size} dismissed</span>
     {/if}

@@ -1,6 +1,35 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { summarizeFeed, exemplars, contextFor, extractJson, type Conversation } from './llm'
+import { summarizeFeed, exemplars, contextFor, extractJson, labelFeed, type Conversation } from './llm'
 import { mkPost } from '../testing'
+
+function ollamaText(text: string) {
+  return {
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    json: async () => ({ message: { content: text } }),
+    text: async () => '',
+  } as Response
+}
+
+describe('labelFeed', () => {
+  afterEach(() => vi.restoreAllMocks())
+  it('inlines the reply parent so a bare reply is labelable', async () => {
+    const parent = mkPost({ uri: 'at://p/1', text: 'A woman cooks a healthy dinner; a man eats pot noodle', author: 'anon.test' })
+    const reply = mkPost({ uri: 'at://r/1', text: 'I have thoughts', author: 'jm.test', parent: 'at://p/1', root: 'at://p/1' })
+    const fetchMock = vi.fn().mockResolvedValue(ollamaText('gendered cooking'))
+    vi.stubGlobal('fetch', fetchMock)
+    const postByUri = new Map([
+      [parent.post.uri, parent],
+      [reply.post.uri, reply],
+    ])
+    const out = await labelFeed([reply], { provider: 'ollama', model: 'm', ollamaUrl: 'http://x', postByUri })
+    expect(out.get('at://r/1')).toBe('Gendered cooking') // cleaned + sentence-cased
+    const content = JSON.parse(fetchMock.mock.calls[0][1].body as string).messages[1].content as string
+    expect(content).toContain('replying to @anon.test')
+    expect(content).toContain('pot noodle')
+  })
+})
 
 describe('extractJson', () => {
   it('parses clean JSON', () => {
