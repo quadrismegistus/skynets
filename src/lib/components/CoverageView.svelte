@@ -8,8 +8,15 @@
 
   let gran = $state<Gran | null>(null) // null = auto from the (trimmed) span
   let trim = $state(true) // focus the dense region; ancient context posts hidden
+  // Which timestamp to bin by: when posts were written (content) vs when WE
+  // archived them (our uptime — a dip here means we weren't capturing).
+  let source = $state<'posted' | 'captured'>('posted')
   let rows = $state<{ createdAt: number; firstSeen: number }[]>([])
   let loading = $state(true)
+
+  // Hover tooltip state (custom — native SVG <title> is slow/unreliable on thin bars).
+  let svgW = $state(0)
+  let hover = $state<{ i: number; px: number } | null>(null)
 
   $effect(() => {
     archive
@@ -19,9 +26,15 @@
       .finally(() => (loading = false))
   })
 
-  const sorted = $derived(rows.map((r) => r.createdAt))
+  const sorted = $derived(rows.map((r) => (source === 'posted' ? r.createdAt : r.firstSeen)))
   const stats = $derived(coverageBins(sorted, gran, trim))
   const effGran = $derived<Gran>(stats?.gran ?? 'day')
+
+  function onMove(e: MouseEvent) {
+    if (!stats || !svgW) return
+    const i = Math.min(stats.n - 1, Math.max(0, Math.floor((e.offsetX / svgW) * stats.n)))
+    hover = { i, px: e.offsetX }
+  }
 
   // Short date, for the summary/note (always day-level).
   const fmt = (t: number) => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' })
@@ -44,6 +57,10 @@
   <div class="cov" role="presentation" onclick={(e) => e.stopPropagation()}>
     <header>
       <strong>Archive coverage</strong>
+      <div class="grans src" title="Bin by when posts were written, or by when we archived them (our uptime)">
+        <button class:on={source === 'posted'} onclick={() => (source = 'posted')}>posted</button>
+        <button class:on={source === 'captured'} onclick={() => (source = 'captured')}>captured</button>
+      </div>
       <div class="grans">
         {#each GRANS as g}
           <button class:on={effGran === g} onclick={() => (gran = g)}>{g}</button>
@@ -60,38 +77,52 @@
       <p class="summary">
         <b>{stats.shown.toLocaleString()}</b> posts · {fmt(stats.min)} → {fmt(stats.max)} ·
         <b>{stats.empties}</b> empty {effGran}{stats.empties === 1 ? '' : 's'}
-        <span class="hint">(gaps — periods with nothing captured)</span>
+        <span class="hint">(gaps — {source === 'captured' ? 'we were not capturing' : 'nothing posted / captured'})</span>
         {#if stats.hidden > 0}
           <button class="link" onclick={() => (trim = false)}>· +{stats.hidden} older hidden</button>
         {:else if !trim && sorted.length}
           <button class="link" onclick={() => (trim = true)}>· focus recent</button>
         {/if}
       </p>
-      <svg class="hist" viewBox="0 0 {stats.n} 100" preserveAspectRatio="none">
-        {#each stats.counts as c, i}
-          {#if c > 0}
-            <rect
-              x={i + 0.1}
-              y={100 - (c / stats.peak) * 100}
-              width="0.8"
-              height={(c / stats.peak) * 100}
-            >
-              <title>{fmtBin(stats.start + i * stats.bucket, effGran)} · {c} post{c === 1 ? '' : 's'}</title>
-            </rect>
-          {/if}
-        {/each}
-      </svg>
+      <!-- svelte-ignore a11y_no_static_element_interactions a11y_mouse_events_have_key_events -->
+      <div class="chart" role="presentation" onmousemove={onMove} onmouseleave={() => (hover = null)}>
+        <svg class="hist" viewBox="0 0 {stats.n} 100" preserveAspectRatio="none" bind:clientWidth={svgW}>
+          {#each stats.counts as c, i}
+            {#if c > 0}
+              <rect
+                class:hot={hover?.i === i}
+                x={i + 0.1}
+                y={100 - (c / stats.peak) * 100}
+                width="0.8"
+                height={(c / stats.peak) * 100}
+              />
+            {/if}
+          {/each}
+        </svg>
+        {#if hover}
+          <div class="tip" style="left: {hover.px}px">
+            <b>{stats.counts[hover.i] ?? 0}</b> post{(stats.counts[hover.i] ?? 0) === 1 ? '' : 's'}
+            <span>{fmtBin(stats.start + hover.i * stats.bucket, effGran)}</span>
+          </div>
+        {/if}
+      </div>
       <div class="axis">
         <span>{fmtBin(stats.start, effGran)}</span>
         <span>{fmtBin(stats.start + Math.floor(stats.n / 2) * stats.bucket, effGran)}</span>
         <span>{fmtBin(stats.start + stats.n * stats.bucket, effGran)}</span>
       </div>
       <p class="note">
-        Bars are archived posts binned by when they were <em>posted</em>. Flat/empty stretches are
-        where we captured little or nothing — the gaps Jetstream (or longer backfill) would fill.
-        Peak: {stats.peak.toLocaleString()} posts/{effGran}.{#if stats.hidden > 0}
-          {' '}({stats.hidden} older post{stats.hidden === 1 ? '' : 's'} — mostly pulled-in context
-          / reposts of old content — trimmed to keep the recent range readable.){/if}
+        {#if source === 'captured'}
+          Bars are binned by when <em>we archived</em> each post — your capture uptime. A dip here
+          means the app wasn't running/capturing then (vs. "posted", which is when content was
+          written). Spikes are backfill catching up on open.
+        {:else}
+          Bars are archived posts binned by when they were <em>posted</em>. A dip can be the network
+          asleep, you asleep, or the tab closed — flip to <b>captured</b> to see which was your
+          doing. The gaps Jetstream (or longer backfill) would fill.
+        {/if}
+        Peak: {stats.peak.toLocaleString()}/{effGran}.{#if stats.hidden > 0}
+          {' '}({stats.hidden} older — mostly pulled-in context — trimmed.){/if}
       </p>
     {/if}
   </div>
@@ -129,10 +160,15 @@
   .grans {
     display: flex;
     gap: 0.2rem;
-    margin-left: auto;
     border: 1px solid var(--border);
     border-radius: 8px;
     overflow: hidden;
+  }
+  .grans.src {
+    margin-left: auto;
+  }
+  header .grans:not(.src) {
+    margin-left: 0.4rem;
   }
   .grans button {
     border: none;
@@ -170,6 +206,9 @@
     font-size: 0.72rem;
     cursor: pointer;
   }
+  .chart {
+    position: relative;
+  }
   .hist {
     width: 100%;
     height: 200px;
@@ -180,6 +219,27 @@
   }
   .hist rect {
     fill: var(--accent);
+  }
+  .hist rect.hot {
+    fill: var(--accent-hover, #5b9ff0);
+  }
+  .tip {
+    position: absolute;
+    top: -2px;
+    transform: translate(-50%, -100%);
+    pointer-events: none;
+    white-space: nowrap;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.25rem 0.45rem;
+    font-size: 0.72rem;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+    z-index: 2;
+  }
+  .tip span {
+    color: var(--text-dim);
+    margin-left: 0.35rem;
   }
   .axis {
     display: flex;

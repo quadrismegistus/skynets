@@ -421,6 +421,13 @@ test('archive coverage view opens with a histogram', async ({ page }) => {
   // Granularity toggle re-bins.
   await page.locator('.grans button', { hasText: 'hour' }).click()
   await expect(page.locator('.hist rect').first()).toBeVisible()
+  // Hover shows a cursor tooltip with count + time.
+  const box = (await page.locator('.chart').boundingBox())!
+  await page.mouse.move(box.x + box.width * 0.7, box.y + box.height / 2)
+  await expect(page.locator('.tip')).toContainText('post')
+  // Posted/Captured toggle swaps the axis source.
+  await page.locator('.grans.src button', { hasText: 'captured' }).click()
+  await expect(page.locator('.note')).toContainText('capture')
 })
 
 test('help dialog opens and closes', async ({ page }) => {
