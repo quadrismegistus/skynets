@@ -415,8 +415,13 @@
   // tint by topic. The digest labels OPs, but the tint must flood the WHOLE
   // conversation — edges start from replies, which no pill ever names.
   const topicColorByNode = $derived.by(() => {
+    // Group over ALL loaded posts, not just `visible` — a dismissed OP is absent
+    // from the planning `convos` but its thread lives on as ghost + replies, and
+    // the pill names that dismissed OP. Grouping over allItems keeps the OP a
+    // member so its color still finds (and floods) the conversation.
+    const colorConvos = buildConversations(allItems, primaryUris)
     const uriConvo = new Map<string, string>()
-    for (const c of convos) for (const mem of c.members) uriConvo.set(mem.post.uri, c.id)
+    for (const c of colorConvos) for (const mem of c.members) uriConvo.set(mem.post.uri, c.id)
     const colorByConvo = new Map<string, string>()
     const paint = (u: string, color: string) => {
       const cid = uriConvo.get(u)
@@ -425,7 +430,9 @@
     for (const pill of topicMembership) for (const u of pill.uris) paint(u, pill.color)
     for (const [u, c] of nodeCaptions) paint(u, c.color)
     const m = new Map<string, string>()
-    for (const n of graph.nodes) {
+    // Iterate the rendered set (includes ghosts) so a resurrected OP's own
+    // border tints too — not just the live nodes in the built graph.
+    for (const n of visibleNodes) {
       const cid = uriConvo.get(n.item.post.uri)
       const color = cid ? colorByConvo.get(cid) : undefined
       if (color) m.set(n.uri, color)
