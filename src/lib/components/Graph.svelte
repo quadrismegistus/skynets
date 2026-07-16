@@ -1179,6 +1179,7 @@
       onhover={(uri) => (uri ? setHovered(uri) : scheduleClear())}
       onclick={onNodeClick}
       ondblclick={onNodeDblClick}
+      onexpand={(n) => toggleMapReplies(n.item)}
       ondismiss={dismiss}
       ondragmove={onNodeDrag}
       ondragend={onNodeDragEnd}

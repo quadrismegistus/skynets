@@ -20,6 +20,8 @@
     onhover: (uri: string | null) => void
     onclick: (node: GraphNode) => void
     ondblclick: (node: GraphNode) => void
+    /** Unfurl the collapsed thread behind the +N badge. */
+    onexpand: (node: GraphNode) => void
     ondismiss: (uri: string) => void
     ondragmove: (uri: string, clientX: number, clientY: number) => void
     ondragend: (uri: string) => void
@@ -38,6 +40,7 @@
     onhover,
     onclick,
     ondblclick,
+    onexpand,
     ondismiss,
     ondragmove,
     ondragend,
@@ -122,8 +125,12 @@
   {/if}
 
   {#if node.collapsedCount > 0}
-    <span class="badge" title="{node.collapsedCount} more in thread — click to expand"
-      >+{node.collapsedCount}</span
+    <button
+      class="badge expand-badge"
+      title="{node.collapsedCount} more in thread — click to expand"
+      aria-label="Expand {node.collapsedCount} more posts in thread"
+      onclick={() => !dragMoved && onexpand(node)}
+      >+{node.collapsedCount}</button
     >
   {:else if node.run && node.run.length > 1}
     <span class="badge run-badge" title="{node.run.length} consecutive posts by this author — the card scrolls through them"
@@ -263,6 +270,15 @@
     border: 1.5px solid var(--bg);
     pointer-events: none;
     white-space: nowrap;
+  }
+  /* The +N badge really does expand on click (its tooltip says so). */
+  .expand-badge {
+    pointer-events: auto;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .expand-badge:hover {
+    background: var(--accent-hover);
   }
   /* Bottom-right marker that this post is a reply. */
   .reply-badge {
