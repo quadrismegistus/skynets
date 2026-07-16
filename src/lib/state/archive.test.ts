@@ -82,6 +82,24 @@ describe('Archive', () => {
     expect((await a.getVectors(['at://p/1'])).get('at://p/1')).toEqual([0.1, 0.2, 0.3])
   })
 
+  it('caches author and reposter profiles by DID', async () => {
+    const a = await fresh()
+    await a.record([mkPost({ uri: 'at://p/1', author: 'alice.test' })])
+    await a.record([mkPost({ uri: 'at://p/2', author: 'orig.test', repostBy: 'booster' })])
+    const profs = await a.getProfiles()
+    expect(profs.has('did:plc:booster')).toBe(true) // the reposter
+    expect([...profs.values()].some((p) => p.handle === 'alice.test')).toBe(true) // the author
+  })
+
+  it('round-trips the feed snapshot (ordered entries + cursor)', async () => {
+    const a = await fresh()
+    await a.putFeedSnapshot([{ uri: 'at://p/1' }, { uri: 'at://p/2', reposterDid: 'did:plc:booster' }], 'cur-123')
+    const snap = await a.getFeedSnapshot()
+    expect(snap?.entries.map((e) => e.uri)).toEqual(['at://p/1', 'at://p/2'])
+    expect(snap?.entries[1].reposterDid).toBe('did:plc:booster')
+    expect(snap?.cursor).toBe('cur-123')
+  })
+
   it('exports the corpus as JSON', async () => {
     const a = await fresh()
     await a.record([mkPost({ uri: 'at://p/1', text: 'hello' })])
