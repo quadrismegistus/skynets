@@ -7,7 +7,10 @@ import {
   MAX_THREAD_REPLIES,
   selectVisible,
   threadDescendants,
+  treeTargets,
   type GraphNode,
+  type TreeLayoutBox,
+  type TreeNode,
 } from './graph'
 
 const T = (min: number) => new Date(Date.parse('2026-07-12T12:00:00Z') + min * 60_000).toISOString()
@@ -431,5 +434,76 @@ describe('plan mode (collapseUnexpanded): budget-demoted small threads', () => {
   it('without plan mode, COLLAPSE_MIN still governs (default contract intact)', () => {
     const g = buildGraph(items(), new Set(), primary) // no collapseUnexpanded flag
     expect(g.nodes).toHaveLength(2) // 2-post thread stays connected by default
+  })
+})
+
+describe('treeTargets', () => {
+  const box: TreeLayoutBox = { padX: 0, padTop: 0, innerW: 1000, innerH: 1000, minSize: 34, maxSize: 66 }
+  const Y_UNIT = 66 + 30 // rows are maxSize + 30 apart
+  const mk = (uri: string, opts: Partial<TreeNode> = {}): TreeNode => ({
+    uri,
+    timestamp: 0,
+    x: 0.5,
+    y: 0.5,
+    sizeRank: 0.5,
+    ...opts,
+  })
+
+  it('attaches a reply to its display-parent regardless of input order (run-tail fix)', () => {
+    // `head` is a tree root; `reply`'s parent resolves to head — as when replying
+    // to a self-reply run's tail, which head displays. The reply must hang BELOW
+    // head, not float off to its own (0.9, 0.9) anchor — and identically whichever
+    // order the nodes arrive in (the bug this guards against was order-dependent).
+    for (const order of ['reply-first', 'head-first'] as const) {
+      const head = mk('head', { timestamp: 1, x: 0.2, y: 0.2 })
+      const reply = mk('reply', { timestamp: 2, parent: 'head', x: 0.9, y: 0.9 })
+      const t = treeTargets(order === 'reply-first' ? [reply, head] : [head, reply], box)
+      const h = t.find((x) => x.id === 'head')!
+      const r = t.find((x) => x.id === 'reply')!
+      expect(r.tx).toBeCloseTo(h.tx) // single child → centred under head, not at x=0.9
+      expect(r.ty - h.ty).toBeCloseTo(Y_UNIT) // hangs exactly one row below
+    }
+  })
+
+  it('fits an edge-anchored tree inside the canvas instead of cramming it', () => {
+    // A chain root→a→b→c anchored in the bottom-left corner of a short canvas.
+    const chain = [
+      mk('root', { timestamp: 1, x: 0, y: 1 }),
+      mk('a', { timestamp: 2, parent: 'root', x: 0, y: 1 }),
+      mk('b', { timestamp: 3, parent: 'a', x: 0, y: 1 }),
+      mk('c', { timestamp: 4, parent: 'b', x: 0, y: 1 }),
+    ]
+    const t = treeTargets(chain, { padX: 10, padTop: 10, innerW: 1000, innerH: 300, minSize: 34, maxSize: 66 })
+    const byId = new Map(t.map((x) => [x.id, x]))
+    // Nothing crammed past the bottom edge; every node stays in bounds.
+    for (const x of t) {
+      expect(x.ty).toBeGreaterThanOrEqual(10)
+      expect(x.ty).toBeLessThanOrEqual(10 + 300 + 1e-6)
+    }
+    // …and the chain still reads strictly top→down (not all piled at the floor).
+    expect(byId.get('root')!.ty).toBeLessThan(byId.get('a')!.ty)
+    expect(byId.get('a')!.ty).toBeLessThan(byId.get('b')!.ty)
+    expect(byId.get('b')!.ty).toBeLessThan(byId.get('c')!.ty)
+  })
+
+  it('spreads siblings across one row, oldest to the left', () => {
+    const t = treeTargets(
+      [
+        mk('op', { timestamp: 1, x: 0.5, y: 0.3 }),
+        mk('r1', { timestamp: 2, parent: 'op' }),
+        mk('r2', { timestamp: 3, parent: 'op' }),
+      ],
+      box,
+    )
+    const byId = new Map(t.map((x) => [x.id, x]))
+    expect(byId.get('r1')!.ty).toBeCloseTo(byId.get('op')!.ty + Y_UNIT)
+    expect(byId.get('r2')!.ty).toBeCloseTo(byId.get('op')!.ty + Y_UNIT)
+    expect(byId.get('r1')!.tx).toBeLessThan(byId.get('r2')!.tx) // r1 (older) on the left
+  })
+
+  it('places a lone node at its own semantic anchor', () => {
+    const [t] = treeTargets([mk('solo', { x: 0.25, y: 0.75 })], box)
+    expect(t.tx).toBeCloseTo(250)
+    expect(t.ty).toBeCloseTo(750)
   })
 })

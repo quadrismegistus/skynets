@@ -8,8 +8,10 @@
     parentUriOf,
     rootUriOf,
     threadDescendants,
+    treeTargets,
     type GraphNode,
     type SelectMode,
+    type TreeNode,
   } from '../state/graph'
   import { ForceLayout, type Target } from '../state/forceLayout'
   import { buildConversations, planView } from '../state/conversations'
@@ -304,102 +306,38 @@
     return c
   })
 
-  // Semantic targets (px) each node is pulled toward.
+  // Semantic targets (px) each node is pulled toward. The conversation is the
+  // spatial unit: a chain's topmost visible node anchors to the semantic axes,
+  // its replies hang below as a tidy tree. The math lives in treeTargets (pure,
+  // tested); here we resolve each node's parent through displayNodeOf (run head /
+  // representative) so childrenOf and root-detection agree by construction.
   const targets = $derived.by<Target[]>(() => {
     // When the digest panel is open it overlays the right edge, so shrink the
     // usable width by the panel so every node stays visible to its left.
     const panelW = showDigest ? Math.min(PANEL_W, w * 0.88) : 0
     const innerW = Math.max(0, w - 2 * PAD_X - panelW)
     const innerH = Math.max(0, h - PAD_TOP - Math.max(PAD_BOTTOM, bottomChrome + 8))
-    // Chain layout: the conversation is the spatial unit. Only the chain's
-    // topmost visible node (the OP when loaded) is anchored to the semantic
-    // axes; its replies hang below it as a tidy TREE — one row per depth,
-    // siblings spread by subtree width, oldest left — so a thread reads
-    // top-down like a conversation instead of clumping onto the OP.
-    const byUri = new Map(visibleNodes.map((n) => [n.uri, n]))
-    const childrenOf = new Map<string, GraphNode[]>()
-    for (const n of visibleNodes) {
+    const present = new Set(visibleNodes.map((n) => n.uri))
+    const treeNodes: TreeNode[] = visibleNodes.map((n) => {
       const raw = parentUriOf(n.item)
       const p = raw ? displayNodeOf(raw) : undefined
-      if (p && p !== n.uri && byUri.has(p)) {
-        const arr = childrenOf.get(p)
-        if (arr) arr.push(n)
-        else childrenOf.set(p, [n])
-      }
-    }
-    // Grid units must EXCEED a node's collision footprint (r up to MAX_SIZE/2,
-    // plus the collide padding, doubled for two neighbours) or the tidy tree the
-    // planner builds gets shoved into a tangle by the collision force. Rows are
-    // taller than columns are wide so a thread reads top-down as a conversation.
-    const X_UNIT = MAX_SIZE + 18
-    const Y_UNIT = MAX_SIZE + 30
-    const widths = new Map<string, number>()
-    const widthOf = (uri: string, guard: Set<string>): number => {
-      const memo = widths.get(uri)
-      if (memo !== undefined) return memo
-      if (guard.has(uri)) return 1
-      guard.add(uri)
-      const kids = childrenOf.get(uri) ?? []
-      const w = kids.length ? kids.reduce((sum, k) => sum + widthOf(k.uri, guard), 0) : 1
-      widths.set(uri, Math.max(1, w))
-      return Math.max(1, w)
-    }
-    const off = new Map<string, { dx: number; dy: number }>()
-    const nodeRoot = new Map<string, string>()
-    // Per-tree offset extents, so the ROOT can be placed such that the WHOLE
-    // subtree fits on-canvas (a tree hangs down + sideways from its root; a root
-    // anchored near an edge would otherwise cram its descendants against the wall
-    // — the bottom-left pile when a quiet/old OP has no room below it).
-    const extent = new Map<string, { minDx: number; maxDx: number; maxDy: number }>()
-    const assign = (uri: string, dx: number, dy: number, guard: Set<string>, rootUri: string) => {
-      if (guard.has(uri)) return
-      guard.add(uri)
-      off.set(uri, { dx, dy })
-      nodeRoot.set(uri, rootUri)
-      const e = extent.get(rootUri)!
-      e.minDx = Math.min(e.minDx, dx)
-      e.maxDx = Math.max(e.maxDx, dx)
-      e.maxDy = Math.max(e.maxDy, dy)
-      const kids = (childrenOf.get(uri) ?? []).slice().sort((a, b) => a.timestamp - b.timestamp)
-      const total = kids.reduce((sum, k) => sum + widthOf(k.uri, new Set()), 0)
-      let cursor = -total / 2
-      for (const k of kids) {
-        const w = widthOf(k.uri, new Set())
-        assign(k.uri, dx + (cursor + w / 2) * X_UNIT, dy + Y_UNIT, guard, rootUri)
-        cursor += w
-      }
-    }
-    const assigned = new Set<string>()
-    for (const n of visibleNodes) {
-      // Resolve the parent through the node that DISPLAYS it (run head /
-      // representative), exactly as childrenOf does — otherwise a reply to a
-      // run's tail (whose raw parent isn't itself a node) is falsely treated as
-      // a root and detached from its thread, order-dependently.
-      const raw = parentUriOf(n.item)
-      const p = raw ? displayNodeOf(raw) : undefined
-      if (!p || !byUri.has(p)) {
-        extent.set(n.uri, { minDx: 0, maxDx: 0, maxDy: 0 })
-        assign(n.uri, 0, 0, assigned, n.uri)
-      }
-    }
-    // Clamp v into [lo, hi]; if the span doesn't fit (lo > hi), centre it.
-    const fit = (v: number, lo: number, hi: number) => (lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, v)))
-    return visibleNodes.map((n) => {
-      const o = off.get(n.uri) ?? { dx: 0, dy: 0 }
-      const rootUri = nodeRoot.get(n.uri) ?? n.uri
-      const anchor = nodeLayout.get(rootUri) ?? { x: 0.5, y: 0.5, sizeRank: 0.5 }
-      const e = extent.get(rootUri) ?? { minDx: 0, maxDx: 0, maxDy: 0 }
-      // Place the root so leftmost/rightmost/bottommost descendants stay in-canvas,
-      // then hang the tree off that fitted root — no per-node edge cramming.
-      const rootX = fit(PAD_X + anchor.x * innerW, PAD_X - e.minDx, PAD_X + innerW - e.maxDx)
-      const rootY = fit(PAD_TOP + anchor.y * innerH, PAD_TOP, PAD_TOP + innerH - e.maxDy)
-      const own = nodeLayout.get(n.uri) ?? { x: 0.5, y: 0.5, sizeRank: 0.5 }
+      const a = nodeLayout.get(n.uri) ?? { x: 0.5, y: 0.5, sizeRank: 0.5 }
       return {
-        id: n.uri,
-        tx: rootX + o.dx,
-        ty: rootY + o.dy,
-        r: (MIN_SIZE + own.sizeRank * (MAX_SIZE - MIN_SIZE)) / 2, // size stays the node's own
+        uri: n.uri,
+        timestamp: n.timestamp,
+        parent: p && p !== n.uri && present.has(p) ? p : undefined,
+        x: a.x,
+        y: a.y,
+        sizeRank: a.sizeRank,
       }
+    })
+    return treeTargets(treeNodes, {
+      padX: PAD_X,
+      padTop: PAD_TOP,
+      innerW,
+      innerH,
+      minSize: MIN_SIZE,
+      maxSize: MAX_SIZE,
     })
   })
 

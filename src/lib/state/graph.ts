@@ -188,6 +188,127 @@ function replySignal(n: GraphNode): number {
   return Math.max(n.item.post.replyCount ?? 0, n.collapsedCount)
 }
 
+/** One node fed to the tree layout. `parent` is the uri of the node that
+ * DISPLAYS this node's parent (a run head / representative) when that node is
+ * also in the set — resolved by the caller so childrenOf and root-detection use
+ * the SAME signal (a reply to a run's tail must not read as a root). `x`/`y` are
+ * the node's own semantic anchor in [0,1]; a tree hangs from its root's anchor. */
+export interface TreeNode {
+  uri: string
+  timestamp: number
+  parent?: string
+  x: number
+  y: number
+  sizeRank: number
+}
+export interface TreeLayoutBox {
+  padX: number
+  padTop: number
+  innerW: number
+  innerH: number
+  minSize: number
+  maxSize: number
+}
+export interface TreeTarget {
+  id: string
+  tx: number
+  ty: number
+  r: number
+}
+
+/**
+ * Lay out reply trees as force-sim targets: each conversation's topmost node is
+ * anchored to the semantic axes, its replies hang below as a tidy tree (one row
+ * per depth, siblings spread by subtree width, oldest left). The WHOLE subtree
+ * is fitted on-canvas by clamping its ROOT — a tree hangs down+sideways, so a
+ * root anchored near an edge would otherwise cram its descendants into the wall
+ * (the bottom-left pile when a quiet/old OP has no room below it).
+ *
+ * Pure (no DOM / reactive state) so the layout math is testable in isolation.
+ */
+export function treeTargets(nodes: TreeNode[], box: TreeLayoutBox): TreeTarget[] {
+  const { padX, padTop, innerW, innerH, minSize, maxSize } = box
+  // Grid units must EXCEED a node's collision footprint (r up to maxSize/2 plus
+  // the collide padding, doubled for two neighbours) or the tidy tree gets shoved
+  // into a tangle by the collision force. Rows are taller than columns are wide
+  // so a thread reads top-down as a conversation.
+  const X_UNIT = maxSize + 18
+  const Y_UNIT = maxSize + 30
+
+  const byUri = new Map(nodes.map((n) => [n.uri, n]))
+  const childrenOf = new Map<string, TreeNode[]>()
+  for (const n of nodes) {
+    const p = n.parent
+    if (p && p !== n.uri && byUri.has(p)) {
+      const arr = childrenOf.get(p)
+      if (arr) arr.push(n)
+      else childrenOf.set(p, [n])
+    }
+  }
+
+  const widths = new Map<string, number>()
+  const widthOf = (uri: string, guard: Set<string>): number => {
+    const memo = widths.get(uri)
+    if (memo !== undefined) return memo
+    if (guard.has(uri)) return 1
+    guard.add(uri)
+    const kids = childrenOf.get(uri) ?? []
+    const w = kids.length ? kids.reduce((sum, k) => sum + widthOf(k.uri, guard), 0) : 1
+    widths.set(uri, Math.max(1, w))
+    return Math.max(1, w)
+  }
+
+  const off = new Map<string, { dx: number; dy: number }>()
+  const nodeRoot = new Map<string, string>()
+  const extent = new Map<string, { minDx: number; maxDx: number; maxDy: number }>()
+  const assign = (uri: string, dx: number, dy: number, guard: Set<string>, rootUri: string) => {
+    if (guard.has(uri)) return
+    guard.add(uri)
+    off.set(uri, { dx, dy })
+    nodeRoot.set(uri, rootUri)
+    const e = extent.get(rootUri)!
+    e.minDx = Math.min(e.minDx, dx)
+    e.maxDx = Math.max(e.maxDx, dx)
+    e.maxDy = Math.max(e.maxDy, dy)
+    const kids = (childrenOf.get(uri) ?? []).slice().sort((a, b) => a.timestamp - b.timestamp)
+    const total = kids.reduce((sum, k) => sum + widthOf(k.uri, new Set()), 0)
+    let cursor = -total / 2
+    for (const k of kids) {
+      const w = widthOf(k.uri, new Set())
+      assign(k.uri, dx + (cursor + w / 2) * X_UNIT, dy + Y_UNIT, guard, rootUri)
+      cursor += w
+    }
+  }
+  const assigned = new Set<string>()
+  for (const n of nodes) {
+    // A tree root: no in-set parent. `parent` is already resolved to the
+    // displaying node, so this test and childrenOf agree by construction.
+    if (!n.parent || !byUri.has(n.parent)) {
+      extent.set(n.uri, { minDx: 0, maxDx: 0, maxDy: 0 })
+      assign(n.uri, 0, 0, assigned, n.uri)
+    }
+  }
+
+  // Clamp v into [lo, hi]; if the span doesn't fit (lo > hi), centre it.
+  const fit = (v: number, lo: number, hi: number) => (lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, v)))
+  return nodes.map((n) => {
+    const o = off.get(n.uri) ?? { dx: 0, dy: 0 }
+    const rootUri = nodeRoot.get(n.uri) ?? n.uri
+    const root = byUri.get(rootUri) ?? n
+    const e = extent.get(rootUri) ?? { minDx: 0, maxDx: 0, maxDy: 0 }
+    // Place the root so its leftmost/rightmost/bottommost descendants stay in
+    // bounds, then hang the tree off that fitted root — no per-node edge cramming.
+    const rootX = fit(padX + root.x * innerW, padX - e.minDx, padX + innerW - e.maxDx)
+    const rootY = fit(padTop + root.y * innerH, padTop, padTop + innerH - e.maxDy)
+    return {
+      id: n.uri,
+      tx: rootX + o.dx,
+      ty: rootY + o.dy,
+      r: (minSize + n.sizeRank * (maxSize - minSize)) / 2, // size stays the node's own
+    }
+  })
+}
+
 /** Wrapping slice of `limit` items from a sorted list starting at `offset`. */
 function windowSlice<T>(sorted: T[], limit: number, offset: number): T[] {
   const total = sorted.length
