@@ -769,12 +769,15 @@
     return () => clearInterval(id)
   })
 
-  // Auto-cadence: in Continuous digest mode, ingest new posts into the rolling
-  // engine on a timer — hands-free. The engine dedups already-seen posts and the
-  // gate skips the LLM when nothing is new, so most ticks are cheap. Toggling
-  // Continuous on triggers the initial establish; the live poll then feeds new
-  // posts in over time.
-  const DIGEST_CADENCE_MS = 60_000
+  // Auto-update is EVENT-driven, not clock-driven: any growth of the feed
+  // (live poll, Load more, a mapped thread) debounce-triggers an ingest, so a
+  // new post's label chases it onto the page within about a second instead of
+  // waiting out a timer. The uri→label cache means each trigger pays only for
+  // genuinely new posts. The old 60s tick stays as a fallback floor — it
+  // catches a batch that landed while an ingest was already running (the
+  // trigger's loading-guard skips those) and replies whose thread root arrived
+  // late. Ticks with nothing new are cache-hits, near-free.
+  const DIGEST_FALLBACK_MS = 60_000
   async function runDigestTick() {
     if (loading || digest.loading || feedItems.length === 0) return
     // First establish fills the window so the initial clustering is rich.
@@ -789,14 +792,16 @@
   }
   $effect(() => {
     if (!digest.continuous) return
-    // Only `digest.continuous` is read synchronously here, so the interval isn't
-    // torn down every time the feed changes; the ticks read the feed at call time.
-    const t0 = setTimeout(runDigestTick, 400)
-    const id = setInterval(runDigestTick, DIGEST_CADENCE_MS)
-    return () => {
-      clearTimeout(t0)
-      clearInterval(id)
-    }
+    void feedItems.length // re-arm on any feed growth (poll, Load more, threads)
+    // Debounce: a poll batch lands as one items assignment, but Load-more loops
+    // and thread fetches can land several within a second — label once.
+    const t = setTimeout(runDigestTick, 800)
+    return () => clearTimeout(t)
+  })
+  $effect(() => {
+    if (!digest.continuous) return
+    const id = setInterval(runDigestTick, DIGEST_FALLBACK_MS)
+    return () => clearInterval(id)
   })
 
   async function load(append: boolean) {
