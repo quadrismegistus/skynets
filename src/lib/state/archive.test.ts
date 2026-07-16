@@ -37,6 +37,26 @@ describe('Archive', () => {
     expect(s.appearances).toBe(2)
   })
 
+  it('forces the context kind for pulled-in thread/ancestor posts', async () => {
+    const a = await fresh()
+    // A post that would infer as 'timeline' is recorded as context.
+    await a.record([mkPost({ uri: 'at://ctx/1' })], 'context')
+    const dump = JSON.parse(await a.exportJSON())
+    expect(dump.appearances.find((x: { uri: string }) => x.uri === 'at://ctx/1')?.kind).toBe('context')
+  })
+
+  it('keeps BOTH appearances when a post is seen in-feed then pulled in as context', async () => {
+    const a = await fresh()
+    await a.record([mkPost({ uri: 'at://p/1' })]) // timeline
+    await a.record([mkPost({ uri: 'at://p/1' })], 'context') // later pulled in to complete a chain
+    const dump = JSON.parse(await a.exportJSON())
+    const kinds = dump.appearances
+      .filter((x: { uri: string }) => x.uri === 'at://p/1')
+      .map((x: { kind: string }) => x.kind)
+      .sort()
+    expect(kinds).toEqual(['context', 'timeline']) // provenance is the union → still primary
+  })
+
   it('samples counts only when engagement changes', async () => {
     const a = await fresh()
     await a.record([mkPost({ uri: 'at://p/1', likes: 5 })])

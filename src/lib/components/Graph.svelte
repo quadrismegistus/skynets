@@ -21,6 +21,7 @@
   import { follows } from '../state/follows.svelte'
   import { session } from '../state/session.svelte'
   import { archive } from '../state/archive'
+  import { corpus } from '../state/corpus.svelte'
   import CoverageView from './CoverageView.svelte'
   import { backfill, type BackfillResult } from '../state/backfill'
   import { getFollowDids } from '../api/actors'
@@ -62,18 +63,16 @@
   let archiveStats = $state<{ posts: number; appearances: number; counts: number; follows: number } | undefined>(undefined)
   let showCoverage = $state(false)
   let archiveReady = $state(false)
-  // Capture the already-loaded feed once the archive opens — the first load()'s
-  // record() ran before the DB was ready (a no-op), and a static feed (demo, or
-  // Live off) never polls again to backfill it. Idempotent (upsert by uri).
-  let capturedInitial = false
+  // Funnel pulled-in context (mapped threads + fetched reply ancestors) into the
+  // corpus as kind 'context' (archive-first, PLAN §8 phase 2). The corpus is the
+  // single source the graph derives context from — the mirror updates
+  // immediately (so context shows without waiting on the DB), and the write
+  // through to IndexedDB persists once open (flushToArchive catches up anything
+  // recorded before then). corpus.has dedups, so each post is recorded once.
   $effect(() => {
-    if (archiveReady && feedItems.length && !capturedInitial) {
-      capturedInitial = true
-      // Snapshot out of $state — the derived feedItems are reactive proxies,
-      // which IndexedDB can't structured-clone (the raw poll path stores plain
-      // fetch results, so it's unaffected).
-      void archive.record($state.snapshot(feedItems) as FeedItem[])
-    }
+    const ctx = [...threads.posts, ...ancestors.posts]
+    const fresh = ctx.filter((i) => !corpus.has(i.post.uri))
+    if (fresh.length) void corpus.record($state.snapshot(fresh) as FeedItem[], 'context')
   })
   const modes: SelectMode[] = ['top', 'recent', 'mix']
 
@@ -129,11 +128,30 @@
   // parents are pulled-in *context* that only ever appears attached (mapped or
   // chained), never on its own. Primary sources come first so a timeline copy
   // of a post wins dedup over a fetched one.
-  // Posts revived from the archive when a rolling digest references one that's
-  // scrolled out of the loaded feed (off-window reveal, PLAN §7 Phase A).
-  let revived = $state<FeedItem[]>([])
   const primarySources = $derived([...compose.injected, ...feedItems])
-  const allItems = $derived([...primarySources, ...threads.posts, ...ancestors.posts, ...revived])
+  // The graph's item pool (archive-first, PLAN §8 phase 2 step 3): the primary
+  // feed plus every corpus post that has served as context — mapped threads,
+  // fetched ancestors, off-window revivals, all unified in the corpus now
+  // instead of three separate arrays. Deduped with the primary copy winning, so
+  // a post that's both keeps its feed identity; a hidden repost that's ALSO a
+  // needed ancestor still comes in as context (corpus tracks the two roles apart).
+  const allItems = $derived.by(() => {
+    const seen = new Set<string>()
+    const out: FeedItem[] = []
+    for (const i of primarySources) {
+      if (!seen.has(i.post.uri)) {
+        seen.add(i.post.uri)
+        out.push(i)
+      }
+    }
+    for (const i of corpus.contextItems) {
+      if (!seen.has(i.post.uri)) {
+        seen.add(i.post.uri)
+        out.push(i)
+      }
+    }
+    return out
+  })
   // Every loaded post by uri — lets the digest resolve a reply's parent text to
   // feed the classifier (a bare reply is unclassifiable without it).
   const contextByUri = $derived(new Map(allItems.map((i) => [i.post.uri, i])))
@@ -591,7 +609,7 @@
       expanded.add(uri)
       if (!allItems.some((i) => i.post.uri === uri)) {
         const item = digest.engine.getItem(uri) ?? (await archive.getPosts([uri])).get(uri)
-        if (item) revived = [...revived.filter((r) => r.post.uri !== uri), item]
+        if (item) corpus.record([item], 'context') // off-window revival → into the corpus
       }
     }
     pinned.add(uri)
@@ -649,12 +667,11 @@
     if (toRevive.length) {
       const fromArchive = await archive.getPosts(toRevive).catch(() => new Map<string, FeedItem>())
       const add: FeedItem[] = []
-      const have = new Set(revived.map((r) => r.post.uri))
       for (const u of toRevive) {
         const item = digest.engine.getItem(u) ?? fromArchive.get(u)
-        if (item && !have.has(u)) add.push(item)
+        if (item && !corpus.has(u)) add.push(item)
       }
-      if (add.length) revived = [...revived, ...add]
+      if (add.length) corpus.record(add, 'context') // off-window members → into the corpus
     }
   }
   function onTopicPointerDown(e: PointerEvent, sid: string, convoId: string) {
@@ -767,6 +784,10 @@
     archive
       .open(did)
       .then(async () => {
+        // Persist anything the corpus mirrored before the DB opened (the initial
+        // load + any context fetched in that window); the write-through no-op'd
+        // then. Idempotent, so it's safe even when nothing needs catching up.
+        await corpus.flushToArchive()
         await digest.engine.rehydrate()
         archiveReady = true
         // Snapshot the follows list for the corpus (network-over-time). Runs
@@ -910,7 +931,7 @@
     if (loading) return
     try {
       const page = await getTimeline()
-      void archive.record(page.items)
+      void corpus.record(page.items)
       const have = new Set(items.map((i) => i.post.uri))
       const fresh = page.items.filter((i) => !have.has(i.post.uri))
       if (fresh.length) items = [...fresh, ...items]
@@ -966,7 +987,7 @@
     error = undefined
     try {
       const page = await getTimeline(append ? cursor : undefined)
-      void archive.record(page.items)
+      void corpus.record(page.items)
       items = append ? [...items, ...page.items] : page.items
       cursor = page.cursor
     } catch (err) {

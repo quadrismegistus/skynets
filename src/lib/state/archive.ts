@@ -21,6 +21,11 @@ import { reposterProfile } from '../api/post'
 
 export type AppearanceKind = 'timeline' | 'repost' | 'context'
 
+/** Provenance strength: a primary sighting (in your feed, or a repost routed to
+ * you) outranks a post pulled in only as thread/ancestor context. Shared by the
+ * archive's provenance reduction and the in-memory corpus mirror. */
+export const KIND_RANK: Record<AppearanceKind, number> = { timeline: 2, repost: 2, context: 1 }
+
 interface ArchivedPost {
   uri: string
   createdAt: number
@@ -152,8 +157,14 @@ export class Archive {
     return this.#db !== undefined
   }
 
-  /** Upsert posts, append new appearances, and sample counts on change. */
-  async record(items: FeedItem[]): Promise<void> {
+  /** Upsert posts, append new appearances, and sample counts on change.
+   *
+   * `forceKind` overrides the per-item timeline/repost inference — pass
+   * `'context'` for posts pulled in only to complete a thread or ancestor
+   * chain (they never surfaced in your feed on their own). A post can carry
+   * BOTH a timeline and a context appearance over its life; provenance is the
+   * union, so recording context never erases an earlier primary appearance. */
+  async record(items: FeedItem[], forceKind?: AppearanceKind): Promise<void> {
     const db = this.#db
     if (!db || items.length === 0) return
     const t = Date.now()
@@ -171,7 +182,9 @@ export class Archive {
         lastSeen: t,
         post: item.post,
       })
-      const { kind, reposterDid } = appearanceKind(item)
+      const { kind, reposterDid } = forceKind
+        ? { kind: forceKind, reposterDid: forceKind === 'repost' ? reposterProfile(item)?.did : undefined }
+        : appearanceKind(item)
       const akey = `${uri}|${kind}|${reposterDid ?? ''}`
       if (!this.#seenAppearance.has(akey)) {
         this.#seenAppearance.add(akey)
@@ -229,6 +242,33 @@ export class Archive {
         if (row) out.set(u, { post: row.post } as FeedItem)
       }),
     )
+    return out
+  }
+
+  /** Every archived post as a FeedItem, for rehydrating the in-memory corpus on
+   * reload. NOTE: the feed-level repost `reason` isn't stored, so a rehydrated
+   * repost loses its reposter attribution — provenance kind is reconstructed
+   * from `getProvenance()` instead, and full reason survives only for posts
+   * (re)fetched live this session. */
+  async getAllPosts(): Promise<FeedItem[]> {
+    const db = this.#db
+    if (!db) return []
+    const rows = await db.getAll('posts')
+    return rows.map((r) => ({ post: r.post }) as FeedItem)
+  }
+
+  /** Strongest provenance per uri from the appearances log (a timeline/repost
+   * sighting wins over context), for reconstructing primary-vs-context when the
+   * corpus is rehydrated from disk. */
+  async getProvenance(): Promise<Map<string, AppearanceKind>> {
+    const out = new Map<string, AppearanceKind>()
+    const db = this.#db
+    if (!db) return out
+    const apps = await db.getAll('appearances')
+    for (const a of apps) {
+      const prev = out.get(a.uri)
+      if (!prev || KIND_RANK[a.kind] > KIND_RANK[prev]) out.set(a.uri, a.kind)
+    }
     return out
   }
 
