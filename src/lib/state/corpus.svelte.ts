@@ -75,6 +75,11 @@ class Corpus {
   hasContext(uri: string): boolean {
     return this.#context.has(uri)
   }
+  /** Count of posts with a context role — a cheap reactive signal (no array
+   * build) for effects that must re-arm when context grows. */
+  get contextCount(): number {
+    return this.#context.size
+  }
 
   /** Strongest provenance recorded for a uri (primary > context), or undefined
    * if unseen. A post is PRIMARY (in your feed) when this isn't 'context'. */

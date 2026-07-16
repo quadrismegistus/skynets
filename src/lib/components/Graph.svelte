@@ -371,7 +371,12 @@
     }
     const assigned = new Set<string>()
     for (const n of visibleNodes) {
-      const p = parentUriOf(n.item)
+      // Resolve the parent through the node that DISPLAYS it (run head /
+      // representative), exactly as childrenOf does — otherwise a reply to a
+      // run's tail (whose raw parent isn't itself a node) is falsely treated as
+      // a root and detached from its thread, order-dependently.
+      const raw = parentUriOf(n.item)
+      const p = raw ? displayNodeOf(raw) : undefined
       if (!p || !byUri.has(p)) {
         extent.set(n.uri, { minDx: 0, maxDx: 0, maxDy: 0 })
         assign(n.uri, 0, 0, assigned, n.uri)
@@ -791,9 +796,12 @@
   // continuous digest survives reloads and keeps its whole history (Phase A).
   $effect(() => {
     const did = session.did
-    // No archive (not signed in / private mode) — just load the feed live.
     if (!did) {
-      void boot()
+      // <Graph> only mounts once logged in, so a missing did here means it's
+      // still resolving — wait (this effect re-runs when it lands) so the
+      // archive/restore path runs, rather than preempting it with a live load.
+      // Boot live only if there's genuinely no session/archive to restore from.
+      if (session.status === 'logged-out') void boot()
       return
     }
     archive
@@ -830,13 +838,21 @@
   // restore from the profile cache). Capped so a deep-paged session can't bloat
   // the single snapshot row.
   $effect(() => {
-    if (!archiveReady || items.length === 0) return
-    const entries = items.slice(0, 500).map((i) => ({ uri: i.post.uri, reposterDid: reposterProfile(i)?.did }))
-    // Also snapshot the on-screen context (ancestors/thread posts) so a reload
-    // paints edges + tree positions immediately, not a beat behind the nodes.
-    const context = corpus.contextItems.slice(0, 500).map((i) => i.post.uri)
-    const cur = cursor
-    const t = setTimeout(() => void archive.putFeedSnapshot(entries, cur, context), 1000)
+    if (!archiveReady) return
+    // Establish reactive deps cheaply, but build the snapshot arrays only when
+    // the debounce actually fires — so corpus.contextItems (O(mirror)) isn't
+    // scanned on every feed/context change, just once per settle.
+    void items.length
+    void cursor
+    void corpus.contextCount
+    const t = setTimeout(() => {
+      if (items.length === 0) return
+      const entries = items.slice(0, 500).map((i) => ({ uri: i.post.uri, reposterDid: reposterProfile(i)?.did }))
+      // Also snapshot the on-screen context (ancestors/thread posts) so a reload
+      // paints edges + tree positions immediately, not a beat behind the nodes.
+      const context = corpus.contextItems.slice(0, 500).map((i) => i.post.uri)
+      void archive.putFeedSnapshot(entries, cursor, context)
+    }, 1000)
     return () => clearTimeout(t)
   })
 
