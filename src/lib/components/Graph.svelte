@@ -169,15 +169,19 @@
     for (const p of plan) if (p.level === 'full') for (const m of p.nodes) s.add(m.post.uri)
     return s
   })
-  const plannedRepUris = $derived.by(() => {
-    const s = new Set<string>()
+  // uri → rep-planned conversation id, for EVERY member: buildGraph emits one
+  // collapsed node for big rep conversations (whose exact member uri follows
+  // its own tie-breaks — predicting it would re-implement them, and a mismatch
+  // vanishes the conversation), while sub-COLLAPSE_MIN groups emit every
+  // member. Admitting by membership and DEDUPING to one node per conversation
+  // handles both without overshoot.
+  const repConvoByUri = $derived.by(() => {
+    const m = new Map<string, string>()
     for (const p of plan) {
       if (p.level !== 'rep') continue
-      const primaries = p.convo.members.filter((m) => primaryUris.has(m.post.uri))
-      const rep = (primaries.length ? primaries : p.convo.members)[0] // members are oldest-first
-      s.add(rep.post.uri)
+      for (const mem of p.convo.members) m.set(mem.post.uri, p.convo.id)
     }
-    return s
+    return m
   })
   // buildGraph EXECUTES the plan: planned-full membership drives expansion.
   const graph = $derived(buildGraph(visible, plannedFullUris, primaryUris, expanded))
@@ -202,8 +206,17 @@
 
   const visibleNodes = $derived.by(() => {
     const set = new Map<string, GraphNode>()
+    const seatedRep = new Set<string>()
     for (const n of graph.nodes) {
-      if (plannedFullUris.has(n.uri) || plannedRepUris.has(n.uri)) set.set(n.uri, n)
+      if (plannedFullUris.has(n.uri)) {
+        set.set(n.uri, n)
+        continue
+      }
+      const convoId = repConvoByUri.get(n.uri)
+      if (convoId && !seatedRep.has(convoId)) {
+        seatedRep.add(convoId)
+        set.set(n.uri, n) // one node per rep-planned conversation
+      }
     }
     // Pinned nodes stay visible regardless of what the plan rotates out.
     for (const n of graph.nodes) if (pinned.has(n.uri) && !set.has(n.uri)) set.set(n.uri, n)

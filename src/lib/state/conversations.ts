@@ -36,7 +36,10 @@ export interface Conversation {
   lastActivity: number
   /** Post count per author did — the reply-flood signal. */
   authors: Map<string, number>
-  /** The author did contributing the most members. */
+  /** The author who EARNED this conversation its seat: dominant over PRIMARY
+   * members when known (a bot replying to thirty strangers must register as
+   * the bot, not as thirty different strangers whose older posts came along
+   * as context), else over all members. */
   dominantAuthor: string
 }
 
@@ -111,10 +114,17 @@ export function buildConversations(items: FeedItem[], primaryUris?: ReadonlySet<
       const did = m.post.author.did
       authors.set(did, (authors.get(did) ?? 0) + 1)
     }
-    let dominantAuthor = members[0].post.author.did
-    for (const [did, n] of authors) if (n > (authors.get(dominantAuthor) ?? 0)) dominantAuthor = did
     const rankable = primaryUris ? members.filter((m) => primaryUris.has(m.post.uri)) : members
     const forRank = rankable.length ? rankable : members
+    // Seat-earner attribution: count PRIMARY members only (context posts are
+    // along for the ride), so author diversity sees through the tie-break.
+    const seatAuthors = new Map<string, number>()
+    for (const m of forRank) {
+      const did = m.post.author.did
+      seatAuthors.set(did, (seatAuthors.get(did) ?? 0) + 1)
+    }
+    let dominantAuthor = forRank[0].post.author.did
+    for (const [did, n] of seatAuthors) if (n > (seatAuthors.get(dominantAuthor) ?? 0)) dominantAuthor = did
     out.push({
       id: find(members[0].post.uri),
       hasPrimary: !primaryUris || rankable.length > 0,
