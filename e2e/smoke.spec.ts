@@ -69,9 +69,10 @@ test('hover card like toggles the count', async ({ page }) => {
 })
 
 test('dismiss backfills to keep the visible count', async ({ page }) => {
-  // Pin the count (the default now scales with viewport) — the invariant under
-  // test is that a dismissal backfills to hold the limit.
-  await page.addInitScript(() => localStorage.setItem('skynets.settings', JSON.stringify({ nodeLimit: 20 })))
+  // Pin count AND reply-chains (both defaults moved) — the invariant under
+  // test is that a dismissal backfills to hold the limit, so no chain-context
+  // nodes should ride along beyond it.
+  await page.addInitScript(() => localStorage.setItem('skynets.settings', JSON.stringify({ v: 2, nodeLimit: 20, replyChains: false })))
   await graphReady(page)
   await page.locator('.wrap').first().hover()
   await page.keyboard.press('d')
@@ -123,7 +124,7 @@ test('connect-replies draws edges for small threads by default', async ({ page }
 
 test('a reposted node shows the reposter avatar', async ({ page }) => {
   // The demo's one repost can fall outside the viewport-scaled default window.
-  await page.addInitScript(() => localStorage.setItem('skynets.settings', JSON.stringify({ nodeLimit: 27 })))
+  await page.addInitScript(() => localStorage.setItem('skynets.settings', JSON.stringify({ v: 2, nodeLimit: 27 })))
   await graphReady(page)
   expect(await page.locator('.reposter').count()).toBeGreaterThan(0)
 })
@@ -212,17 +213,19 @@ test('dragging moves a node without pinning; a click pins it', async ({ page }) 
   await expect(node).toHaveClass(/pinned/)
 })
 
-test('Reply chains expands a collapsed thread into a connected chain', async ({ page }) => {
+test('Reply chains is on by default; turning it off collapses the chain', async ({ page }) => {
   // Room for the demo thread's whole chain under the viewport-scaled default.
-  await page.addInitScript(() => localStorage.setItem('skynets.settings', JSON.stringify({ nodeLimit: 27 })))
+  await page.addInitScript(() => localStorage.setItem('skynets.settings', JSON.stringify({ v: 2, nodeLimit: 27 })))
   await graphReady(page)
   const edgesBefore = await page.locator('.edges path').count()
   await page.locator('.gear').click()
-  await page.locator('.config .row', { hasText: 'Reply chains' }).locator('input').check()
+  const box = page.locator('.config .row', { hasText: 'Reply chains' }).locator('input')
+  await expect(box).toBeChecked() // the new default
+  await box.uncheck()
   await page.mouse.click(650, 400) // close config
   await page.waitForTimeout(1200)
-  // The 5-post demo thread stops collapsing and draws its chain → more edges.
-  expect(await page.locator('.edges path').count()).toBeGreaterThan(edgesBefore)
+  // The 5-post demo thread collapses back to one node → fewer edges.
+  expect(await page.locator('.edges path').count()).toBeLessThan(edgesBefore)
 })
 
 test('config popover closes on a click outside it', async ({ page }) => {
@@ -346,7 +349,7 @@ test('hovering a card avatar opens a profile preview', async ({ page }) => {
 test('hovering the reposter name opens a profile preview', async ({ page }) => {
   // The viewport-scaled default count can leave the demo's one repost outside
   // the window; pre-tune the persisted Count as a user would.
-  await page.addInitScript(() => localStorage.setItem('skynets.settings', JSON.stringify({ nodeLimit: 27 })))
+  await page.addInitScript(() => localStorage.setItem('skynets.settings', JSON.stringify({ v: 2, nodeLimit: 27 })))
   await graphReady(page)
   const rep = page.locator('.wrap:has(.reposter)').first()
   await rep.hover()

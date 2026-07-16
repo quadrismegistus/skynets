@@ -32,6 +32,9 @@ interface Persisted {
   ollamaUrl: string
   window: number
   continuous: boolean
+  /** True once the user toggles Auto-update — v1 blobs auto-persisted the old
+   * default (false), so a bare `continuous` can't be trusted as a choice. */
+  continuousSet?: boolean
   opsOnly: boolean
   labelMode: boolean
   mergeThreshold: number
@@ -77,7 +80,8 @@ class DigestState {
   window = $state(DEFAULT_WINDOW)
   /** Continuous mode: maintain a rolling digest via the engine (embed → gate →
    * establish/roll/skip) instead of a fresh full digest each press (PLAN §7). */
-  continuous = $state(true) // Auto-update on by default; persisted choice overrides
+  continuous = $state(true) // Auto-update on by default; a user-made choice overrides
+  continuousSet = $state(false)
   /** Feed only thread OPs to the classifier (a reply is anchored to its root),
    * not the replies themselves. Reply text ("lol yes", "exactly") is noise that
    * muddies clustering even with parent context inlined; the substantive OP is
@@ -124,7 +128,12 @@ class DigestState {
     if (typeof p.ollamaLabelModelPinned === 'boolean') this.ollamaLabelModelPinned = p.ollamaLabelModelPinned
     if (typeof p.ollamaUrl === 'string') this.ollamaUrl = p.ollamaUrl
     if (typeof p.window === 'number' && p.window > 0) this.window = p.window
-    if (typeof p.continuous === 'boolean') this.continuous = p.continuous
+    // Only honor a persisted `continuous` the user actually chose: the old
+    // format wrote the then-default (false) on every load for everyone.
+    if (typeof p.continuous === 'boolean' && p.continuousSet === true) {
+      this.continuous = p.continuous
+      this.continuousSet = true
+    }
     if (typeof p.opsOnly === 'boolean') this.opsOnly = p.opsOnly
     // Cluster mode disabled for now — ignore any persisted labelMode:false so it
     // can't get stuck off. Re-enable by restoring this line + the panel toggle.
@@ -144,6 +153,7 @@ class DigestState {
             ollamaUrl: this.ollamaUrl,
             window: this.window,
             continuous: this.continuous,
+            continuousSet: this.continuousSet,
             opsOnly: this.opsOnly,
             labelMode: this.labelMode,
             mergeThreshold: this.mergeThreshold,
