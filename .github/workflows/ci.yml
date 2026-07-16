@@ -73,3 +73,47 @@ jobs:
           path: dist
       - id: deploy
         uses: actions/deploy-pages@v4
+
+  # Deploy to mothtrap.blue (the primary instance) — same gate as Pages: only on
+  # a push to main, only after tests pass. Uses an rrsync-jailed deploy key that
+  # can ONLY write into /var/www/mothtrap on the box (no shell, no other paths).
+  deploy-blue:
+    needs: [test, e2e]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-blue
+      cancel-in-progress: false
+    env:
+      APP_URL: https://mothtrap.blue/
+      VITE_OAUTH_CLIENT_ID: https://mothtrap.blue/client-metadata.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run gen:metadata
+      - run: npm run build
+      - name: rsync to mothtrap.blue
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          # the server-side deploy config is per-instance state — never delete it
+          rsync -az --delete \
+            --exclude mothtrap.config.json \
+            --exclude skynets.config.json \
+            -e "ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes" \
+            dist/ deploy@lltk.net:/
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      - name: smoke
+        run: |
+          curl -sf https://mothtrap.blue/ -o /dev/null
+          curl -sf https://mothtrap.blue/mothtrap.config.json | grep -q '"lock": true'
+          curl -sf https://mothtrap.blue/ollama/api/tags -o /dev/null
+          echo "mothtrap.blue smoke OK"
