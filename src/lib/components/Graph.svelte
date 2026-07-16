@@ -1127,11 +1127,11 @@
         viewBox="0 0 10 10"
         refX="8"
         refY="5"
-        markerWidth="6"
-        markerHeight="6"
+        markerWidth="5"
+        markerHeight="5"
         orient="auto-start-reverse"
       >
-        <path d="M0,0 L10,5 L0,10 z" />
+        <path d="M0,0 L10,5 L0,10 z" fill="context-fill" />
       </marker>
     </defs>
     {#each edgeLines as line (line.id)}
@@ -1139,7 +1139,7 @@
         d={line.d}
         fill="none"
         marker-end="url(#reply-arrow)"
-        style={topicColorByNode.get(line.from) ? `stroke: ${topicColorByNode.get(line.from)}; opacity: 0.55` : ''}
+        style={topicColorByNode.get(line.from) ? `stroke: ${topicColorByNode.get(line.from)}; fill: ${topicColorByNode.get(line.from)}; opacity: 0.55` : ''}
       />
     {/each}
   </svg>
@@ -1481,15 +1481,11 @@
     vertical-align: baseline;
   }
   .edges path {
-    fill: none;
+    fill: var(--text-dim);
     stroke: var(--text-dim);
-    stroke-width: 1.4;
+    stroke-width: 2;
     opacity: 0.7;
     stroke-dasharray: 5 4;
-  }
-  .edges marker path {
-    fill: var(--text-dim);
-    opacity: 0.9;
   }
   .axis {
     position: absolute;
