@@ -97,13 +97,22 @@ class Corpus {
     return this.#byUri.size
   }
 
+  /** Update the in-memory mirror ONLY (no archive write). For posts already
+   * persisted — reload-paint restoring context from disk — so a restore doesn't
+   * append a phantom 'surfaced now' appearance to the diachronic record. Returns
+   * the posts newly added to the mirror. */
+  ingest(items: FeedItem[], forceKind?: AppearanceKind): FeedItem[] {
+    const added: FeedItem[] = []
+    for (const item of items) if (this.#mergeOne(item, forceKind)) added.push(item)
+    return added
+  }
+
   /** Record posts into the mirror AND the archive. `forceKind` overrides the
    * per-item timeline/repost inference — pass 'context' for posts pulled in only
    * to complete a thread or ancestor chain. Returns the posts that were newly
    * added to the mirror (not seen before), for callers that want the delta. */
   record(items: FeedItem[], forceKind?: AppearanceKind): FeedItem[] {
-    const added: FeedItem[] = []
-    for (const item of items) if (this.#mergeOne(item, forceKind)) added.push(item)
+    const added = this.ingest(items, forceKind)
     void archive.record(items, forceKind)
     return added
   }

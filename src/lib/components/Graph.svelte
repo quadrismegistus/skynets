@@ -996,7 +996,10 @@
           const feed = await reconstructFeed(snap)
           const ctx = snap.context?.length ? await archive.getPosts(snap.context) : undefined
           if (feed.length) {
-            if (ctx?.size) corpus.record([...ctx.values()], 'context')
+            // Mirror-only: these posts are already archived (getPosts read them
+            // from disk), so ingest without a redundant write that would log a
+            // phantom context surfacing at reload time.
+            if (ctx?.size) corpus.ingest([...ctx.values()], 'context')
             items = feed
             cursor = snap.cursor
             restored = true

@@ -64,6 +64,16 @@ describe('Corpus mirror', () => {
     expect(c.hasContext('at://both/1')).toBe(true) // …and still context
   })
 
+  it('ingest updates the mirror WITHOUT writing to the archive (restore path)', async () => {
+    await archive.open('corpus-ingest-test')
+    const before = (await archive.stats()).appearances
+    const c = new Corpus()
+    c.ingest([mkPost({ uri: 'at://ctx/x' })], 'context')
+    expect(c.has('at://ctx/x')).toBe(true) // mirror updated…
+    expect(c.hasContext('at://ctx/x')).toBe(true)
+    expect((await archive.stats()).appearances).toBe(before) // …archive untouched
+  })
+
   it('flushToArchive persists mirrored posts under each role they hold', async () => {
     await archive.open('corpus-flush-test')
     const c = new Corpus()
