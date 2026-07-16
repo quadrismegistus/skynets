@@ -2,6 +2,9 @@
 # Deploy the app to its primary home, https://mothtrap.blue (the lltk.net box).
 # See docs/DEPLOY.md for the server-side setup (nginx vhost, capped Ollama).
 #
+# NOTE: CI does this automatically on every push to main (deploy-blue job in
+# .github/workflows/ci.yml). This script is for manual/emergency deploys only.
+#
 # Usage: scripts/deploy.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."

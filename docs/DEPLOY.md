@@ -6,8 +6,10 @@ The app is a static SPA. Any host serves it. What differs per deployment is the
 (localhost / dev) → everything is configurable, as normal.
 
 The primary deploy is **https://mothtrap.blue** (live since 2026-07-16): the
-lltk.net Hetzner box, set up exactly as described below; redeploy with
-`scripts/deploy.sh`. The secondary is GitHub Pages at ryanheuser.com/mothtrap/
+lltk.net Hetzner box, set up exactly as described below. **CI deploys it
+automatically on every push to `main`** (the `deploy-blue` job: rrsync-jailed
+deploy key, held in the repo's Actions secrets); `scripts/deploy.sh` remains for
+manual/emergency deploys. The secondary is GitHub Pages at ryanheuser.com/mothtrap/
 (cloud-only config, written by the CI workflow).
 
 ## `mothtrap.config.json`
