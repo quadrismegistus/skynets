@@ -224,13 +224,14 @@
     for (const n of graph.nodes) if (pinned.has(n.uri) && !set.has(n.uri)) set.set(n.uri, n)
     const connect = settings.connectReplies || settings.replyChains
     if (connect) {
-      // Every visible reply ALWAYS gets its full loaded chain — the Count
-      // limit governs which conversations are selected, not whether a selected
-      // conversation is drawn whole. Ancestors the user dismissed come back as
-      // dimmed GHOSTS (never on their own merits — only when a visible reply
-      // needs them for context).
+      // Chains belong to FULL-planned conversations (and pinned posts): every
+      // such reply gets its complete loaded ancestry, with dismissed ancestors
+      // returning as dimmed GHOSTS. A 'rep' node REPRESENTS its conversation —
+      // it must not sprout its own spine, or a rep planned as one node drags
+      // its whole thread (and every resurrected dismissal in it) onto the map,
+      // blowing past the plan (the 90/37 cat pile).
       const byUri = new Map(graph.nodes.map((n) => [n.uri, n]))
-      let frontier = [...set.values()]
+      let frontier = [...set.values()].filter((n) => plannedFullUris.has(n.uri) || pinned.has(n.uri))
       while (frontier.length) {
         const next: GraphNode[] = []
         for (const n of frontier) {
