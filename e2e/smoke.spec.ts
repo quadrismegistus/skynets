@@ -88,7 +88,7 @@ test('composing a post closes the modal', async ({ page }) => {
   await expect(page.locator('.modal')).toHaveCount(0)
 })
 
-test('composing a thread lands as a collapsed thread node', async ({ page }) => {
+test('composing a thread lands as ONE run node (a monologue, scrollable card)', async ({ page }) => {
   await graphReady(page)
   await page.locator('.compose-btn').click()
   await page.locator('.modal textarea').nth(0).fill('post one of the thread')
@@ -98,7 +98,15 @@ test('composing a thread lands as a collapsed thread node', async ({ page }) => 
   await page.locator('.modal textarea').nth(2).fill('post three of the thread')
   await page.locator('.post').click()
   await expect(page.locator('.modal')).toHaveCount(0)
-  await expect(page.locator('.badge', { hasText: '+2' })).toBeVisible()
+  // Contiguous self-replies are ONE display unit: a run node with a 3≡ badge,
+  // whose card scrolls through the continuation posts.
+  await expect(page.locator('.run-badge', { hasText: '3≡' })).toBeVisible()
+  const runNode = page.locator('.wrap:has(.run-badge)').first()
+  await runNode.hover()
+  await expect(page.locator('.card .run-post')).toHaveCount(2) // posts 2 and 3
+  // Every post in the run is its own interaction target: the head's action bar
+  // sits above the continuation, and each continuation post has a compact row.
+  await expect(page.locator('.card .actions.compact')).toHaveCount(2)
 })
 
 test('composing with an image attaches and posts', async ({ page }) => {

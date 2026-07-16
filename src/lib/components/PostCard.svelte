@@ -12,6 +12,7 @@
     reposterProfile,
     timeAgo,
     type QuotedPost,
+    bskyUrl,
   } from '../api/post'
   import { segments } from '../api/richtext'
   import { interactions } from '../state/interactions.svelte'
@@ -39,6 +40,9 @@
     onleave: () => void
     /** Touch: explicit close (hover-out doesn't exist there). */
     onclose?: () => void
+    /** Contiguous self-reply run this card fronts (item = run[0]): the
+     * continuation posts render as a scrollable sequence below the head. */
+    run?: FeedItem[]
   }
   let {
     item,
@@ -54,6 +58,7 @@
     onkeep,
     onleave,
     onclose,
+    run,
   }: Props = $props()
 
   // Keep the card fully on screen: shift its top up if its measured height would
@@ -91,9 +96,9 @@
     if (!rt || !rt.did) return
     follows.toggle(rt)
   }
-  const liked = $derived(interactions.liked(item))
-  const reposted = $derived(interactions.reposted(item))
   const textSegs = $derived(segments(postText(item), postFacets(item)))
+  /** The run's continuation posts (the head renders as the main card body). */
+  const continuation = $derived(run && run.length > 1 ? run.slice(1) : [])
   const images = $derived(postImages(item))
   const quoted = $derived(postQuote(item))
   const external = $derived(postExternal(item))
@@ -110,7 +115,8 @@
     }
   }
 
-  let repostMenu = $state(false)
+  /** Which post's repost menu is open (uri) — per-post, since a run card holds many. */
+  let repostMenuFor = $state<string | null>(null)
   let copied = $state(false)
   const isSelf = $derived(item.post.author.did === session.did)
   const following = $derived(follows.following(item.post.author))
@@ -224,7 +230,14 @@
         {following ? 'Following' : 'Follow'}
       </button>
     {/if}
-    <span class="time" title={fullDate(item)}>{timeAgo(item)}</span>
+    <a
+      class="time"
+      href={bskyUrl(item)}
+      target="_blank"
+      rel="noreferrer"
+      title={fullDate(item)}
+      onclick={(e) => e.stopPropagation()}>{timeAgo(item)}</a
+    >
   </div>
   <div class="text">
     {#each textSegs as seg}{#if seg.href}<a
@@ -277,34 +290,68 @@
     </a>
   {/if}
 
-  <div class="actions">
-    <button class="act" title="Reply" onclick={() => onreply(item)}>
+  <!-- Actions sit with the post they act on: the head's bar directly under the
+       head content, each run continuation with its own compact row — every post
+       in a run is a separate likeable/repliable target on Bluesky. -->
+  {@render actionRow(item, false)}
+
+  {#if continuation.length}
+    <div class="run-more">
+      {#each continuation as c (c.post.uri)}
+        <div class="run-post">
+          <a
+            class="run-time"
+            href={bskyUrl(c)}
+            target="_blank"
+            rel="noreferrer"
+            title={fullDate(c)}
+            onclick={(e) => e.stopPropagation()}>{timeAgo(c)}</a
+          >
+          <div class="run-text">{postText(c)}</div>
+          {@render actionRow(c, true)}
+        </div>
+      {/each}
+    </div>
+  {/if}
+
+  {#if canMapReplies}
+    <button class="map-replies" class:on={repliesMapped} onclick={() => onmapreplies(item)}>
+      {repliesMapped ? 'Hide replies' : `Map replies${item.post.replyCount ? ` (${item.post.replyCount})` : ''}`}
+    </button>
+  {/if}
+</div>
+
+{#snippet actionRow(p: FeedItem, compact: boolean)}
+  {@const pLiked = interactions.liked(p)}
+  {@const pReposted = interactions.reposted(p)}
+  <div class="actions" class:compact>
+    <button class="act" title="Reply" onclick={() => onreply(p)}>
       <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d={REPLY} fill="currentColor" /></svg>
-      <span>{item.post.replyCount ?? 0}</span>
+      <span>{p.post.replyCount ?? 0}</span>
     </button>
 
     <div class="repost-wrap">
       <button
         class="act"
-        class:on={reposted}
+        class:on={pReposted}
         title="Repost or quote"
-        onclick={() => (repostMenu = !repostMenu)}
+        onclick={() => (repostMenuFor = repostMenuFor === p.post.uri ? null : p.post.uri)}
       >
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d={REPOST} fill="currentColor" /></svg>
-        <span>{interactions.repostCount(item)}</span>
+        <span>{interactions.repostCount(p)}</span>
       </button>
-      {#if repostMenu}
+      {#if repostMenuFor === p.post.uri}
         <div class="menu">
           <button
             onclick={() => {
-              interactions.toggleRepost(item)
-              repostMenu = false
-            }}>{reposted ? 'Undo repost' : 'Repost'}</button
+              interactions.toggleRepost(p)
+              repostMenuFor = null
+            }}>{pReposted ? 'Undo repost' : 'Repost'}</button
           >
           <button
             onclick={() => {
-              onquote(item)
-              repostMenu = false
+              onquote(p)
+              repostMenuFor = null
             }}>Quote post</button
           >
         </div>
@@ -313,28 +360,22 @@
 
     <button
       class="act like"
-      class:on={liked}
-      title={liked ? 'Unlike' : 'Like'}
-      onclick={() => interactions.toggleLike(item)}
+      class:on={pLiked}
+      title={pLiked ? 'Unlike' : 'Like'}
+      onclick={() => interactions.toggleLike(p)}
     >
       <svg class="ic" viewBox="0 0 24 24" aria-hidden="true">
         <path
           d={HEART}
-          fill={liked ? 'currentColor' : 'none'}
+          fill={pLiked ? 'currentColor' : 'none'}
           stroke="currentColor"
-          stroke-width={liked ? 0 : 1.8}
+          stroke-width={pLiked ? 0 : 1.8}
         />
       </svg>
-      <span>{interactions.likeCount(item)}</span>
+      <span>{interactions.likeCount(p)}</span>
     </button>
   </div>
-
-  {#if canMapReplies}
-    <button class="map-replies" class:on={repliesMapped} onclick={() => onmapreplies(item)}>
-      {repliesMapped ? 'Hide replies' : `Map replies${item.post.replyCount ? ` (${item.post.replyCount})` : ''}`}
-    </button>
-  {/if}
-</div>
+{/snippet}
 
 <style>
   .card {
@@ -597,6 +638,19 @@
     display: flex;
     gap: 0.5rem;
   }
+  /* Per-post row on run continuations: same targets, quieter presence. */
+  .actions.compact {
+    gap: 0.3rem;
+    margin-top: 0.15rem;
+  }
+  .actions.compact .act {
+    padding: 0.15rem 0.3rem;
+    font-size: 0.7rem;
+  }
+  .actions.compact .ic {
+    width: 13px;
+    height: 13px;
+  }
   .map-replies {
     width: 100%;
     margin-top: 0.5rem;
@@ -706,5 +760,41 @@
     .card {
       --card-close: grid;
     }
+  }
+
+  /* Continuation posts of a self-reply run: a compact scrollable sequence.
+     The card's own max-height + overflow handles long monologues. */
+  .run-more {
+    margin-top: 0.5rem;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+  }
+  .run-post {
+    padding: 0.45rem 0 0.35rem;
+    border-bottom: 1px dashed var(--border);
+  }
+  .run-post:last-child {
+    border-bottom: none;
+  }
+  .run-time {
+    display: block;
+    text-align: right;
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    text-decoration: none;
+  }
+  .run-time:hover,
+  a.time:hover {
+    color: var(--text);
+    text-decoration: underline;
+  }
+  a.time {
+    text-decoration: none;
+  }
+  .run-text {
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 </style>

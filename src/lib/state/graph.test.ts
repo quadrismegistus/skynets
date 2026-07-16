@@ -24,8 +24,8 @@ describe('buildGraph', () => {
     const root = 'at://x/root'
     const items = [
       mkPost({ uri: root, likes: 30 }),
-      mkPost({ uri: 'at://x/r1', parent: root, root }),
-      mkPost({ uri: 'at://x/r2', parent: 'at://x/r1', root }),
+      mkPost({ uri: 'at://x/r1', parent: root, root, author: 'a-r1.test' }),
+      mkPost({ uri: 'at://x/r2', parent: 'at://x/r1', root, author: 'a-r2.test' }),
     ]
     const { nodes, edges } = buildGraph(items)
     expect(nodes).toHaveLength(1)
@@ -38,8 +38,8 @@ describe('buildGraph', () => {
     const root = 'at://x/root'
     const items = [
       mkPost({ uri: root }),
-      mkPost({ uri: 'at://x/r1', parent: root, root }),
-      mkPost({ uri: 'at://x/r2', parent: 'at://x/r1', root }),
+      mkPost({ uri: 'at://x/r1', parent: root, root, author: 'a-r1.test' }),
+      mkPost({ uri: 'at://x/r2', parent: 'at://x/r1', root, author: 'a-r2.test' }),
     ]
     const { nodes, edges } = buildGraph(items, new Set([root]))
     expect(nodes).toHaveLength(3)
@@ -52,9 +52,9 @@ describe('buildGraph', () => {
     // rather than fragmenting into several linked nodes.
     const items = [
       mkPost({ uri: 'at://a' }),
-      mkPost({ uri: 'at://b', parent: 'at://a', root: 'at://a' }),
-      mkPost({ uri: 'at://c', parent: 'at://b', root: 'at://b' }), // root ≠ a
-      mkPost({ uri: 'at://d', parent: 'at://c', root: 'at://elsewhere' }), // root ≠ a
+      mkPost({ uri: 'at://b', parent: 'at://a', root: 'at://a', author: 'a-b.test' }),
+      mkPost({ uri: 'at://c', parent: 'at://b', root: 'at://b', author: 'a-c.test' }), // root ≠ a
+      mkPost({ uri: 'at://d', parent: 'at://c', root: 'at://elsewhere', author: 'a-d.test' }), // root ≠ a
     ]
     const { nodes, edges } = buildGraph(items)
     expect(nodes).toHaveLength(1)
@@ -64,7 +64,7 @@ describe('buildGraph', () => {
 
   it('shows a small (2-post) thread as connected nodes, not collapsed', () => {
     const root = 'at://x/root'
-    const items = [mkPost({ uri: root }), mkPost({ uri: 'at://x/r1', parent: root, root })]
+    const items = [mkPost({ uri: root }), mkPost({ uri: 'at://x/r1', parent: root, root, author: 'a-r1.test' })]
     const { nodes, edges } = buildGraph(items)
     expect(nodes).toHaveLength(2) // below COLLAPSE_MIN → not collapsed
     expect(edges).toHaveLength(1) // reply → parent edge
@@ -73,8 +73,8 @@ describe('buildGraph', () => {
 
   it('drops conversations with no primary post (orphaned pulled-in parents)', () => {
     const items = [
-      mkPost({ uri: 'at://parent' }),
-      mkPost({ uri: 'at://reply', parent: 'at://parent', root: 'at://parent' }),
+      mkPost({ uri: 'at://parent', author: 'a-parent.test' }),
+      mkPost({ uri: 'at://reply', parent: 'at://parent', root: 'at://parent', author: 'a-reply.test' }),
     ]
     // No filter → both shown.
     expect(buildGraph(items).nodes).toHaveLength(2)
@@ -101,9 +101,9 @@ describe('buildGraph', () => {
     const root = 'at://x/root'
     const items = [mkPost({ uri: root, likes: 5 })]
     // A quiet bridge chain root <- b1 <- b2 ending in the loudest reply.
-    items.push(mkPost({ uri: 'at://x/b1', parent: root, root, likes: 0 }))
-    items.push(mkPost({ uri: 'at://x/b2', parent: 'at://x/b1', root, likes: 0 }))
-    items.push(mkPost({ uri: 'at://x/deep', parent: 'at://x/b2', root, likes: 500 }))
+    items.push(mkPost({ uri: 'at://x/b1', parent: root, root, likes: 0, author: 'a-b1.test' }))
+    items.push(mkPost({ uri: 'at://x/b2', parent: 'at://x/b1', root, likes: 0, author: 'a-b2.test' }))
+    items.push(mkPost({ uri: 'at://x/deep', parent: 'at://x/b2', root, likes: 500, author: 'a-deep.test' }))
     // Plus 12 medium direct replies competing for the cap.
     for (let i = 0; i < 12; i++) {
       items.push(mkPost({ uri: `at://x/d${i}`, parent: root, root, likes: 20 + i }))
@@ -128,7 +128,7 @@ describe('buildGraph', () => {
   it('keeps an expanded conversation even if none of its posts are primary', () => {
     const items = [
       mkPost({ uri: 'at://ctx/root' }),
-      mkPost({ uri: 'at://ctx/r1', parent: 'at://ctx/root', root: 'at://ctx/root' }),
+      mkPost({ uri: 'at://ctx/r1', parent: 'at://ctx/root', root: 'at://ctx/root', author: 'a-r1.test' }),
     ]
     // Nothing primary and not expanded → dropped (orphan context).
     expect(buildGraph(items, new Set(), new Set()).nodes).toHaveLength(0)
@@ -141,18 +141,14 @@ describe('buildGraph', () => {
     // only the reply is primary. Collapsed, the node must display the reply.
     const items = [
       mkPost({ uri: 'at://stranger/root', likes: 90, createdAt: T(0) }),
-      mkPost({
-        uri: 'at://stranger/mid',
+      mkPost({ uri: 'at://stranger/mid',
         parent: 'at://stranger/root',
         root: 'at://stranger/root',
-        createdAt: T(1),
-      }),
-      mkPost({
-        uri: 'at://friend/reply',
+        createdAt: T(1), author: 'a-mid.test' }),
+      mkPost({ uri: 'at://friend/reply',
         parent: 'at://stranger/mid',
         root: 'at://stranger/root',
-        createdAt: T(2),
-      }),
+        createdAt: T(2), author: 'a-reply.test' }),
     ]
     const { nodes } = buildGraph(items, new Set(), new Set(['at://friend/reply']))
     expect(nodes).toHaveLength(1)
@@ -166,8 +162,8 @@ describe('buildGraph', () => {
     const root = 'at://x/root'
     const items = [mkPost({ uri: root, likes: 5 })]
     // Quiet chain root <- q1 <- clicked (all 0 likes).
-    items.push(mkPost({ uri: 'at://x/q1', parent: root, root, likes: 0 }))
-    items.push(mkPost({ uri: 'at://x/clicked', parent: 'at://x/q1', root, likes: 0 }))
+    items.push(mkPost({ uri: 'at://x/q1', parent: root, root, likes: 0, author: 'a-q1.test' }))
+    items.push(mkPost({ uri: 'at://x/clicked', parent: 'at://x/q1', root, likes: 0, author: 'a-clicked.test' }))
     // 15 loud direct replies that would otherwise fill the whole cap.
     for (let i = 0; i < 15; i++) {
       items.push(mkPost({ uri: `at://x/d${i}`, parent: root, root, likes: 50 + i }))
@@ -180,8 +176,8 @@ describe('buildGraph', () => {
 
   it('marks pulled-in context nodes as non-primary', () => {
     const items = [
-      mkPost({ uri: 'at://parent' }),
-      mkPost({ uri: 'at://reply', parent: 'at://parent', root: 'at://parent' }),
+      mkPost({ uri: 'at://parent', author: 'a-parent.test' }),
+      mkPost({ uri: 'at://reply', parent: 'at://parent', root: 'at://parent', author: 'a-reply.test' }),
     ]
     const { nodes } = buildGraph(items, new Set(), new Set(['at://reply']))
     const byUri = new Map(nodes.map((n) => [n.uri, n]))
@@ -190,8 +186,8 @@ describe('buildGraph', () => {
     // A collapsed group containing a primary post is selectable as a whole.
     const thread = [
       mkPost({ uri: 'at://t/0' }),
-      mkPost({ uri: 'at://t/1', parent: 'at://t/0', root: 'at://t/0' }),
-      mkPost({ uri: 'at://t/2', parent: 'at://t/1', root: 'at://t/0' }),
+      mkPost({ uri: 'at://t/1', parent: 'at://t/0', root: 'at://t/0', author: 'a-1.test' }),
+      mkPost({ uri: 'at://t/2', parent: 'at://t/1', root: 'at://t/0', author: 'a-2.test' }),
     ]
     const collapsed = buildGraph(thread, new Set(), new Set(['at://t/1'])).nodes
     expect(collapsed).toHaveLength(1)
@@ -202,8 +198,8 @@ describe('buildGraph', () => {
     const root = 'at://x/root'
     const items = [
       mkPost({ uri: root, likes: 5, createdAt: T(0) }),
-      mkPost({ uri: 'at://x/r1', parent: root, root, likes: 50, createdAt: T(10) }),
-      mkPost({ uri: 'at://x/r2', parent: 'at://x/r1', root, likes: 3, createdAt: T(5) }),
+      mkPost({ uri: 'at://x/r1', parent: root, root, likes: 50, createdAt: T(10), author: 'a-r1.test' }),
+      mkPost({ uri: 'at://x/r2', parent: 'at://x/r1', root, likes: 3, createdAt: T(5), author: 'a-r2.test' }),
     ]
     const rep = buildGraph(items).nodes[0]
     expect(rep.timestamp).toBe(Date.parse(T(10))) // latest activity
@@ -287,8 +283,8 @@ describe('selectVisible', () => {
   it('buildGraph flags manualExpand only for the forceShow set, not all expanded', () => {
     const items = [
       mkPost({ uri: 'at://t/root' }),
-      mkPost({ uri: 'at://t/r1', parent: 'at://t/root', root: 'at://t/root' }),
-      mkPost({ uri: 'at://t/r2', parent: 'at://t/r1', root: 'at://t/root' }),
+      mkPost({ uri: 'at://t/r1', parent: 'at://t/root', root: 'at://t/root', author: 'a-r1.test' }),
+      mkPost({ uri: 'at://t/r2', parent: 'at://t/r1', root: 'at://t/root', author: 'a-r2.test' }),
     ]
     // expanded (all) prevents collapse; forceShow is empty → nothing is manual.
     const auto = buildGraph(items, new Set(['at://t/root']), undefined, new Set())
@@ -343,9 +339,9 @@ describe('layoutPositions', () => {
 describe('threadDescendants', () => {
   const items = [
     mkPost({ uri: 'at://t/0' }),
-    mkPost({ uri: 'at://t/1', parent: 'at://t/0', root: 'at://t/0' }),
-    mkPost({ uri: 'at://t/2', parent: 'at://t/1', root: 'at://t/0' }),
-    mkPost({ uri: 'at://t/3', parent: 'at://t/1', root: 'at://t/0' }),
+    mkPost({ uri: 'at://t/1', parent: 'at://t/0', root: 'at://t/0', author: 'a-1.test' }),
+    mkPost({ uri: 'at://t/2', parent: 'at://t/1', root: 'at://t/0', author: 'a-2.test' }),
+    mkPost({ uri: 'at://t/3', parent: 'at://t/1', root: 'at://t/0', author: 'a-3.test' }),
     mkPost({ uri: 'at://s/0' }),
   ]
   it('walks the whole subtree, including branches', () => {
@@ -358,5 +354,82 @@ describe('threadDescendants', () => {
   it('is empty for a leaf / standalone post', () => {
     expect(threadDescendants(items, 'at://s/0')).toEqual([])
     expect(threadDescendants(items, 'at://t/2')).toEqual([])
+  })
+})
+
+describe('self-reply runs', () => {
+  it('a single-author chain collapses into ONE run node with the posts aboard', () => {
+    const root = 'at://x/root'
+    const items = [
+      mkPost({ uri: root, author: 'monologuist.test', text: '1/3' }),
+      mkPost({ uri: 'at://x/r1', parent: root, root, author: 'monologuist.test', text: '2/3' }),
+      mkPost({ uri: 'at://x/r2', parent: 'at://x/r1', root, author: 'monologuist.test', text: '3/3' }),
+    ]
+    const g = buildGraph(items, new Set([root]))
+    expect(g.nodes).toHaveLength(1)
+    expect(g.nodes[0].run).toHaveLength(3)
+    expect(g.nodes[0].uri).toBe(root) // the head speaks for the run
+    expect(g.memberNode.get('at://x/r2')).toBe(root)
+  })
+
+  it('edges mark speaker CHANGES: reply-to-a-run resolves to the run head', () => {
+    const root = 'at://x/root'
+    const items = [
+      mkPost({ uri: root, author: 'monologuist.test' }),
+      mkPost({ uri: 'at://x/r1', parent: root, root, author: 'monologuist.test' }),
+      mkPost({ uri: 'at://x/other', parent: 'at://x/r1', root, author: 'interlocutor.test' }),
+    ]
+    const g = buildGraph(items, new Set([root]))
+    expect(g.nodes).toHaveLength(2)
+    const edge = g.edges.find((e) => e.from === 'at://x/other')
+    expect(edge?.to).toBe(root) // parent r1 lives inside the run headed by root
+  })
+
+  it('a run breaks where the chain branches (two replies to one post)', () => {
+    const root = 'at://x/root'
+    const items = [
+      mkPost({ uri: root, author: 'm.test' }),
+      mkPost({ uri: 'at://x/b1', parent: root, root, author: 'm.test' }),
+      mkPost({ uri: 'at://x/b2', parent: root, root, author: 'm.test' }),
+    ]
+    const g = buildGraph(items, new Set([root]))
+    expect(g.nodes.length).toBe(3) // branch point: no run swallows the siblings
+  })
+})
+
+describe('plan mode (collapseUnexpanded): budget-demoted small threads', () => {
+  // A friend's reply to a stranger's OP — 2 posts, below COLLAPSE_MIN. When the
+  // planner demotes it to `rep` (not in `expanded`), plan mode must collapse it
+  // to ONE node wearing the PRIMARY face + a +N badge, not leave the bare
+  // stranger root showing with no hint of the hidden reply.
+  const items = () => [
+    mkPost({ uri: 'at://stranger/op', likes: 90, createdAt: T(0), author: 'stranger.test' }),
+    mkPost({
+      uri: 'at://friend/reply',
+      parent: 'at://stranger/op',
+      root: 'at://stranger/op',
+      createdAt: T(1),
+      author: 'friend.test',
+    }),
+  ]
+  const primary = new Set(['at://friend/reply'])
+
+  it('collapses the small rep to the earliest-primary face with a +N badge', () => {
+    const g = buildGraph(items(), new Set(), primary, new Set(), true)
+    expect(g.nodes).toHaveLength(1)
+    expect(g.nodes[0].uri).toBe('at://friend/reply') // the primary, not the stranger OP
+    expect(g.nodes[0].collapsedCount).toBe(1) // +1 for the hidden OP
+    expect(g.memberNode.get('at://stranger/op')).toBe('at://friend/reply')
+  })
+
+  it('a planned-full small thread still shows connected (not collapsed)', () => {
+    // Same thread, but planned full (both members in `expanded`).
+    const g = buildGraph(items(), new Set(['at://friend/reply']), primary, new Set(), true)
+    expect(g.nodes).toHaveLength(2) // connected, not collapsed
+  })
+
+  it('without plan mode, COLLAPSE_MIN still governs (default contract intact)', () => {
+    const g = buildGraph(items(), new Set(), primary) // no collapseUnexpanded flag
+    expect(g.nodes).toHaveLength(2) // 2-post thread stays connected by default
   })
 })

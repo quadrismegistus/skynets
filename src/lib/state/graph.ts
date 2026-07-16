@@ -29,6 +29,9 @@ export interface GraphNode {
   /** A dismissed post resurrected because a visible reply needs its chain —
    * rendered dimmed, never selected on its own merits. */
   ghost?: boolean
+  /** Contiguous self-reply run this node stands for (≥2 posts): a "🧵 1/N"
+   * monologue displays as ONE node with a scrollable card. item = run[0]. */
+  run?: FeedItem[]
 }
 
 /** Normalized layout position in [0,1], computed per visible set (not baked in). */
@@ -52,6 +55,11 @@ export interface GraphEdge {
 export interface Graph {
   nodes: GraphNode[]
   edges: GraphEdge[]
+  /** Every member uri → the uri of the NODE that displays it (itself for
+   * standalone posts; the run head for run members; the representative for
+   * collapsed conversations). Edge drawing, chain climbs, and topic-pill
+   * targeting must resolve through this. */
+  memberNode: Map<string, string>
 }
 
 /** Fractional rank in [0,1] of each value by ascending order (ties broken by index). */
@@ -90,6 +98,64 @@ export function contextNode(item: FeedItem, ghost = true): GraphNode {
     ghost,
   }
 }
+
+/**
+ * Segment a conversation's members into RUNS: maximal chains of contiguous
+ * self-replies (an author replying to themself, single-child links only). A
+ * "🧵 1/30" thread is one utterance wearing thirty posts — it displays as ONE
+ * scrollable node, and costs the planner one slot. A run breaks where the
+ * speaker changes, where the chain branches, or where the parent isn't loaded.
+ */
+export function segmentRuns(members: FeedItem[]): FeedItem[][] {
+  const byUri = new Map(members.map((m) => [m.post.uri, m]))
+  const children = new Map<string, FeedItem[]>()
+  for (const m of members) {
+    const p = parentUriOf(m)
+    if (p && byUri.has(p)) {
+      const arr = children.get(p)
+      if (arr) arr.push(m)
+      else children.set(p, [m])
+    }
+  }
+  const continuesRun = (parent: FeedItem, child: FeedItem) =>
+    child.post.author.did === parent.post.author.did && (children.get(parent.post.uri)?.length ?? 0) === 1
+  const startsRun = (m: FeedItem) => {
+    const p = parentUriOf(m)
+    const pm = p ? byUri.get(p) : undefined
+    return !pm || !continuesRun(pm, m)
+  }
+  const runs: FeedItem[][] = []
+  for (const m of members) {
+    if (!startsRun(m)) continue
+    const run: FeedItem[] = [m]
+    let cur = m
+    for (;;) {
+      const kids = children.get(cur.post.uri) ?? []
+      if (kids.length !== 1 || !continuesRun(cur, kids[0])) break
+      run.push(kids[0])
+      cur = kids[0]
+    }
+    runs.push(run)
+  }
+  return runs
+}
+
+/**
+ * The conversation model (PLAN §8): the graph as a first-class data structure.
+ *
+ * Every display decision this app makes — what to show, what to collapse, what
+ * to unroll — is really a decision about CONVERSATIONS, but the old pipeline
+ * ranked posts and discovered conversation shapes late (after selection,
+ * during chain-climbs, across async fetches). Each layer knew a little; none
+ * knew the whole; mega-threads and reply-flooding accounts slipped through
+ * every local cap.
+ *
+ * Here the components are computed once, with global knowledge:
+ * connected components over the union of DECLARED thread roots (reply.root
+ * refs, present even when the chain's middle is unloaded) and loaded parent
+ * links. A partially-fetched mega-thread is ONE conversation here, not a
+ * confetti of fragments.
+ */
 
 /** The parent post uri this item replies to, if any (from the record's reply ref). */
 export function parentUriOf(item: FeedItem): string | undefined {
@@ -234,6 +300,7 @@ export const COLLAPSE_MIN = 3
 /** One layout unit — either a standalone post or a collapsed thread. */
 interface Unit {
   item: FeedItem
+  run?: FeedItem[]
   score: number
   timestamp: number
   rootUri: string
@@ -260,10 +327,12 @@ export function buildGraph(
    * are force-shown in selection; the rest of `expanded` (auto reply-chains)
    * is bounded by the caller's budget. Defaults to all of `expanded`. */
   forceShow?: ReadonlySet<string>,
-  /** AUTO-expansion (reply chains) only unrolls conversations up to this many
-   * loaded members; bigger ones stay collapsed to their representative (+N) —
-   * a 60-post mega-thread must not swallow the map. Manual maps always unroll. */
-  autoExpandMax = Infinity,
+  /** Plan-execution mode (PLAN §8): collapse ANY conversation that isn't
+   * `expanded` (planned-full), regardless of size. The planner has already
+   * decided full-vs-collapsed, so the COLLAPSE_MIN size heuristic — meant for
+   * standalone callers — must not override it and leave a budget-demoted small
+   * thread showing its bare (often stranger) root with no +N badge. */
+  collapseUnexpanded = false,
 ): Graph {
   // Dedup by post uri, keeping first occurrence.
   const byUri = new Map<string, FeedItem>()
@@ -271,7 +340,7 @@ export function buildGraph(
     if (!byUri.has(item.post.uri)) byUri.set(item.post.uri, item)
   }
   const unique = [...byUri.values()]
-  if (unique.length === 0) return { nodes: [], edges: [] }
+  if (unique.length === 0) return { nodes: [], edges: [], memberNode: new Map() }
 
   // Group by reply *connectivity* (union-find over parent links), not by the
   // stored thread root — Bluesky thread data often has inconsistent root refs
@@ -287,10 +356,22 @@ export function buildGraph(
     }
     return r
   }
-  for (const item of unique) uf.set(item.post.uri, item.post.uri)
+  const ensure = (u: string) => {
+    if (!uf.has(u)) uf.set(u, u)
+  }
+  for (const item of unique) ensure(item.post.uri)
   for (const item of unique) {
+    // Union by DECLARED root as well as loaded parent links, so a partially
+    // loaded thread is one group here (matching state/conversations.ts), not a
+    // confetti of fragments split wherever the middles aren't loaded yet.
+    const declared = rootUriOf(item)
+    ensure(declared)
+    const a0 = find(item.post.uri)
+    const b0 = find(declared)
+    if (a0 !== b0) uf.set(a0, b0)
     const p = parentUriOf(item)
-    if (p && uf.has(p)) {
+    if (p) {
+      ensure(p)
       const a = find(item.post.uri)
       const b = find(p)
       if (a !== b) uf.set(a, b)
@@ -303,17 +384,11 @@ export function buildGraph(
     if (g) g.push(item)
     else groups.set(key, [item])
   }
-  // Loaded posts per DECLARED thread root (reply.root ref) — counts a thread
-  // family whole even when unloaded middles fragment its connectivity groups.
-  const rootFamilyCount = new Map<string, number>()
-  for (const item of unique) {
-    const r = rootUriOf(item)
-    rootFamilyCount.set(r, (rootFamilyCount.get(r) ?? 0) + 1)
-  }
 
   const inGroup = (members: FeedItem[]) => new Set(members.map((m) => m.post.uri))
 
   const units: Unit[] = []
+  const memberNode = new Map<string, string>()
   for (const [rootUri, members] of groups) {
     // Expansion is keyed by *membership* (any member's uri was clicked to map),
     // which stays stable as fetched replies merge the group and shift its key.
@@ -322,13 +397,9 @@ export function buildGraph(
     const isManual = forceShow
       ? members.some((m) => forceShow.has(m.post.uri))
       : members.some((m) => expanded.has(m.post.uri))
-    // Size for the cap = the DECLARED thread family, not just this connectivity
-    // group: a partially-loaded mega-thread splinters into many small fragments
-    // (union-find only links loaded parents), and each fragment would slip
-    // under a group-size cap while the family collectively swallows the map.
-    const familySize = Math.max(members.length, ...members.map((m) => rootFamilyCount.get(rootUriOf(m)) ?? 0))
-    const isExpanded =
-      isManual || (members.some((m) => expanded.has(m.post.uri)) && familySize <= autoExpandMax)
+    // Whether a conversation unrolls is the PLANNER's decision now (PLAN §8):
+    // callers pass the planned-full membership as `expanded`.
+    const isExpanded = isManual || members.some((m) => expanded.has(m.post.uri))
     const isPrimary = (m: FeedItem) => !primary || primary.has(m.post.uri)
 
     // Drop conversations that are pure pulled-in context (no primary post of
@@ -339,6 +410,7 @@ export function buildGraph(
 
     if (members.length === 1) {
       const it = members[0]
+      memberNode.set(it.post.uri, it.post.uri)
       units.push({
         item: it,
         score: postScoreRate(it),
@@ -374,7 +446,10 @@ export function buildGraph(
 
     // Small threads (or explicitly expanded ones) show as connected nodes;
     // larger threads collapse to one node unless the user maps their replies.
-    const collapse = members.length >= COLLAPSE_MIN && !isExpanded
+    // In plan mode, anything not planned-full collapses (the planner owns the
+    // full-vs-rep call), so a budget-demoted 2-post thread reads as one node
+    // with the earliest-primary face + a +N badge, like any other rep.
+    const collapse = !isExpanded && (collapseUnexpanded || members.length >= COLLAPSE_MIN)
 
     if (!collapse) {
       // Show the rep + the loudest replies, so a huge thread can't flood the
@@ -414,18 +489,24 @@ export function buildGraph(
       }
       const shown = members.filter((m) => chosen.has(m.post.uri))
       const hidden = members.length - shown.length
-      for (const m of shown) {
+      // Contiguous self-replies display as ONE run node (scrollable card);
+      // edges then mark speaker changes, not every post boundary.
+      for (const run of segmentRuns(shown)) {
+        const head = run[0]
+        const hasRep = run.some((m) => m === rep)
         units.push({
-          item: m,
-          score: postScoreRate(m),
-          timestamp: timestampOf(m),
+          item: head,
+          run: run.length > 1 ? run : undefined,
+          score: Math.max(...run.map(postScoreRate)),
+          timestamp: timestampOf(head),
           rootUri,
-          isThreadRoot: m === rep,
-          collapsedCount: m === rep ? hidden : 0,
+          isThreadRoot: hasRep,
+          collapsedCount: hasRep ? hidden : 0,
           expanded: isExpanded,
           manualExpand: isManual,
-          primary: isPrimary(m),
+          primary: run.some(isPrimary),
         })
+        for (const m of run) memberNode.set(m.post.uri, head.post.uri)
       }
     } else {
       // Collapsed: one node, placed by peak engagement + latest activity.
@@ -441,6 +522,7 @@ export function buildGraph(
         manualExpand: false,
         primary: primaries.length > 0,
       })
+      for (const m of members) memberNode.set(m.post.uri, displayRep.post.uri)
     }
   }
 
@@ -457,17 +539,26 @@ export function buildGraph(
     expanded: u.expanded,
     manualExpand: u.manualExpand,
     primary: u.primary,
+    run: u.run,
   }))
 
   const present = new Set(nodes.map((n) => n.uri))
   const edges: GraphEdge[] = []
+  const seen = new Set<string>()
   for (const u of units) {
     const parent = parentUriOf(u.item)
     const child = u.item.post.uri
-    if (parent && present.has(parent) && present.has(child)) {
-      edges.push({ id: `${child}->${parent}`, from: child, to: parent })
+    // The parent post may live INSIDE another node (a run, a collapsed rep) —
+    // resolve to the node that displays it.
+    const parentNode = parent ? memberNode.get(parent) ?? parent : undefined
+    if (parentNode && parentNode !== child && present.has(parentNode) && present.has(child)) {
+      const id = `${child}->${parentNode}`
+      if (!seen.has(id)) {
+        seen.add(id)
+        edges.push({ id, from: child, to: parentNode })
+      }
     }
   }
 
-  return { nodes, edges }
+  return { nodes, edges, memberNode }
 }

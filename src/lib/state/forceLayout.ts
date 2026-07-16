@@ -47,9 +47,7 @@ export class ForceLayout {
   // the top bar (or off any edge). Set via setBounds; 0 = unbounded.
   // The bottom chrome (gear bottom-left, Digest/Load-more bottom-right) lives in
   // the CORNERS, so a bigger bottom inset is reserved only there — the
-  // bottom-center stays usable. Set via setBottomChrome.
   #bounds = { w: 0, h: 0, top: 0, bottom: 0 }
-  #chrome = { leftW: 0, rightW: 0, bottom: 0 }
 
   constructor(onTick: () => void) {
     this.sim = forceSimulation<SimNode, SimLink>([])
@@ -70,24 +68,13 @@ export class ForceLayout {
   setBounds(w: number, h: number, top: number, bottom: number) {
     this.#bounds = { w, h, top, bottom }
   }
-  /** Bottom-corner keep-out for the fixed UI chrome: nodes in the left `leftW`px
-   * or right `rightW`px keep an extra `bottom`px clear at the bottom, so they
-   * don't hide behind the gear / Digest buttons. The bottom-center is untouched. */
-  setBottomChrome(leftW: number, rightW: number, bottom: number) {
-    this.#chrome = { leftW, rightW, bottom }
-  }
   #clamp() {
     const { w, h, top, bottom } = this.#bounds
     if (!w || !h) return
-    const { leftW, rightW, bottom: chromeBottom } = this.#chrome
     for (const n of this.#nodes) {
       const r = n.r
       if (n.x != null) n.x = Math.max(r + 2, Math.min(w - r - 2, n.x))
-      // In a bottom corner, reserve the taller chrome inset; elsewhere the plain
-      // bottom bound.
-      const inCorner = n.x != null && chromeBottom > 0 && (n.x < leftW || n.x > w - rightW)
-      const bot = inCorner ? Math.max(bottom, chromeBottom) : bottom
-      if (n.y != null) n.y = Math.max(top + r, Math.min(h - bot - r, n.y))
+      if (n.y != null) n.y = Math.max(top + r, Math.min(h - bottom - r, n.y))
     }
   }
 

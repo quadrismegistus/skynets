@@ -7,12 +7,12 @@
     layoutPositions,
     parentUriOf,
     rootUriOf,
-    selectVisible,
     threadDescendants,
     type GraphNode,
     type SelectMode,
   } from '../state/graph'
   import { ForceLayout, type Target } from '../state/forceLayout'
+  import { buildConversations, planView } from '../state/conversations'
   import { read } from '../state/read.svelte'
   import { settings, debugAllowed } from '../state/settings.svelte'
   import { compose } from '../state/compose.svelte'
@@ -80,9 +80,11 @@
   let w = $state(0)
   let h = $state(0)
   // Bottom UI chrome, measured so the sim keeps nodes out of the corners it
-  // occupies (see the setBottomChrome effect).
+  // occupies (measured into bottomChrome; the canvas ends above the bar).
   let gearEl = $state<HTMLElement>()
   let hudEl = $state<HTMLElement>()
+  // Measured height of the bottom control bar — the canvas ends above it.
+  let bottomChrome = $state(0)
 
   // Live node positions, written by the simulation each tick.
   let positions = $state<Map<string, { x: number; y: number }>>(new Map())
@@ -137,28 +139,60 @@
   const contextByUri = $derived(new Map(allItems.map((i) => [i.post.uri, i])))
   const primaryUris = $derived(new Set(primarySources.map((i) => i.post.uri)))
   const visible = $derived(allItems.filter((i) => !read.isDismissed(i.post.uri)))
-  // "Reply chains" on: treat every timeline reply's thread as expanded so its
-  // parent chain shows as connected nodes instead of collapsing (a 3+ post
-  // chain, or a parent with siblings, would otherwise collapse to one node and
-  // hide the ancestry).
-  const expandedForBuild = $derived.by(() => {
-    if (!settings.replyChains) return expanded
-    const s = new Set<string>(expanded)
-    for (const it of feedItems) if (parentUriOf(it)) s.add(it.post.uri)
+  // THE PLAN (PLAN §8): conversations are the unit of every display decision.
+  // One pass with global knowledge ranks conversations (not posts), applies
+  // author diversity (a reply-flooding account can't fill the window with
+  // dozens of small conversations), and allocates each a resolution: full
+  // tree, collapsed representative (+N), or hidden (queued).
+  const convos = $derived(buildConversations(visible, primaryUris))
+  const plan = $derived.by(() => {
+    // Manual maps + revealed topic pills always draw whole.
+    const forceFull = new Set<string>()
+    for (const c of convos) {
+      if (c.members.some((m) => expanded.has(m.post.uri) || revealedUris.has(m.post.uri))) forceFull.add(c.id)
+    }
+    return planView(
+      convos.filter((c) => c.hasPrimary || forceFull.has(c.id)),
+      {
+        budget: settings.nodeLimit,
+        // Reply chains OFF = conversations render collapsed unless mapped.
+        autoUnrollMax: settings.replyChains ? 10 : 0,
+        perAuthorMax: 3,
+        forceFull,
+        ranking: settings.selectMode,
+        offset: turnoverOffset,
+      },
+    )
+  })
+  // Planned membership: full conversations show every member; 'rep' shows the
+  // earliest primary member (matching buildGraph's collapsed display rep).
+  const plannedFullUris = $derived.by(() => {
+    const s = new Set<string>()
+    for (const p of plan) if (p.level === 'full') for (const m of p.nodes) s.add(m.post.uri)
     return s
   })
-  // `expandedForBuild` (manual ∪ auto reply-chains) controls collapse; the raw
-  // manual `expanded` set is passed separately so only user-mapped threads are
-  // force-shown — auto reply-chain context stays under the node budget.
-  // Conversations above this size stay collapsed (+N) unless manually mapped —
-  // auto reply-chains must not let one mega-thread swallow the whole map.
-  const AUTO_UNROLL_MAX = 10
-  const graph = $derived(buildGraph(visible, expandedForBuild, primaryUris, expanded, AUTO_UNROLL_MAX))
+  // uri → rep-planned conversation id, for EVERY member: buildGraph emits one
+  // collapsed node for big rep conversations (whose exact member uri follows
+  // its own tie-breaks — predicting it would re-implement them, and a mismatch
+  // vanishes the conversation), while sub-COLLAPSE_MIN groups emit every
+  // member. Admitting by membership and DEDUPING to one node per conversation
+  // handles both without overshoot.
+  const repConvoByUri = $derived.by(() => {
+    const m = new Map<string, string>()
+    for (const p of plan) {
+      if (p.level !== 'rep') continue
+      for (const mem of p.convo.members) m.set(mem.post.uri, p.convo.id)
+    }
+    return m
+  })
+  // buildGraph EXECUTES the plan: planned-full membership drives expansion, and
+  // everything else collapses (collapseUnexpanded) so budget-demoted small
+  // threads render as a proper rep — one node, primary face, +N badge — instead
+  // of their bare root.
+  const graph = $derived(buildGraph(visible, plannedFullUris, primaryUris, expanded, true))
 
-  // Only primary nodes compete for the window, so the queue/turnover counts
-  // are over them; context nodes ride along and don't inflate the numbers.
-  const total = $derived(graph.nodes.filter((n) => n.primary).length)
-  const queued = $derived(total <= settings.nodeLimit ? 0 : total - settings.nodeLimit)
+  const total = $derived(plan.length)
+  const queued = $derived(plan.filter((p) => p.level === 'hidden').length)
 
   // Which nodes to show (top/recent/mix), plus pinned nodes and — when "connect
   // replies" is on — the present ancestor chain of each shown node, so a reply is
@@ -176,39 +210,44 @@
   })
 
   const visibleNodes = $derived.by(() => {
-    const selected = selectVisible(
-      graph.nodes,
-      settings.selectMode,
-      settings.nodeLimit,
-      turnoverOffset,
-    )
-    const connect = settings.connectReplies || settings.replyChains
-    if (!pinned.size && !connect && !revealedUris.size) return selected
-    const set = new Map(selected.map((n) => [n.uri, n]))
+    const set = new Map<string, GraphNode>()
+    const seatedRep = new Set<string>()
+    for (const n of graph.nodes) {
+      if (plannedFullUris.has(n.uri)) {
+        set.set(n.uri, n)
+        continue
+      }
+      const convoId = repConvoByUri.get(n.uri)
+      if (convoId && !seatedRep.has(convoId)) {
+        seatedRep.add(convoId)
+        set.set(n.uri, n) // one node per rep-planned conversation
+      }
+    }
+    // Pinned nodes stay visible regardless of what the plan rotates out.
     for (const n of graph.nodes) if (pinned.has(n.uri) && !set.has(n.uri)) set.set(n.uri, n)
-    // A revealed topic's posts come in whole, ignoring the budget — the user
-    // asked for the whole conversation.
-    if (revealedUris.size)
-      for (const n of graph.nodes) if (revealedUris.has(n.uri) && !set.has(n.uri)) set.set(n.uri, n)
+    const connect = settings.connectReplies || settings.replyChains
     if (connect) {
-      // Every visible reply ALWAYS gets its full loaded chain — the Count
-      // limit governs which conversations are selected, not whether a selected
-      // conversation is drawn whole. Ancestors the user dismissed come back as
-      // dimmed GHOSTS (never on their own merits — only when a visible reply
-      // needs them for context).
+      // Chains belong to FULL-planned conversations (and pinned posts): every
+      // such reply gets its complete loaded ancestry, with dismissed ancestors
+      // returning as dimmed GHOSTS. A 'rep' node REPRESENTS its conversation —
+      // it must not sprout its own spine, or a rep planned as one node drags
+      // its whole thread (and every resurrected dismissal in it) onto the map,
+      // blowing past the plan (the 90/37 cat pile).
       const byUri = new Map(graph.nodes.map((n) => [n.uri, n]))
-      let frontier = [...set.values()]
+      let frontier = [...set.values()].filter((n) => plannedFullUris.has(n.uri) || pinned.has(n.uri))
       while (frontier.length) {
         const next: GraphNode[] = []
         for (const n of frontier) {
-          const p = parentUriOf(n.item)
-          if (!p || set.has(p)) continue
+          const raw = parentUriOf(n.item)
+          if (!raw) continue
+          const p = graph.memberNode.get(raw) ?? raw // the node DISPLAYING the parent
+          if (p === n.uri || set.has(p)) continue
           const pn = byUri.get(p) ?? (() => {
-            const it = contextByUri.get(p)
-            return it ? contextNode(it, read.isDismissed(p)) : undefined
+            const it = contextByUri.get(raw)
+            return it ? contextNode(it, read.isDismissed(raw)) : undefined
           })()
           if (!pn) continue // parent not loaded (yet) — the fetch effect is on it
-          set.set(p, pn)
+          set.set(pn.uri, pn)
           next.push(pn)
         }
         frontier = next
@@ -219,13 +258,24 @@
   const nodeLayout = $derived(layoutPositions(visibleNodes))
 
   const visibleUris = $derived(new Set(visibleNodes.map((n) => n.uri)))
+  // A post may be displayed by a node other than itself (run member → run
+  // head; collapsed member → representative). Ghosts display themselves.
+  const displayNodeOf = (uri: string): string => graph.memberNode.get(uri) ?? uri
   // Derived from the visible set itself (not graph.edges) so links to ghost
   // ancestors — which aren't part of the built graph — draw like any other.
   const visibleEdges = $derived.by(() => {
     const out: { id: string; from: string; to: string }[] = []
+    const seen = new Set<string>()
     for (const n of visibleNodes) {
       const p = parentUriOf(n.item)
-      if (p && p !== n.uri && visibleUris.has(p)) out.push({ id: `${n.uri}->${p}`, from: n.uri, to: p })
+      const pn = p ? displayNodeOf(p) : undefined
+      if (pn && pn !== n.uri && visibleUris.has(pn)) {
+        const id = `${n.uri}->${pn}`
+        if (!seen.has(id)) {
+          seen.add(id)
+          out.push({ id, from: n.uri, to: pn })
+        }
+      }
     }
     return out
   })
@@ -242,7 +292,7 @@
     // usable width by the panel so every node stays visible to its left.
     const panelW = showDigest ? Math.min(PANEL_W, w * 0.88) : 0
     const innerW = Math.max(0, w - 2 * PAD_X - panelW)
-    const innerH = Math.max(0, h - PAD_TOP - PAD_BOTTOM)
+    const innerH = Math.max(0, h - PAD_TOP - Math.max(PAD_BOTTOM, bottomChrome + 8))
     // Chain layout: the conversation is the spatial unit. Only the chain's
     // topmost visible node (the OP when loaded) is anchored to the semantic
     // axes; its replies hang below it as a tidy TREE — one row per depth,
@@ -251,15 +301,20 @@
     const byUri = new Map(visibleNodes.map((n) => [n.uri, n]))
     const childrenOf = new Map<string, GraphNode[]>()
     for (const n of visibleNodes) {
-      const p = parentUriOf(n.item)
+      const raw = parentUriOf(n.item)
+      const p = raw ? displayNodeOf(raw) : undefined
       if (p && p !== n.uri && byUri.has(p)) {
         const arr = childrenOf.get(p)
         if (arr) arr.push(n)
         else childrenOf.set(p, [n])
       }
     }
-    const X_UNIT = 58
-    const Y_UNIT = 64
+    // Grid units must EXCEED a node's collision footprint (r up to MAX_SIZE/2,
+    // plus the collide padding, doubled for two neighbours) or the tidy tree the
+    // planner builds gets shoved into a tangle by the collision force. Rows are
+    // taller than columns are wide so a thread reads top-down as a conversation.
+    const X_UNIT = MAX_SIZE + 18
+    const Y_UNIT = MAX_SIZE + 30
     const widths = new Map<string, number>()
     const widthOf = (uri: string, guard: Set<string>): number => {
       const memo = widths.get(uri)
@@ -296,7 +351,8 @@
       let root = n
       const guard = new Set<string>([root.uri])
       for (;;) {
-        const p = parentUriOf(root.item)
+        const raw = parentUriOf(root.item)
+        const p = raw ? displayNodeOf(raw) : undefined
         const pn = p && !guard.has(p) ? byUri.get(p) : undefined
         if (!pn) break
         guard.add(p as string)
@@ -358,6 +414,34 @@
   })
   const topicMembership = $derived(topicView.pills)
   const nodeCaptions = $derived(topicView.captions)
+  // Node uri → its conversation's digest color, so borders and reply edges can
+  // tint by topic. The digest labels OPs, but the tint must flood the WHOLE
+  // conversation — edges start from replies, which no pill ever names.
+  const topicColorByNode = $derived.by(() => {
+    // Group over ALL loaded posts, not just `visible` — a dismissed OP is absent
+    // from the planning `convos` but its thread lives on as ghost + replies, and
+    // the pill names that dismissed OP. Grouping over allItems keeps the OP a
+    // member so its color still finds (and floods) the conversation.
+    const colorConvos = buildConversations(allItems, primaryUris)
+    const uriConvo = new Map<string, string>()
+    for (const c of colorConvos) for (const mem of c.members) uriConvo.set(mem.post.uri, c.id)
+    const colorByConvo = new Map<string, string>()
+    const paint = (u: string, color: string) => {
+      const cid = uriConvo.get(u)
+      if (cid && !colorByConvo.has(cid)) colorByConvo.set(cid, color)
+    }
+    for (const pill of topicMembership) for (const u of pill.uris) paint(u, pill.color)
+    for (const [u, c] of nodeCaptions) paint(u, c.color)
+    const m = new Map<string, string>()
+    // Iterate the rendered set (includes ghosts) so a resurrected OP's own
+    // border tints too — not just the live nodes in the built graph.
+    for (const n of visibleNodes) {
+      const cid = uriConvo.get(n.item.post.uri)
+      const color = cid ? colorByConvo.get(cid) : undefined
+      if (color) m.set(n.uri, color)
+    }
+    return m
+  })
 
   // Sim inputs use the members' STABLE target positions (not live ones), so the
   // topic targets don't shift every tick — which would restart the sim forever.
@@ -365,7 +449,7 @@
   const topicTargets = $derived.by<Target[]>(() =>
     topicMembership
       .map((m) => {
-        const pts = m.uris.map((u) => targetByUri.get(u)).filter((t): t is Target => t != null)
+        const pts = m.uris.map((u) => targetByUri.get(displayNodeOf(u))).filter((t): t is Target => t != null)
         if (pts.length === 0) return null
         return {
           id: m.sid,
@@ -388,7 +472,7 @@
     topicMembership
       .map((m) => {
         const pts = m.uris
-          .map((u) => placedByUri.get(u))
+          .map((u) => placedByUri.get(displayNodeOf(u)))
           .filter((p): p is NonNullable<typeof p> => p != null)
         if (pts.length === 0) return null
         const cx = pts.reduce((s, p) => s + p.px, 0) / pts.length
@@ -631,6 +715,8 @@
         const uy = dy / len
         return {
           id: e.id,
+          from: e.from,
+          color: topicColorByNode.get(e.from) ?? '',
           d: curvePath(
             a.px + ux * (a.size / 2),
             a.py + uy * (a.size / 2),
@@ -642,6 +728,12 @@
       })
       .filter((l): l is NonNullable<typeof l> => l !== null),
   )
+
+  const edgeColors = $derived(new Set(edgeLines.map((l) => l.color).filter(Boolean)))
+
+  function arrowId(color: string) {
+    return color ? `arrow-${color.replace(/[^a-zA-Z0-9]/g, '')}` : 'reply-arrow'
+  }
 
   function cardPos(p: { px: number; py: number; size: number }) {
     let x = p.px + p.size / 2 + 12
@@ -731,7 +823,7 @@
     const links = [...visibleEdges.map((e) => ({ source: e.from, target: e.to })), ...topicLinks]
     // Clamp nodes inside the canvas so they can't drift up under the top bar (the
     // graph starts below it, but the sim could otherwise push a node to the edge).
-    layout?.setBounds(w, h, 18, 24)
+    layout?.setBounds(w, h, 18, Math.max(24, bottomChrome))
     layout?.update(t, links, new Set(pinned), settings.cohesion)
   })
 
@@ -748,22 +840,18 @@
     void visibleNodes.length
     void total
     void read.dismissed.size
-    if (!graphEl || !layout) return
+    if (!graphEl) return
     const g = graphEl.getBoundingClientRect()
-    let leftW = 0
-    let rightW = 0
-    let bottom = 0
+    // The whole bottom bar is OFF-CANVAS, uniformly — like the top bar. The
+    // old per-corner keep-out made the clamp boundary discontinuous at the
+    // corner edges, and nodes crossing that x-line flip-flopped between two
+    // bottom bounds (sim vs clamp, every tick — visible jitter).
+    let inset = 0
     const gr = gearEl?.getBoundingClientRect()
-    if (gr) {
-      leftW = Math.max(leftW, gr.right - g.left + 10)
-      bottom = Math.max(bottom, g.bottom - gr.top + 10)
-    }
+    if (gr) inset = Math.max(inset, g.bottom - gr.top + 10)
     const hr = hudEl?.getBoundingClientRect()
-    if (hr) {
-      rightW = Math.max(rightW, g.right - hr.left + 10)
-      bottom = Math.max(bottom, g.bottom - hr.top + 10)
-    }
-    layout.setBottomChrome(leftW, rightW, bottom)
+    if (hr) inset = Math.max(inset, g.bottom - hr.top + 10)
+    bottomChrome = inset
   })
 
   // Connect replies: pull in the parents of any loaded reply we don't have yet
@@ -1055,20 +1143,24 @@
 
   <svg class="edges" width={w} height={h}>
     <defs>
-      <marker
-        id="reply-arrow"
-        viewBox="0 0 10 10"
-        refX="8"
-        refY="5"
-        markerWidth="6"
-        markerHeight="6"
-        orient="auto-start-reverse"
-      >
+      <marker id="reply-arrow" viewBox="0 0 10 10" refX="8" refY="5"
+        markerWidth="5" markerHeight="5" orient="auto-start-reverse">
         <path d="M0,0 L10,5 L0,10 z" />
       </marker>
+      {#each edgeColors as c}
+        <marker id={arrowId(c)} viewBox="0 0 10 10" refX="8" refY="5"
+          markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" style="fill: {c}" />
+        </marker>
+      {/each}
     </defs>
     {#each edgeLines as line (line.id)}
-      <path d={line.d} fill="none" marker-end="url(#reply-arrow)" />
+      <path
+        d={line.d}
+        fill="none"
+        marker-end="url(#{arrowId(line.color)})"
+        style={line.color ? `stroke: ${line.color}; opacity: 0.55` : ''}
+      />
     {/each}
   </svg>
 
@@ -1095,11 +1187,13 @@
       active={hovered === p.node.uri}
       pinned={pinned.has(p.node.uri)}
       ghost={p.node.ghost ?? false}
+      accent={topicColorByNode.get(p.node.uri)}
       unfollowed={p.node.item.post.author.did !== session.did &&
         !follows.following(p.node.item.post.author)}
       onhover={(uri) => (uri ? setHovered(uri) : scheduleClear())}
       onclick={onNodeClick}
       ondblclick={onNodeDblClick}
+      onexpand={(n) => toggleMapReplies(n.item)}
       ondismiss={dismiss}
       ondragmove={onNodeDrag}
       ondragend={onNodeDragEnd}
@@ -1137,6 +1231,7 @@
   {#each cards as c (c.node.uri)}
     <PostCard
       item={c.node.item}
+      run={c.node.run}
       x={c.x}
       y={c.y}
       boundsH={h}
@@ -1409,12 +1504,16 @@
   .edges path {
     fill: none;
     stroke: var(--text-dim);
-    stroke-width: 1.4;
+    stroke-width: 2;
     opacity: 0.7;
     stroke-dasharray: 5 4;
   }
+  /* Arrowheads: default gray; colored markers carry an inline fill that must
+     win, so keep this on the low-specificity default only. */
   .edges marker path {
     fill: var(--text-dim);
+    stroke: none;
+    stroke-dasharray: none;
     opacity: 0.9;
   }
   .axis {

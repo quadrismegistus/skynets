@@ -682,3 +682,50 @@ reliability layer the establish step needs. Port both patterns to TS.
 - **Repeat runs at fixed input** — single runs flipped conclusions twice; Rand-index over
   ≥3 identical-input runs is the real consistency signal (and watch coverage, not just
   Rand — empty runs trivially "agree").
+
+## 8. The conversation model: graph as data structure, planner as policy (2026-07-16)
+
+A week of live-feed testing exposed a structural fault line. Every display bug —
+orphaned replies, the long-range-edge tangle, ghost ancestors, and finally the "cat
+monster" (one account's posts swallowing half the map, immune to two successive caps) —
+had the same root cause: **no layer knew the whole graph's shape when deciding what to
+show**. `buildGraph` knew connected components but not the budget; `selectVisible` knew
+the budget but ranked *posts*, not conversations; chain-climbs discovered thread sizes
+after selection had already spent the slots; async fetches changed every answer
+mid-flight. Each fix taught one layer a little about another — stacked caps, grace
+budgets, family counts — classic symptom-chasing.
+
+§8 replaces the stack with two first-class pieces (`state/conversations.ts`):
+
+1. **The conversation model** — connected components computed once, with global
+   knowledge, over the union of DECLARED thread roots (`reply.root` refs, present even
+   when a chain's middle is unloaded) and loaded parent links. A partially-fetched
+   mega-thread is ONE `Conversation` here, not a confetti of under-cap fragments. Each
+   carries members (tree-ordered), the topmost loaded root, score, last activity, and
+   per-author counts (the reply-flood signal).
+
+2. **The view planner** — ONE allocation pass with an explicit budget. Ranks
+   conversations (not posts), applies AUTHOR DIVERSITY (an account dominating more than
+   `perAuthorMax` conversations has the surplus queued behind everyone else — the actual
+   cat fix: the monster was one bot scattering dozens of separate 2-post conversations,
+   each too small for any thread-shaped cap to catch), then assigns each conversation a
+   RESOLUTION: `full` (whole tree, if it fits and is ≤ `autoUnrollMax`), `rep` (the
+   collapsed +N representative), or `hidden` (queued). Manual maps are always `full`,
+   outside the budget — the user asked.
+
+   Every prior heuristic becomes one planner line: mandatory chains = "full/rep are the
+   only levels, so admitted conversations are never partial"; ghosts = "spines may
+   include read members, rendered dim"; the mega-thread cap = "wantFull requires ≤
+   autoUnrollMax"; the old 85/74 overshoot = impossible, the planner IS the count.
+
+**Wiring (next):** `Graph.svelte` swaps its selection pipeline for
+`planView(buildConversations(visible), {budget, forceFull, ranking})`, keeping the tree
+layout, ghost rendering, and force sim unchanged. The existing e2e suite (33 tests) is
+the behavioral spec.
+
+**Phase 2 — archive-first (the admission gate):** fetches write ONLY to the IndexedDB
+corpus; the model builds from a corpus query; a conversation is admissible once its
+ancestry is resolvable from the archive. Kills the five-source merge
+(`items`/`threads`/`ancestors`/`revived`/`injected`) whose seams bred this week's bugs,
+and makes reloads paint instantly from local data. Designed here, built after the
+planner wiring proves out.

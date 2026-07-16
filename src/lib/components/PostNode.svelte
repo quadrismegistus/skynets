@@ -14,10 +14,14 @@
     pinned: boolean
     /** A dismissed ancestor resurrected for chain context — dimmed, no ✕. */
     ghost: boolean
+    /** Digest topic color — tints the border so neighbouring threads read apart. */
+    accent?: string
     unfollowed: boolean
     onhover: (uri: string | null) => void
     onclick: (node: GraphNode) => void
     ondblclick: (node: GraphNode) => void
+    /** Unfurl the collapsed thread behind the +N badge. */
+    onexpand: (node: GraphNode) => void
     ondismiss: (uri: string) => void
     ondragmove: (uri: string, clientX: number, clientY: number) => void
     ondragend: (uri: string) => void
@@ -31,10 +35,12 @@
     active,
     pinned,
     ghost,
+    accent,
     unfollowed,
     onhover,
     onclick,
     ondblclick,
+    onexpand,
     ondismiss,
     ondragmove,
     ondragend,
@@ -85,7 +91,7 @@
   class:ghost
   class:unfollowed
   class:thread={node.isThreadRoot}
-  style="left: {px}px; top: {py}px; width: {size}px; height: {size}px;"
+  style="left: {px}px; top: {py}px; width: {size}px; height: {size}px;{accent ? ` --accent-topic: ${accent};` : ''}"
   role="group"
   onpointerenter={(e) => e.pointerType === 'mouse' && onhover(node.uri)}
   onpointerleave={(e) => e.pointerType === 'mouse' && onhover(null)}
@@ -119,8 +125,16 @@
   {/if}
 
   {#if node.collapsedCount > 0}
-    <span class="badge" title="{node.collapsedCount} more in thread — click to expand"
-      >+{node.collapsedCount}</span
+    <button
+      class="badge expand-badge"
+      title="{node.collapsedCount} more in thread — click to expand"
+      aria-label="Expand {node.collapsedCount} more posts in thread"
+      onclick={() => !dragMoved && onexpand(node)}
+      >+{node.collapsedCount}</button
+    >
+  {:else if node.run && node.run.length > 1}
+    <span class="badge run-badge" title="{node.run.length} consecutive posts by this author — the card scrolls through them"
+      >{node.run.length}≡</span
     >
   {/if}
 
@@ -143,7 +157,9 @@
     padding: 0;
     border-radius: 50%;
     cursor: grab;
-    border: 2px solid var(--border);
+    /* Topic-tinted border when the digest has labeled this conversation;
+       status styles (pinned/thread/active) below still override. */
+    border: 2px solid var(--accent-topic, var(--border));
     background: var(--bg-elev);
     overflow: hidden;
     display: grid;
@@ -156,12 +172,13 @@
     border-color: var(--accent);
   }
   .node.replies {
-    border-color: var(--accent-hover);
+    border-color: var(--accent-topic, var(--accent-hover));
   }
-  /* Thread representative: a distinct double-ring so it reads as expandable. */
+  /* Thread representative: a distinct double-ring so it reads as expandable.
+     The ring adopts the topic tint when labeled — the SHAPE is the signal. */
   .wrap.thread .node {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+    border-color: var(--accent-topic, var(--accent));
+    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent-topic, var(--accent));
   }
   .wrap.active {
     z-index: 50;
@@ -232,8 +249,14 @@
     font-weight: 700;
     color: var(--text-dim);
   }
+  .run-badge {
+    background: var(--bg-elev);
+    color: var(--text-dim);
+    border: 1.5px solid var(--border);
+  }
   .badge {
     position: absolute;
+    z-index: 3; /* above the avatar circle (.node is z-index 1) */
     bottom: -6px;
     left: 50%;
     transform: translateX(-50%);
@@ -247,6 +270,15 @@
     border: 1.5px solid var(--bg);
     pointer-events: none;
     white-space: nowrap;
+  }
+  /* The +N badge really does expand on click (its tooltip says so). */
+  .expand-badge {
+    pointer-events: auto;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .expand-badge:hover {
+    background: var(--accent-hover);
   }
   /* Bottom-right marker that this post is a reply. */
   .reply-badge {
