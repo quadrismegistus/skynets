@@ -487,6 +487,33 @@ test('archive coverage view opens with a histogram', async ({ page }) => {
   await expect(page.locator('.note')).toContainText('capture')
 })
 
+test('reload-paint: the on-screen feed is snapshotted, and reload re-renders', async ({ page }) => {
+  await graphReady(page)
+  await page.waitForTimeout(1400) // let the 1s feed-snapshot debounce fire
+  // A non-empty feed snapshot must be persisted for a reload to paint from it.
+  const snapEntries = await page.evaluate(async () => {
+    const dbs = (await indexedDB.databases?.()) ?? []
+    const name = dbs.map((d) => d.name).find((n) => n?.startsWith('skynets-archive-'))
+    if (!name) return -1
+    return await new Promise<number>((resolve) => {
+      const req = indexedDB.open(name)
+      req.onsuccess = () => {
+        const db = req.result
+        if (!db.objectStoreNames.contains('session')) return resolve(-1)
+        const get = db.transaction('session', 'readonly').objectStore('session').get('current')
+        get.onsuccess = () => resolve(get.result?.entries?.length ?? 0)
+        get.onerror = () => resolve(-1)
+      }
+      req.onerror = () => resolve(-1)
+    })
+  })
+  expect(snapEntries).toBeGreaterThan(0)
+  // The reload path (initial load now runs via boot()) still renders the graph.
+  await page.reload()
+  await page.waitForSelector('button.node')
+  expect(await page.locator('button.node').count()).toBeGreaterThan(5)
+})
+
 test('help dialog opens and closes', async ({ page }) => {
   await graphReady(page)
   await page.locator('.help').click()

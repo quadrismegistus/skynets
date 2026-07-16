@@ -1,7 +1,41 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity'
 import type { FeedItem } from '../api/timeline'
 import { reposterProfile } from '../api/post'
-import { archive, KIND_RANK, type AppearanceKind } from './archive'
+import { archive, KIND_RANK, type AppearanceKind, type FeedSnapshot, type StoredProfile } from './archive'
+
+/**
+ * Rebuild the feed a snapshot captured: post content from `posts`, and — for
+ * entries that surfaced as a repost — the reposter attribution grafted back
+ * onto a reconstructed `reason` from `profiles` (the feed-level reason isn't
+ * stored on the post). Entries whose post is missing (evicted) are skipped, so
+ * the restored feed is only ever as complete as the local corpus. Pure, so the
+ * reconstruction is testable apart from IndexedDB.
+ */
+export function reconstructFeedItems(
+  snap: FeedSnapshot,
+  posts: Map<string, FeedItem>,
+  profiles: Map<string, StoredProfile>,
+): FeedItem[] {
+  const out: FeedItem[] = []
+  for (const e of snap.entries) {
+    const base = posts.get(e.uri)
+    if (!base) continue
+    const p = e.reposterDid ? profiles.get(e.reposterDid) : undefined
+    if (p) {
+      out.push({
+        ...base,
+        reason: {
+          $type: 'app.bsky.feed.defs#reasonRepost',
+          by: { did: p.did, handle: p.handle, displayName: p.displayName, avatar: p.avatar },
+          indexedAt: new Date(snap.t).toISOString(),
+        },
+      } as FeedItem)
+    } else {
+      out.push(base)
+    }
+  }
+  return out
+}
 
 /**
  * The reactive in-memory mirror of the local corpus (archive-first, PLAN §8

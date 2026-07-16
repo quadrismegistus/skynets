@@ -20,8 +20,8 @@
   import { ancestors } from '../state/ancestors.svelte'
   import { follows } from '../state/follows.svelte'
   import { session } from '../state/session.svelte'
-  import { archive } from '../state/archive'
-  import { corpus } from '../state/corpus.svelte'
+  import { archive, type FeedSnapshot } from '../state/archive'
+  import { corpus, reconstructFeedItems } from '../state/corpus.svelte'
   import CoverageView from './CoverageView.svelte'
   import { backfill, type BackfillResult } from '../state/backfill'
   import { getFollowDids } from '../api/actors'
@@ -780,7 +780,11 @@
   // continuous digest survives reloads and keeps its whole history (Phase A).
   $effect(() => {
     const did = session.did
-    if (!did) return
+    // No archive (not signed in / private mode) — just load the feed live.
+    if (!did) {
+      void boot()
+      return
+    }
     archive
       .open(did)
       .then(async () => {
@@ -790,6 +794,8 @@
         await corpus.flushToArchive()
         await digest.engine.rehydrate()
         archiveReady = true
+        // Paint the last on-screen feed from local data, then refresh live.
+        await boot()
         // Snapshot the follows list for the corpus (network-over-time). Runs
         // once per session in the background; recordFollows skips if unchanged.
         archive.recordFollows(await getFollowDids(did)).catch(() => {})
@@ -803,8 +809,21 @@
       })
       .catch(() => {
         /* archive unavailable (private mode / no IndexedDB) — the digest still
-           works in-memory, just not persisted. */
+           works in-memory, just not persisted. Still load the feed live. */
+        void boot()
       })
+  })
+
+  // Persist the loaded feed so a reload paints exactly it (reload-paint).
+  // Debounced; each entry carries the post uri + its reposter (rebuilt on
+  // restore from the profile cache). Capped so a deep-paged session can't bloat
+  // the single snapshot row.
+  $effect(() => {
+    if (!archiveReady || items.length === 0) return
+    const entries = items.slice(0, 500).map((i) => ({ uri: i.post.uri, reposterDid: reposterProfile(i)?.did }))
+    const cur = cursor
+    const t = setTimeout(() => void archive.putFeedSnapshot(entries, cur), 1000)
+    return () => clearTimeout(t)
   })
 
   // Poll archive stats while the config popover is open, so the corpus counts
@@ -981,6 +1000,41 @@
     return () => clearInterval(id)
   })
 
+  // ── boot / reload-paint ───────────────────────────────────────────────────
+  let booted = false
+  /** Rebuild the last on-screen feed from the archive (post content + repost
+   * attribution) so the graph paints from local data before the network answers. */
+  async function reconstructFeed(snap: FeedSnapshot): Promise<FeedItem[]> {
+    const posts = await archive.getPosts(snap.entries.map((e) => e.uri))
+    const reposterDids = [...new Set(snap.entries.map((e) => e.reposterDid).filter((d): d is string => !!d))]
+    const profs = reposterDids.length ? await archive.getProfiles(reposterDids) : new Map()
+    return reconstructFeedItems(snap, posts, profs)
+  }
+  /** Runs once: paint the last feed from the archive if we have one, then fetch
+   * live and MERGE fresh posts on top; otherwise just do a normal live load. */
+  async function boot() {
+    if (booted) return
+    booted = true
+    let restored = false
+    if (archive.ready) {
+      try {
+        const snap = await archive.getFeedSnapshot()
+        if (snap?.entries.length) {
+          const feed = await reconstructFeed(snap)
+          if (feed.length) {
+            items = feed
+            cursor = snap.cursor
+            restored = true
+          }
+        }
+      } catch {
+        /* missing/corrupt snapshot — fall through to a live load */
+      }
+    }
+    if (restored) await pollNew() // fresh posts slide in over the painted feed
+    else await load(false)
+  }
+
   async function load(append: boolean) {
     if (loading) return
     loading = true
@@ -1137,7 +1191,8 @@
     else if (k === 'l') turnoverOffset = 0
   }
 
-  load(false)
+  // Initial load runs from boot() (via the archive-open effect), so a saved feed
+  // snapshot can paint before the first live fetch — see the open effect above.
 </script>
 
 <svelte:window onkeydown={onKey} />
