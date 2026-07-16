@@ -81,6 +81,30 @@ interface DigestStateRow {
   clusters: PersistedCluster[]
   updatedAt: number
 }
+/** A cached account profile (author or reposter), keyed by DID. Lets a reload
+ * reconstruct a repost's attribution — the feed-level `reason.by` isn't stored
+ * on the post — and, more generally, show a known face without a live fetch. */
+export interface StoredProfile {
+  did: string
+  handle: string
+  displayName?: string
+  avatar?: string
+  t: number
+}
+/** The most recent on-screen feed, so a reload paints exactly it from local data
+ * before the network answers. Ordered; each entry names the post and, when it
+ * surfaced as a repost, who reposted it (fleshed out from `profiles` on
+ * restore). The cursor lets "load more" resume where the session left off. */
+export interface FeedSnapshot {
+  id: 'current'
+  entries: { uri: string; reposterDid?: string }[]
+  /** URIs of the on-screen CONTEXT (fetched ancestors / thread posts) at snapshot
+   * time. Restored alongside the feed so a reload paints edges + tree positions
+   * with the nodes, instead of re-fetching ancestors and reflowing a beat later. */
+  context?: string[]
+  cursor?: string
+  t: number
+}
 
 interface ArchiveSchema extends DBSchema {
   posts: { key: string; value: ArchivedPost; indexes: { createdAt: number } }
@@ -90,6 +114,8 @@ interface ArchiveSchema extends DBSchema {
   vectors: { key: string; value: StoredVector }
   digest: { key: string; value: DigestStateRow }
   labels: { key: string; value: StoredLabel; indexes: { t: number } }
+  profiles: { key: string; value: StoredProfile }
+  session: { key: string; value: FeedSnapshot }
 }
 
 type DB = IDBPDatabase<ArchiveSchema>
@@ -104,6 +130,17 @@ function appearanceKind(item: FeedItem): { kind: AppearanceKind; reposterDid?: s
   if (rp?.did) return { kind: 'repost', reposterDid: rp.did }
   return { kind: 'timeline' }
 }
+/** The account profiles worth caching from one feed item: the author, and the
+ * reposter when the item surfaced as a repost. */
+function profilesOf(item: FeedItem, t: number): StoredProfile[] {
+  const out: StoredProfile[] = []
+  const a = item.post.author
+  if (a?.did) out.push({ did: a.did, handle: a.handle ?? '', displayName: a.displayName, avatar: a.avatar, t })
+  const reason = item.reason as { $type?: string; by?: { did?: string; handle?: string; displayName?: string; avatar?: string } } | undefined
+  const by = reason?.$type === 'app.bsky.feed.defs#reasonRepost' ? reason.by : undefined
+  if (by?.did) out.push({ did: by.did, handle: by.handle ?? '', displayName: by.displayName, avatar: by.avatar, t })
+  return out
+}
 
 /**
  * Per-user archive. One IndexedDB database per DID so switching accounts doesn't
@@ -116,12 +153,13 @@ export class Archive {
   #did = 'anon'
   #seenAppearance = new Set<string>()
   #lastCounts = new Map<string, string>()
+  #lastProfile = new Map<string, string>()
 
   async open(did: string): Promise<void> {
     if (this.#db && this.#did === did) return
     this.#did = did || 'anon'
     // DB name is the legacy pre-Mothtrap-rename one — do not change (users' local archives)
-    this.#db = await openDB<ArchiveSchema>(`skynets-archive-${this.#did}`, 2, {
+    this.#db = await openDB<ArchiveSchema>(`skynets-archive-${this.#did}`, 3, {
       upgrade(db, oldVersion) {
         if (oldVersion < 1) {
           const posts = db.createObjectStore('posts', { keyPath: 'uri' })
@@ -140,6 +178,10 @@ export class Archive {
         if (oldVersion < 2) {
           const labels = db.createObjectStore('labels', { keyPath: 'uri' })
           labels.createIndex('t', 't')
+        }
+        if (oldVersion < 3) {
+          db.createObjectStore('profiles', { keyPath: 'did' })
+          db.createObjectStore('session', { keyPath: 'id' })
         }
       },
     })
@@ -168,10 +210,11 @@ export class Archive {
     const db = this.#db
     if (!db || items.length === 0) return
     const t = Date.now()
-    const tx = db.transaction(['posts', 'appearances', 'counts'], 'readwrite')
+    const tx = db.transaction(['posts', 'appearances', 'counts', 'profiles'], 'readwrite')
     const posts = tx.objectStore('posts')
     const apps = tx.objectStore('appearances')
     const counts = tx.objectStore('counts')
+    const profiles = tx.objectStore('profiles')
     for (const item of items) {
       const uri = item.post.uri
       const existing = await posts.get(uri)
@@ -198,6 +241,16 @@ export class Archive {
         this.#lastCounts.set(uri, sig)
         await counts.add({ uri, t, likes, reposts, replies })
       }
+      // Cache author + reposter profiles, re-writing only when a face changes,
+      // so a reload can attribute a repost (whose reason isn't stored on the
+      // post) and show known accounts before the network answers.
+      for (const p of profilesOf(item, t)) {
+        const psig = `${p.handle}|${p.displayName ?? ''}|${p.avatar ?? ''}`
+        if (this.#lastProfile.get(p.did) !== psig) {
+          this.#lastProfile.set(p.did, psig)
+          await profiles.put(p)
+        }
+      }
     }
     await tx.done
     this.#capMemory()
@@ -216,6 +269,7 @@ export class Archive {
     }
     trim(this.#seenAppearance, 50_000)
     trim(this.#lastCounts, 50_000)
+    trim(this.#lastProfile, 50_000)
   }
 
   /** Record a follows snapshot if it differs from the most recent one. Reads
@@ -243,6 +297,34 @@ export class Archive {
       }),
     )
     return out
+  }
+
+  /** Cached profiles by DID (all, or a requested subset). */
+  async getProfiles(dids?: string[]): Promise<Map<string, StoredProfile>> {
+    const out = new Map<string, StoredProfile>()
+    const db = this.#db
+    if (!db) return out
+    if (dids) {
+      await Promise.all(
+        dids.map(async (d) => {
+          const row = await db.get('profiles', d)
+          if (row) out.set(d, row)
+        }),
+      )
+    } else {
+      for (const p of await db.getAll('profiles')) out.set(p.did, p)
+    }
+    return out
+  }
+
+  /** Persist / read the most-recent on-screen feed (single row), for reload-paint. */
+  async putFeedSnapshot(entries: FeedSnapshot['entries'], cursor?: string, context?: string[]): Promise<void> {
+    if (!this.#db) return
+    await this.#db.put('session', { id: 'current', entries, context, cursor, t: Date.now() })
+  }
+  async getFeedSnapshot(): Promise<FeedSnapshot | undefined> {
+    if (!this.#db) return undefined
+    return this.#db.get('session', 'current')
   }
 
   /** Every archived post as a FeedItem, for rehydrating the in-memory corpus on

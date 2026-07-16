@@ -1,7 +1,41 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity'
 import type { FeedItem } from '../api/timeline'
 import { reposterProfile } from '../api/post'
-import { archive, KIND_RANK, type AppearanceKind } from './archive'
+import { archive, KIND_RANK, type AppearanceKind, type FeedSnapshot, type StoredProfile } from './archive'
+
+/**
+ * Rebuild the feed a snapshot captured: post content from `posts`, and — for
+ * entries that surfaced as a repost — the reposter attribution grafted back
+ * onto a reconstructed `reason` from `profiles` (the feed-level reason isn't
+ * stored on the post). Entries whose post is missing (evicted) are skipped, so
+ * the restored feed is only ever as complete as the local corpus. Pure, so the
+ * reconstruction is testable apart from IndexedDB.
+ */
+export function reconstructFeedItems(
+  snap: FeedSnapshot,
+  posts: Map<string, FeedItem>,
+  profiles: Map<string, StoredProfile>,
+): FeedItem[] {
+  const out: FeedItem[] = []
+  for (const e of snap.entries) {
+    const base = posts.get(e.uri)
+    if (!base) continue
+    const p = e.reposterDid ? profiles.get(e.reposterDid) : undefined
+    if (p) {
+      out.push({
+        ...base,
+        reason: {
+          $type: 'app.bsky.feed.defs#reasonRepost',
+          by: { did: p.did, handle: p.handle, displayName: p.displayName, avatar: p.avatar },
+          indexedAt: new Date(snap.t).toISOString(),
+        },
+      } as FeedItem)
+    } else {
+      out.push(base)
+    }
+  }
+  return out
+}
 
 /**
  * The reactive in-memory mirror of the local corpus (archive-first, PLAN §8
@@ -41,6 +75,11 @@ class Corpus {
   hasContext(uri: string): boolean {
     return this.#context.has(uri)
   }
+  /** Count of posts with a context role — a cheap reactive signal (no array
+   * build) for effects that must re-arm when context grows. */
+  get contextCount(): number {
+    return this.#context.size
+  }
 
   /** Strongest provenance recorded for a uri (primary > context), or undefined
    * if unseen. A post is PRIMARY (in your feed) when this isn't 'context'. */
@@ -58,13 +97,22 @@ class Corpus {
     return this.#byUri.size
   }
 
+  /** Update the in-memory mirror ONLY (no archive write). For posts already
+   * persisted — reload-paint restoring context from disk — so a restore doesn't
+   * append a phantom 'surfaced now' appearance to the diachronic record. Returns
+   * the posts newly added to the mirror. */
+  ingest(items: FeedItem[], forceKind?: AppearanceKind): FeedItem[] {
+    const added: FeedItem[] = []
+    for (const item of items) if (this.#mergeOne(item, forceKind)) added.push(item)
+    return added
+  }
+
   /** Record posts into the mirror AND the archive. `forceKind` overrides the
    * per-item timeline/repost inference — pass 'context' for posts pulled in only
    * to complete a thread or ancestor chain. Returns the posts that were newly
    * added to the mirror (not seen before), for callers that want the delta. */
   record(items: FeedItem[], forceKind?: AppearanceKind): FeedItem[] {
-    const added: FeedItem[] = []
-    for (const item of items) if (this.#mergeOne(item, forceKind)) added.push(item)
+    const added = this.ingest(items, forceKind)
     void archive.record(items, forceKind)
     return added
   }

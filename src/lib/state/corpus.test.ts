@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 import { describe, expect, it } from 'vitest'
-import { Corpus } from './corpus.svelte'
-import { archive } from './archive'
+import { Corpus, reconstructFeedItems } from './corpus.svelte'
+import { archive, type FeedSnapshot, type StoredProfile } from './archive'
 import { reposterProfile } from '../api/post'
 import { mkPost } from '../testing'
 
@@ -64,6 +64,16 @@ describe('Corpus mirror', () => {
     expect(c.hasContext('at://both/1')).toBe(true) // …and still context
   })
 
+  it('ingest updates the mirror WITHOUT writing to the archive (restore path)', async () => {
+    await archive.open('corpus-ingest-test')
+    const before = (await archive.stats()).appearances
+    const c = new Corpus()
+    c.ingest([mkPost({ uri: 'at://ctx/x' })], 'context')
+    expect(c.has('at://ctx/x')).toBe(true) // mirror updated…
+    expect(c.hasContext('at://ctx/x')).toBe(true)
+    expect((await archive.stats()).appearances).toBe(before) // …archive untouched
+  })
+
   it('flushToArchive persists mirrored posts under each role they hold', async () => {
     await archive.open('corpus-flush-test')
     const c = new Corpus()
@@ -75,6 +85,47 @@ describe('Corpus mirror', () => {
     expect(provenance.get('at://c/1')).toBe('context')
   })
 
+})
+
+describe('reconstructFeedItems (reload-paint)', () => {
+  const snap = (entries: FeedSnapshot['entries']): FeedSnapshot => ({ id: 'current', entries, t: 1_700_000_000_000 })
+
+  it('rebuilds a repost’s attribution from the cached profile', () => {
+    const posts = new Map([['at://p/1', mkPost({ uri: 'at://p/1', author: 'orig.test' })]])
+    const profiles = new Map<string, StoredProfile>([
+      ['did:plc:booster', { did: 'did:plc:booster', handle: 'booster.test', displayName: 'The Booster', avatar: 'a.jpg', t: 1 }],
+    ])
+    const [item] = reconstructFeedItems(snap([{ uri: 'at://p/1', reposterDid: 'did:plc:booster' }]), posts, profiles)
+    const rp = reposterProfile(item)
+    expect(rp?.did).toBe('did:plc:booster')
+    expect(rp?.name).toBe('The Booster')
+    expect(rp?.avatar).toBe('a.jpg')
+  })
+
+  it('leaves a plain post plain, and preserves entry order', () => {
+    const posts = new Map([
+      ['at://p/1', mkPost({ uri: 'at://p/1' })],
+      ['at://p/2', mkPost({ uri: 'at://p/2' })],
+    ])
+    const out = reconstructFeedItems(snap([{ uri: 'at://p/2' }, { uri: 'at://p/1' }]), posts, new Map())
+    expect(out.map((i) => i.post.uri)).toEqual(['at://p/2', 'at://p/1'])
+    expect(reposterProfile(out[0])).toBeUndefined()
+  })
+
+  it('skips entries whose post was evicted from the corpus', () => {
+    const posts = new Map([['at://p/1', mkPost({ uri: 'at://p/1' })]])
+    const out = reconstructFeedItems(snap([{ uri: 'at://p/1' }, { uri: 'at://gone' }]), posts, new Map())
+    expect(out.map((i) => i.post.uri)).toEqual(['at://p/1'])
+  })
+
+  it('keeps the post plain if the reposter profile is missing from the cache', () => {
+    const posts = new Map([['at://p/1', mkPost({ uri: 'at://p/1' })]])
+    const [item] = reconstructFeedItems(snap([{ uri: 'at://p/1', reposterDid: 'did:plc:unknown' }]), posts, new Map())
+    expect(reposterProfile(item)).toBeUndefined() // no crash, just no attribution
+  })
+})
+
+describe('Corpus rehydrate', () => {
   it('rehydrates posts + provenance from the archive on reload', async () => {
     await archive.open('corpus-rehydrate-test')
     await archive.record([mkPost({ uri: 'at://feed/1' })]) // timeline

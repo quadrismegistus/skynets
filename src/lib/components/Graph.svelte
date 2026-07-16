@@ -8,8 +8,10 @@
     parentUriOf,
     rootUriOf,
     threadDescendants,
+    treeTargets,
     type GraphNode,
     type SelectMode,
+    type TreeNode,
   } from '../state/graph'
   import { ForceLayout, type Target } from '../state/forceLayout'
   import { buildConversations, planView } from '../state/conversations'
@@ -20,8 +22,8 @@
   import { ancestors } from '../state/ancestors.svelte'
   import { follows } from '../state/follows.svelte'
   import { session } from '../state/session.svelte'
-  import { archive } from '../state/archive'
-  import { corpus } from '../state/corpus.svelte'
+  import { archive, type FeedSnapshot } from '../state/archive'
+  import { corpus, reconstructFeedItems } from '../state/corpus.svelte'
   import CoverageView from './CoverageView.svelte'
   import { backfill, type BackfillResult } from '../state/backfill'
   import { getFollowDids } from '../api/actors'
@@ -304,86 +306,38 @@
     return c
   })
 
-  // Semantic targets (px) each node is pulled toward.
+  // Semantic targets (px) each node is pulled toward. The conversation is the
+  // spatial unit: a chain's topmost visible node anchors to the semantic axes,
+  // its replies hang below as a tidy tree. The math lives in treeTargets (pure,
+  // tested); here we resolve each node's parent through displayNodeOf (run head /
+  // representative) so childrenOf and root-detection agree by construction.
   const targets = $derived.by<Target[]>(() => {
     // When the digest panel is open it overlays the right edge, so shrink the
     // usable width by the panel so every node stays visible to its left.
     const panelW = showDigest ? Math.min(PANEL_W, w * 0.88) : 0
     const innerW = Math.max(0, w - 2 * PAD_X - panelW)
     const innerH = Math.max(0, h - PAD_TOP - Math.max(PAD_BOTTOM, bottomChrome + 8))
-    // Chain layout: the conversation is the spatial unit. Only the chain's
-    // topmost visible node (the OP when loaded) is anchored to the semantic
-    // axes; its replies hang below it as a tidy TREE — one row per depth,
-    // siblings spread by subtree width, oldest left — so a thread reads
-    // top-down like a conversation instead of clumping onto the OP.
-    const byUri = new Map(visibleNodes.map((n) => [n.uri, n]))
-    const childrenOf = new Map<string, GraphNode[]>()
-    for (const n of visibleNodes) {
+    const present = new Set(visibleNodes.map((n) => n.uri))
+    const treeNodes: TreeNode[] = visibleNodes.map((n) => {
       const raw = parentUriOf(n.item)
       const p = raw ? displayNodeOf(raw) : undefined
-      if (p && p !== n.uri && byUri.has(p)) {
-        const arr = childrenOf.get(p)
-        if (arr) arr.push(n)
-        else childrenOf.set(p, [n])
-      }
-    }
-    // Grid units must EXCEED a node's collision footprint (r up to MAX_SIZE/2,
-    // plus the collide padding, doubled for two neighbours) or the tidy tree the
-    // planner builds gets shoved into a tangle by the collision force. Rows are
-    // taller than columns are wide so a thread reads top-down as a conversation.
-    const X_UNIT = MAX_SIZE + 18
-    const Y_UNIT = MAX_SIZE + 30
-    const widths = new Map<string, number>()
-    const widthOf = (uri: string, guard: Set<string>): number => {
-      const memo = widths.get(uri)
-      if (memo !== undefined) return memo
-      if (guard.has(uri)) return 1
-      guard.add(uri)
-      const kids = childrenOf.get(uri) ?? []
-      const w = kids.length ? kids.reduce((sum, k) => sum + widthOf(k.uri, guard), 0) : 1
-      widths.set(uri, Math.max(1, w))
-      return Math.max(1, w)
-    }
-    const off = new Map<string, { dx: number; dy: number }>()
-    const assign = (uri: string, dx: number, dy: number, guard: Set<string>) => {
-      if (guard.has(uri)) return
-      guard.add(uri)
-      off.set(uri, { dx, dy })
-      const kids = (childrenOf.get(uri) ?? []).slice().sort((a, b) => a.timestamp - b.timestamp)
-      const total = kids.reduce((sum, k) => sum + widthOf(k.uri, new Set()), 0)
-      let cursor = -total / 2
-      for (const k of kids) {
-        const w = widthOf(k.uri, new Set())
-        assign(k.uri, dx + (cursor + w / 2) * X_UNIT, dy + Y_UNIT, guard)
-        cursor += w
-      }
-    }
-    const assigned = new Set<string>()
-    for (const n of visibleNodes) {
-      const p = parentUriOf(n.item)
-      if (!p || !byUri.has(p)) assign(n.uri, 0, 0, assigned)
-    }
-    return visibleNodes.map((n) => {
-      const o = off.get(n.uri) ?? { dx: 0, dy: 0 }
-      // Walk to the chain root for the semantic position the tree hangs from.
-      let root = n
-      const guard = new Set<string>([root.uri])
-      for (;;) {
-        const raw = parentUriOf(root.item)
-        const p = raw ? displayNodeOf(raw) : undefined
-        const pn = p && !guard.has(p) ? byUri.get(p) : undefined
-        if (!pn) break
-        guard.add(p as string)
-        root = pn
-      }
-      const anchor = nodeLayout.get(root.uri) ?? { x: 0.5, y: 0.5, sizeRank: 0.5 }
-      const own = nodeLayout.get(n.uri) ?? { x: 0.5, y: 0.5, sizeRank: 0.5 }
+      const a = nodeLayout.get(n.uri) ?? { x: 0.5, y: 0.5, sizeRank: 0.5 }
       return {
-        id: n.uri,
-        tx: Math.max(PAD_X, Math.min(PAD_X + innerW, PAD_X + anchor.x * innerW + o.dx)),
-        ty: Math.max(PAD_TOP, Math.min(PAD_TOP + innerH, PAD_TOP + anchor.y * innerH + o.dy)),
-        r: (MIN_SIZE + own.sizeRank * (MAX_SIZE - MIN_SIZE)) / 2, // size stays the node's own
+        uri: n.uri,
+        timestamp: n.timestamp,
+        parent: p && p !== n.uri && present.has(p) ? p : undefined,
+        x: a.x,
+        y: a.y,
+        sizeRank: a.sizeRank,
       }
+    })
+    return treeTargets(treeNodes, {
+      padX: PAD_X,
+      padTop: PAD_TOP,
+      innerW,
+      innerH,
+      minSize: MIN_SIZE,
+      maxSize: MAX_SIZE,
     })
   })
 
@@ -780,7 +734,14 @@
   // continuous digest survives reloads and keeps its whole history (Phase A).
   $effect(() => {
     const did = session.did
-    if (!did) return
+    if (!did) {
+      // <Graph> only mounts once logged in, so a missing did here means it's
+      // still resolving — wait (this effect re-runs when it lands) so the
+      // archive/restore path runs, rather than preempting it with a live load.
+      // Boot live only if there's genuinely no session/archive to restore from.
+      if (session.status === 'logged-out') void boot()
+      return
+    }
     archive
       .open(did)
       .then(async () => {
@@ -790,6 +751,8 @@
         await corpus.flushToArchive()
         await digest.engine.rehydrate()
         archiveReady = true
+        // Paint the last on-screen feed from local data, then refresh live.
+        await boot()
         // Snapshot the follows list for the corpus (network-over-time). Runs
         // once per session in the background; recordFollows skips if unchanged.
         archive.recordFollows(await getFollowDids(did)).catch(() => {})
@@ -803,8 +766,32 @@
       })
       .catch(() => {
         /* archive unavailable (private mode / no IndexedDB) — the digest still
-           works in-memory, just not persisted. */
+           works in-memory, just not persisted. Still load the feed live. */
+        void boot()
       })
+  })
+
+  // Persist the loaded feed so a reload paints exactly it (reload-paint).
+  // Debounced; each entry carries the post uri + its reposter (rebuilt on
+  // restore from the profile cache). Capped so a deep-paged session can't bloat
+  // the single snapshot row.
+  $effect(() => {
+    if (!archiveReady) return
+    // Establish reactive deps cheaply, but build the snapshot arrays only when
+    // the debounce actually fires — so corpus.contextItems (O(mirror)) isn't
+    // scanned on every feed/context change, just once per settle.
+    void items.length
+    void cursor
+    void corpus.contextCount
+    const t = setTimeout(() => {
+      if (items.length === 0) return
+      const entries = items.slice(0, 500).map((i) => ({ uri: i.post.uri, reposterDid: reposterProfile(i)?.did }))
+      // Also snapshot the on-screen context (ancestors/thread posts) so a reload
+      // paints edges + tree positions immediately, not a beat behind the nodes.
+      const context = corpus.contextItems.slice(0, 500).map((i) => i.post.uri)
+      void archive.putFeedSnapshot(entries, cursor, context)
+    }, 1000)
+    return () => clearTimeout(t)
   })
 
   // Poll archive stats while the config popover is open, so the corpus counts
@@ -981,6 +968,51 @@
     return () => clearInterval(id)
   })
 
+  // ── boot / reload-paint ───────────────────────────────────────────────────
+  let booted = false
+  /** Rebuild the last on-screen feed from the archive (post content + repost
+   * attribution) so the graph paints from local data before the network answers. */
+  async function reconstructFeed(snap: FeedSnapshot): Promise<FeedItem[]> {
+    const posts = await archive.getPosts(snap.entries.map((e) => e.uri))
+    const reposterDids = [...new Set(snap.entries.map((e) => e.reposterDid).filter((d): d is string => !!d))]
+    const profs = reposterDids.length ? await archive.getProfiles(reposterDids) : new Map()
+    return reconstructFeedItems(snap, posts, profs)
+  }
+  /** Runs once: paint the last feed from the archive if we have one, then fetch
+   * live and MERGE fresh posts on top; otherwise just do a normal live load. */
+  async function boot() {
+    if (booted) return
+    booted = true
+    let restored = false
+    if (archive.ready) {
+      try {
+        const snap = await archive.getFeedSnapshot()
+        if (snap?.entries.length) {
+          // Resolve feed AND context from the archive BEFORE touching any state,
+          // then mutate in one synchronous batch — so the first render already
+          // has edges + tree positions, with no bare-nodes flash. Without the
+          // context, the graph would show nodes, then reflow a beat later when
+          // the ancestors re-fetch over the network.
+          const feed = await reconstructFeed(snap)
+          const ctx = snap.context?.length ? await archive.getPosts(snap.context) : undefined
+          if (feed.length) {
+            // Mirror-only: these posts are already archived (getPosts read them
+            // from disk), so ingest without a redundant write that would log a
+            // phantom context surfacing at reload time.
+            if (ctx?.size) corpus.ingest([...ctx.values()], 'context')
+            items = feed
+            cursor = snap.cursor
+            restored = true
+          }
+        }
+      } catch {
+        /* missing/corrupt snapshot — fall through to a live load */
+      }
+    }
+    if (restored) await pollNew() // fresh posts slide in over the painted feed
+    else await load(false)
+  }
+
   async function load(append: boolean) {
     if (loading) return
     loading = true
@@ -1137,7 +1169,8 @@
     else if (k === 'l') turnoverOffset = 0
   }
 
-  load(false)
+  // Initial load runs from boot() (via the archive-open effect), so a saved feed
+  // snapshot can paint before the first live fetch — see the open effect above.
 </script>
 
 <svelte:window onkeydown={onKey} />
