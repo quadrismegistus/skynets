@@ -13,7 +13,7 @@
   } from '../state/graph'
   import { ForceLayout, type Target } from '../state/forceLayout'
   import { read } from '../state/read.svelte'
-  import { settings } from '../state/settings.svelte'
+  import { settings, debugAllowed } from '../state/settings.svelte'
   import { compose } from '../state/compose.svelte'
   import { threads } from '../state/threads.svelte'
   import { ancestors } from '../state/ancestors.svelte'
@@ -1188,12 +1188,14 @@
         </div>
         <p class="hint">Hide feed posts from accounts you don't follow (Bluesky sometimes serves them).</p>
 
-        <div class="row">
-          <span class="label">Debug</span>
-          <input type="checkbox" bind:checked={settings.debugMode} />
-          <span class="val"></span>
-        </div>
-        <p class="hint">Label every card's provenance; click the 🧭 line to copy the raw post JSON.</p>
+        {#if debugAllowed}
+          <div class="row">
+            <span class="label">Debug</span>
+            <input type="checkbox" bind:checked={settings.debugMode} />
+            <span class="val"></span>
+          </div>
+          <p class="hint">Label every card's provenance; click the 🧭 line to copy the raw post JSON.</p>
+        {/if}
 
         <div class="archive-box">
           <div class="archive-head">

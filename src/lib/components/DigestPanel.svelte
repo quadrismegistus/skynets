@@ -139,7 +139,7 @@
     </div>
 
     <label class="row toggle">
-      <input type="checkbox" bind:checked={digest.continuous} />
+      <input type="checkbox" bind:checked={digest.continuous} onchange={() => (digest.continuousSet = true)} />
       <span>Auto-update</span>
       {@render info(
         'Re-labels new posts automatically as the feed flows (turn on Live in the graph settings). Cheap — only genuinely new posts get sent to the model.',
