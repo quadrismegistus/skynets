@@ -7,12 +7,12 @@
     layoutPositions,
     parentUriOf,
     rootUriOf,
-    selectVisible,
     threadDescendants,
     type GraphNode,
     type SelectMode,
   } from '../state/graph'
   import { ForceLayout, type Target } from '../state/forceLayout'
+  import { buildConversations, planView } from '../state/conversations'
   import { read } from '../state/read.svelte'
   import { settings, debugAllowed } from '../state/settings.svelte'
   import { compose } from '../state/compose.svelte'
@@ -137,28 +137,53 @@
   const contextByUri = $derived(new Map(allItems.map((i) => [i.post.uri, i])))
   const primaryUris = $derived(new Set(primarySources.map((i) => i.post.uri)))
   const visible = $derived(allItems.filter((i) => !read.isDismissed(i.post.uri)))
-  // "Reply chains" on: treat every timeline reply's thread as expanded so its
-  // parent chain shows as connected nodes instead of collapsing (a 3+ post
-  // chain, or a parent with siblings, would otherwise collapse to one node and
-  // hide the ancestry).
-  const expandedForBuild = $derived.by(() => {
-    if (!settings.replyChains) return expanded
-    const s = new Set<string>(expanded)
-    for (const it of feedItems) if (parentUriOf(it)) s.add(it.post.uri)
+  // THE PLAN (PLAN §8): conversations are the unit of every display decision.
+  // One pass with global knowledge ranks conversations (not posts), applies
+  // author diversity (a reply-flooding account can't fill the window with
+  // dozens of small conversations), and allocates each a resolution: full
+  // tree, collapsed representative (+N), or hidden (queued).
+  const convos = $derived(buildConversations(visible, primaryUris))
+  const plan = $derived.by(() => {
+    // Manual maps + revealed topic pills always draw whole.
+    const forceFull = new Set<string>()
+    for (const c of convos) {
+      if (c.members.some((m) => expanded.has(m.post.uri) || revealedUris.has(m.post.uri))) forceFull.add(c.id)
+    }
+    return planView(
+      convos.filter((c) => c.hasPrimary || forceFull.has(c.id)),
+      {
+        budget: settings.nodeLimit,
+        // Reply chains OFF = conversations render collapsed unless mapped.
+        autoUnrollMax: settings.replyChains ? 10 : 0,
+        perAuthorMax: 3,
+        forceFull,
+        ranking: settings.selectMode,
+        offset: turnoverOffset,
+      },
+    )
+  })
+  // Planned membership: full conversations show every member; 'rep' shows the
+  // earliest primary member (matching buildGraph's collapsed display rep).
+  const plannedFullUris = $derived.by(() => {
+    const s = new Set<string>()
+    for (const p of plan) if (p.level === 'full') for (const m of p.nodes) s.add(m.post.uri)
     return s
   })
-  // `expandedForBuild` (manual ∪ auto reply-chains) controls collapse; the raw
-  // manual `expanded` set is passed separately so only user-mapped threads are
-  // force-shown — auto reply-chain context stays under the node budget.
-  // Conversations above this size stay collapsed (+N) unless manually mapped —
-  // auto reply-chains must not let one mega-thread swallow the whole map.
-  const AUTO_UNROLL_MAX = 10
-  const graph = $derived(buildGraph(visible, expandedForBuild, primaryUris, expanded, AUTO_UNROLL_MAX))
+  const plannedRepUris = $derived.by(() => {
+    const s = new Set<string>()
+    for (const p of plan) {
+      if (p.level !== 'rep') continue
+      const primaries = p.convo.members.filter((m) => primaryUris.has(m.post.uri))
+      const rep = (primaries.length ? primaries : p.convo.members)[0] // members are oldest-first
+      s.add(rep.post.uri)
+    }
+    return s
+  })
+  // buildGraph EXECUTES the plan: planned-full membership drives expansion.
+  const graph = $derived(buildGraph(visible, plannedFullUris, primaryUris, expanded))
 
-  // Only primary nodes compete for the window, so the queue/turnover counts
-  // are over them; context nodes ride along and don't inflate the numbers.
-  const total = $derived(graph.nodes.filter((n) => n.primary).length)
-  const queued = $derived(total <= settings.nodeLimit ? 0 : total - settings.nodeLimit)
+  const total = $derived(plan.length)
+  const queued = $derived(plan.filter((p) => p.level === 'hidden').length)
 
   // Which nodes to show (top/recent/mix), plus pinned nodes and — when "connect
   // replies" is on — the present ancestor chain of each shown node, so a reply is
@@ -176,20 +201,13 @@
   })
 
   const visibleNodes = $derived.by(() => {
-    const selected = selectVisible(
-      graph.nodes,
-      settings.selectMode,
-      settings.nodeLimit,
-      turnoverOffset,
-    )
-    const connect = settings.connectReplies || settings.replyChains
-    if (!pinned.size && !connect && !revealedUris.size) return selected
-    const set = new Map(selected.map((n) => [n.uri, n]))
+    const set = new Map<string, GraphNode>()
+    for (const n of graph.nodes) {
+      if (plannedFullUris.has(n.uri) || plannedRepUris.has(n.uri)) set.set(n.uri, n)
+    }
+    // Pinned nodes stay visible regardless of what the plan rotates out.
     for (const n of graph.nodes) if (pinned.has(n.uri) && !set.has(n.uri)) set.set(n.uri, n)
-    // A revealed topic's posts come in whole, ignoring the budget — the user
-    // asked for the whole conversation.
-    if (revealedUris.size)
-      for (const n of graph.nodes) if (revealedUris.has(n.uri) && !set.has(n.uri)) set.set(n.uri, n)
+    const connect = settings.connectReplies || settings.replyChains
     if (connect) {
       // Every visible reply ALWAYS gets its full loaded chain — the Count
       // limit governs which conversations are selected, not whether a selected

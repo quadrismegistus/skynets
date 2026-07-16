@@ -260,10 +260,6 @@ export function buildGraph(
    * are force-shown in selection; the rest of `expanded` (auto reply-chains)
    * is bounded by the caller's budget. Defaults to all of `expanded`. */
   forceShow?: ReadonlySet<string>,
-  /** AUTO-expansion (reply chains) only unrolls conversations up to this many
-   * loaded members; bigger ones stay collapsed to their representative (+N) —
-   * a 60-post mega-thread must not swallow the map. Manual maps always unroll. */
-  autoExpandMax = Infinity,
 ): Graph {
   // Dedup by post uri, keeping first occurrence.
   const byUri = new Map<string, FeedItem>()
@@ -287,10 +283,22 @@ export function buildGraph(
     }
     return r
   }
-  for (const item of unique) uf.set(item.post.uri, item.post.uri)
+  const ensure = (u: string) => {
+    if (!uf.has(u)) uf.set(u, u)
+  }
+  for (const item of unique) ensure(item.post.uri)
   for (const item of unique) {
+    // Union by DECLARED root as well as loaded parent links, so a partially
+    // loaded thread is one group here (matching state/conversations.ts), not a
+    // confetti of fragments split wherever the middles aren't loaded yet.
+    const declared = rootUriOf(item)
+    ensure(declared)
+    const a0 = find(item.post.uri)
+    const b0 = find(declared)
+    if (a0 !== b0) uf.set(a0, b0)
     const p = parentUriOf(item)
-    if (p && uf.has(p)) {
+    if (p) {
+      ensure(p)
       const a = find(item.post.uri)
       const b = find(p)
       if (a !== b) uf.set(a, b)
@@ -302,13 +310,6 @@ export function buildGraph(
     const g = groups.get(key)
     if (g) g.push(item)
     else groups.set(key, [item])
-  }
-  // Loaded posts per DECLARED thread root (reply.root ref) — counts a thread
-  // family whole even when unloaded middles fragment its connectivity groups.
-  const rootFamilyCount = new Map<string, number>()
-  for (const item of unique) {
-    const r = rootUriOf(item)
-    rootFamilyCount.set(r, (rootFamilyCount.get(r) ?? 0) + 1)
   }
 
   const inGroup = (members: FeedItem[]) => new Set(members.map((m) => m.post.uri))
@@ -322,13 +323,9 @@ export function buildGraph(
     const isManual = forceShow
       ? members.some((m) => forceShow.has(m.post.uri))
       : members.some((m) => expanded.has(m.post.uri))
-    // Size for the cap = the DECLARED thread family, not just this connectivity
-    // group: a partially-loaded mega-thread splinters into many small fragments
-    // (union-find only links loaded parents), and each fragment would slip
-    // under a group-size cap while the family collectively swallows the map.
-    const familySize = Math.max(members.length, ...members.map((m) => rootFamilyCount.get(rootUriOf(m)) ?? 0))
-    const isExpanded =
-      isManual || (members.some((m) => expanded.has(m.post.uri)) && familySize <= autoExpandMax)
+    // Whether a conversation unrolls is the PLANNER's decision now (PLAN §8):
+    // callers pass the planned-full membership as `expanded`.
+    const isExpanded = isManual || members.some((m) => expanded.has(m.post.uri))
     const isPrimary = (m: FeedItem) => !primary || primary.has(m.post.uri)
 
     // Drop conversations that are pure pulled-in context (no primary post of

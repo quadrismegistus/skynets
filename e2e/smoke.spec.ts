@@ -88,8 +88,9 @@ test('composing a post closes the modal', async ({ page }) => {
   await expect(page.locator('.modal')).toHaveCount(0)
 })
 
-test('composing a thread lands as a collapsed thread node', async ({ page }) => {
+test('composing a thread lands as a connected chain (small threads draw whole)', async ({ page }) => {
   await graphReady(page)
+  const edgesBefore = await page.locator('.edges path').count()
   await page.locator('.compose-btn').click()
   await page.locator('.modal textarea').nth(0).fill('post one of the thread')
   await page.locator('.add').click()
@@ -98,7 +99,10 @@ test('composing a thread lands as a collapsed thread node', async ({ page }) => 
   await page.locator('.modal textarea').nth(2).fill('post three of the thread')
   await page.locator('.post').click()
   await expect(page.locator('.modal')).toHaveCount(0)
-  await expect(page.locator('.badge', { hasText: '+2' })).toBeVisible()
+  // Under the planner, a small thread draws WHOLE (chains on by default):
+  // three posts, two reply edges — not a collapsed +2 node.
+  await page.waitForTimeout(800)
+  expect(await page.locator('.edges path').count()).toBeGreaterThanOrEqual(edgesBefore + 2)
 })
 
 test('composing with an image attaches and posts', async ({ page }) => {
