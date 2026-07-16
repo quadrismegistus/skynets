@@ -228,6 +228,23 @@ test('Reply chains is on by default; turning it off collapses the chain', async 
   expect(await page.locator('.edges path').count()).toBeLessThan(edgesBefore)
 })
 
+test('dismissing a parent leaves a dimmed ghost so replies keep their chain', async ({ page }) => {
+  await graphReady(page)
+  // Dismiss nodes until we hit one that is some visible reply's ancestor —
+  // it must NOT vanish but come back as a dimmed ghost (chains are mandatory).
+  let found = false
+  for (let i = 0; i < 10 && !found; i++) {
+    const w = page.locator('.wrap:not(.ghost)').first()
+    await w.hover()
+    await page.keyboard.press('d')
+    await page.waitForTimeout(400)
+    found = (await page.locator('.wrap.ghost').count()) > 0
+  }
+  expect(found).toBe(true)
+  // Ghosts carry no dismiss ✕ (they're already dismissed).
+  await expect(page.locator('.wrap.ghost .dismiss')).toHaveCount(0)
+})
+
 test('config popover closes on a click outside it', async ({ page }) => {
   await graphReady(page)
   await page.locator('.gear').click()

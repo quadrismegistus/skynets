@@ -26,6 +26,9 @@ export interface GraphNode {
    * (reply parents, fetched thread replies) is false and never competes for
    * screen slots on its own; it only appears attached. */
   primary: boolean
+  /** A dismissed post resurrected because a visible reply needs its chain —
+   * rendered dimmed, never selected on its own merits. */
+  ghost?: boolean
 }
 
 /** Normalized layout position in [0,1], computed per visible set (not baked in). */
@@ -66,6 +69,26 @@ function timestampOf(item: FeedItem): number {
   const rec = item.post.record
   const created = AppBskyFeedPost.isRecord(rec) ? rec.createdAt : undefined
   return Date.parse(created ?? item.post.indexedAt)
+}
+
+/** A standalone context node for an item that isn't part of the built graph —
+ * used to resurrect DISMISSED ancestors as dimmed "ghosts" so a visible reply
+ * always has its chain. Not a thread representative; never primary. */
+export function contextNode(item: FeedItem, ghost = true): GraphNode {
+  return {
+    uri: item.post.uri,
+    cid: item.post.cid,
+    item,
+    score: postScoreRate(item),
+    timestamp: timestampOf(item),
+    rootUri: item.post.uri,
+    isThreadRoot: false,
+    collapsedCount: 0,
+    expanded: true,
+    manualExpand: false,
+    primary: false,
+    ghost,
+  }
 }
 
 /** The parent post uri this item replies to, if any (from the record's reply ref). */

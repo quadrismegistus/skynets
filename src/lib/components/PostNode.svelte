@@ -12,6 +12,8 @@
     hasReplies: boolean
     active: boolean
     pinned: boolean
+    /** A dismissed ancestor resurrected for chain context — dimmed, no ✕. */
+    ghost: boolean
     unfollowed: boolean
     onhover: (uri: string | null) => void
     onclick: (node: GraphNode) => void
@@ -28,6 +30,7 @@
     hasReplies,
     active,
     pinned,
+    ghost,
     unfollowed,
     onhover,
     onclick,
@@ -79,6 +82,7 @@
   class="wrap"
   class:active
   class:pinned
+  class:ghost
   class:unfollowed
   class:thread={node.isThreadRoot}
   style="left: {px}px; top: {py}px; width: {size}px; height: {size}px;"
@@ -120,9 +124,11 @@
     >
   {/if}
 
-  <button class="dismiss" title="Mark as read (dismiss)" aria-label="Dismiss" onclick={dismiss}>
-    ✕
-  </button>
+  {#if !ghost}
+    <button class="dismiss" title="Mark as read (dismiss)" aria-label="Dismiss" onclick={dismiss}>
+      ✕
+    </button>
+  {/if}
 </div>
 
 <style>
@@ -168,6 +174,15 @@
     border-color: #e0a838;
     box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px #e0a838;
   }
+  /* A dismissed ancestor shown only for chain context: strongly dimmed. */
+  .wrap.ghost {
+    opacity: 0.45;
+  }
+  .wrap.ghost:hover,
+  .wrap.ghost.active {
+    opacity: 0.9; /* readable when you engage with it */
+  }
+
   /* Accounts you don't follow (reposts, pulled-in reply parents): dashed + dimmed. */
   .wrap.unfollowed .node {
     border-style: dashed;
