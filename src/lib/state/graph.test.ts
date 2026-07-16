@@ -396,3 +396,40 @@ describe('self-reply runs', () => {
     expect(g.nodes.length).toBe(3) // branch point: no run swallows the siblings
   })
 })
+
+describe('plan mode (collapseUnexpanded): budget-demoted small threads', () => {
+  // A friend's reply to a stranger's OP — 2 posts, below COLLAPSE_MIN. When the
+  // planner demotes it to `rep` (not in `expanded`), plan mode must collapse it
+  // to ONE node wearing the PRIMARY face + a +N badge, not leave the bare
+  // stranger root showing with no hint of the hidden reply.
+  const items = () => [
+    mkPost({ uri: 'at://stranger/op', likes: 90, createdAt: T(0), author: 'stranger.test' }),
+    mkPost({
+      uri: 'at://friend/reply',
+      parent: 'at://stranger/op',
+      root: 'at://stranger/op',
+      createdAt: T(1),
+      author: 'friend.test',
+    }),
+  ]
+  const primary = new Set(['at://friend/reply'])
+
+  it('collapses the small rep to the earliest-primary face with a +N badge', () => {
+    const g = buildGraph(items(), new Set(), primary, new Set(), true)
+    expect(g.nodes).toHaveLength(1)
+    expect(g.nodes[0].uri).toBe('at://friend/reply') // the primary, not the stranger OP
+    expect(g.nodes[0].collapsedCount).toBe(1) // +1 for the hidden OP
+    expect(g.memberNode.get('at://stranger/op')).toBe('at://friend/reply')
+  })
+
+  it('a planned-full small thread still shows connected (not collapsed)', () => {
+    // Same thread, but planned full (both members in `expanded`).
+    const g = buildGraph(items(), new Set(['at://friend/reply']), primary, new Set(), true)
+    expect(g.nodes).toHaveLength(2) // connected, not collapsed
+  })
+
+  it('without plan mode, COLLAPSE_MIN still governs (default contract intact)', () => {
+    const g = buildGraph(items(), new Set(), primary) // no collapseUnexpanded flag
+    expect(g.nodes).toHaveLength(2) // 2-post thread stays connected by default
+  })
+})

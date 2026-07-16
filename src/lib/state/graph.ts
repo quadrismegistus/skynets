@@ -327,6 +327,12 @@ export function buildGraph(
    * are force-shown in selection; the rest of `expanded` (auto reply-chains)
    * is bounded by the caller's budget. Defaults to all of `expanded`. */
   forceShow?: ReadonlySet<string>,
+  /** Plan-execution mode (PLAN §8): collapse ANY conversation that isn't
+   * `expanded` (planned-full), regardless of size. The planner has already
+   * decided full-vs-collapsed, so the COLLAPSE_MIN size heuristic — meant for
+   * standalone callers — must not override it and leave a budget-demoted small
+   * thread showing its bare (often stranger) root with no +N badge. */
+  collapseUnexpanded = false,
 ): Graph {
   // Dedup by post uri, keeping first occurrence.
   const byUri = new Map<string, FeedItem>()
@@ -440,7 +446,10 @@ export function buildGraph(
 
     // Small threads (or explicitly expanded ones) show as connected nodes;
     // larger threads collapse to one node unless the user maps their replies.
-    const collapse = members.length >= COLLAPSE_MIN && !isExpanded
+    // In plan mode, anything not planned-full collapses (the planner owns the
+    // full-vs-rep call), so a budget-demoted 2-post thread reads as one node
+    // with the earliest-primary face + a +N badge, like any other rep.
+    const collapse = !isExpanded && (collapseUnexpanded || members.length >= COLLAPSE_MIN)
 
     if (!collapse) {
       // Show the rep + the loudest replies, so a huge thread can't flood the

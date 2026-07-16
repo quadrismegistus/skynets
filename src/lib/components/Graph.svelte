@@ -185,8 +185,11 @@
     }
     return m
   })
-  // buildGraph EXECUTES the plan: planned-full membership drives expansion.
-  const graph = $derived(buildGraph(visible, plannedFullUris, primaryUris, expanded))
+  // buildGraph EXECUTES the plan: planned-full membership drives expansion, and
+  // everything else collapses (collapseUnexpanded) so budget-demoted small
+  // threads render as a proper rep — one node, primary face, +N badge — instead
+  // of their bare root.
+  const graph = $derived(buildGraph(visible, plannedFullUris, primaryUris, expanded, true))
 
   const total = $derived(plan.length)
   const queued = $derived(plan.filter((p) => p.level === 'hidden').length)
