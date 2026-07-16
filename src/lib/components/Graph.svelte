@@ -150,7 +150,10 @@
   // `expandedForBuild` (manual ∪ auto reply-chains) controls collapse; the raw
   // manual `expanded` set is passed separately so only user-mapped threads are
   // force-shown — auto reply-chain context stays under the node budget.
-  const graph = $derived(buildGraph(visible, expandedForBuild, primaryUris, expanded))
+  // Conversations above this size stay collapsed (+N) unless manually mapped —
+  // auto reply-chains must not let one mega-thread swallow the whole map.
+  const AUTO_UNROLL_MAX = 10
+  const graph = $derived(buildGraph(visible, expandedForBuild, primaryUris, expanded, AUTO_UNROLL_MAX))
 
   // Only primary nodes compete for the window, so the queue/turnover counts
   // are over them; context nodes ride along and don't inflate the numbers.

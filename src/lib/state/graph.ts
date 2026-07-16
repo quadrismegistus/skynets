@@ -260,6 +260,10 @@ export function buildGraph(
    * are force-shown in selection; the rest of `expanded` (auto reply-chains)
    * is bounded by the caller's budget. Defaults to all of `expanded`. */
   forceShow?: ReadonlySet<string>,
+  /** AUTO-expansion (reply chains) only unrolls conversations up to this many
+   * loaded members; bigger ones stay collapsed to their representative (+N) —
+   * a 60-post mega-thread must not swallow the map. Manual maps always unroll. */
+  autoExpandMax = Infinity,
 ): Graph {
   // Dedup by post uri, keeping first occurrence.
   const byUri = new Map<string, FeedItem>()
@@ -306,12 +310,13 @@ export function buildGraph(
   for (const [rootUri, members] of groups) {
     // Expansion is keyed by *membership* (any member's uri was clicked to map),
     // which stays stable as fetched replies merge the group and shift its key.
-    const isExpanded = members.some((m) => expanded.has(m.post.uri))
     // Manual maps default to "all expanded" when no forceShow set is given, so
     // callers that don't distinguish (tests, single-shot) keep old behavior.
     const isManual = forceShow
       ? members.some((m) => forceShow.has(m.post.uri))
-      : isExpanded
+      : members.some((m) => expanded.has(m.post.uri))
+    const isExpanded =
+      isManual || (members.some((m) => expanded.has(m.post.uri)) && members.length <= autoExpandMax)
     const isPrimary = (m: FeedItem) => !primary || primary.has(m.post.uri)
 
     // Drop conversations that are pure pulled-in context (no primary post of
