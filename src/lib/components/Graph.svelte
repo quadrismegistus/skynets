@@ -40,7 +40,10 @@
   const PAD_TOP = 52
   const PAD_BOTTOM = 56
   const PANEL_W = 340 // DigestPanel width; nodes lay out left of it when open
-  const REPLY_CONTEXT_GRACE = 12 // extra nodes beyond Count for reply chains/parents
+  // Extra node slots beyond Count for reply parents/chains. Scales with the
+  // window: a 30-post view has ~proportionally more replies wanting parents
+  // than a 10-post view, so a fixed grace starves most of them.
+  const replyContextGrace = () => Math.max(12, Math.round(settings.nodeLimit / 2))
   const MIN_SIZE = 34
   const MAX_SIZE = 66
   const CARD_W = 360
@@ -189,29 +192,25 @@
       for (const n of graph.nodes) if (revealedUris.has(n.uri) && !set.has(n.uri)) set.set(n.uri, n)
     if (connect) {
       // Pulled-in parent chains are added ONLY up to a total budget, so a few
-      // deep threads can't balloon a limit-10 graph to 100+ nodes. Each selected
-      // node's ancestor chain is added whole while there's room; once the budget
-      // fills, further chains are held back ("added when there's room").
-      const budget = settings.nodeLimit + REPLY_CONTEXT_GRACE
+      // deep threads can't balloon a limit-10 graph to 100+ nodes. Allocation
+      // is BREADTH-FIRST: every reply gets its immediate parent before any
+      // reply gets a grandparent — whole-chains-first let three deep threads
+      // starve ten shallow replies (orphaned ↩ badges with no edge).
+      const budget = settings.nodeLimit + replyContextGrace()
       const byUri = new Map(graph.nodes.map((n) => [n.uri, n]))
-      for (const start of [...set.values()]) {
-        if (set.size >= budget) break
-        const chain: GraphNode[] = []
-        let cur: GraphNode | undefined = start
-        const guard = new Set<string>([start.uri])
-        while (cur) {
-          const p = parentUriOf(cur.item)
-          if (!p || guard.has(p)) break
-          const pn = byUri.get(p)
-          if (!pn) break
-          guard.add(p)
-          if (!set.has(p)) chain.push(pn)
-          cur = pn
-        }
-        for (const n of chain) {
+      let frontier = [...set.values()]
+      while (frontier.length && set.size < budget) {
+        const next: GraphNode[] = []
+        for (const n of frontier) {
           if (set.size >= budget) break
-          set.set(n.uri, n)
+          const p = parentUriOf(n.item)
+          if (!p || set.has(p)) continue
+          const pn = byUri.get(p)
+          if (!pn) continue
+          set.set(p, pn)
+          next.push(pn) // its parent is the next ring out
         }
+        frontier = next
       }
     }
     return [...set.values()]
