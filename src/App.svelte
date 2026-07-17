@@ -53,7 +53,8 @@
 
 <style>
   .center {
-    min-height: 100vh;
+    min-height: 100vh; /* fallback */
+    min-height: 100dvh;
     display: grid;
     place-items: center;
     color: var(--text-dim);
@@ -61,7 +62,11 @@
   .app {
     display: flex;
     flex-direction: column;
+    /* 100dvh tracks the VISIBLE viewport (chrome shown/hidden), so the fixed
+       bottom bar clears a mobile browser's toolbar instead of hiding behind it.
+       100vh is the fallback for browsers without dvh. */
     height: 100vh;
+    height: 100dvh;
   }
   .content {
     flex: 1;

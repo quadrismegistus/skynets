@@ -1636,7 +1636,8 @@
     bottom: calc(100% + 8px);
     width: 500px;
     max-width: min(92vw, calc(100vw - 24px));
-    max-height: calc(100vh - 120px);
+    max-height: calc(100vh - 120px); /* fallback */
+    max-height: calc(100dvh - 120px);
     overflow-y: auto;
     padding: 0.9rem;
     background: var(--bg-elev);
