@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Mothtrap">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1a1f26" />
+      <stop offset="1" stop-color="#12151a" />
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="47%" r="56%">
+      <stop offset="0" stop-color="#5b9ff0" stop-opacity="0.55" />
+      <stop offset="0.45" stop-color="#4a90e2" stop-opacity="0.18" />
+      <stop offset="1" stop-color="#4a90e2" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="moth" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f3f7fc" />
+      <stop offset="1" stop-color="#cbd7e6" />
+    </linearGradient>
+  </defs>
+
+  <!-- full-bleed background (doubles as maskable / apple-touch safe fill) -->
+  <rect width="512" height="512" fill="url(#bg)" />
+  <rect width="512" height="512" fill="url(#glow)" />
+
+  <!-- moth silhouette, centered within the maskable safe zone -->
+  <g transform="translate(256,262) scale(0.86)" fill="url(#moth)">
+    <!-- wings -->
+    <ellipse cx="-86" cy="-34" rx="100" ry="68" transform="rotate(-24 -86 -34)" />
+    <ellipse cx="86"  cy="-34" rx="100" ry="68" transform="rotate(24 86 -34)" />
+    <ellipse cx="-58" cy="62"  rx="68"  ry="46" transform="rotate(20 -58 62)" opacity="0.92" />
+    <ellipse cx="58"  cy="62"  rx="68"  ry="46" transform="rotate(-20 58 62)" opacity="0.92" />
+    <!-- body + head -->
+    <ellipse cx="0" cy="4" rx="20" ry="112" fill="#dbe4ef" />
+    <circle cx="0" cy="-100" r="15" fill="#dbe4ef" />
+    <!-- antennae -->
+    <g fill="none" stroke="#dbe4ef" stroke-width="8" stroke-linecap="round">
+      <path d="M -5,-108 C -28,-138 -48,-150 -64,-174" />
+      <path d="M 5,-108 C 28,-138 48,-150 64,-174" />
+    </g>
+    <circle cx="-64" cy="-174" r="7" fill="#dbe4ef" />
+    <circle cx="64"  cy="-174" r="7" fill="#dbe4ef" />
+  </g>
+</svg>

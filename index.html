@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mothtrap</title>
+    <meta name="description" content="Your Bluesky timeline as a map of conversations — triage, don't doomscroll." />
+
+    <!-- PWA: leading-slash paths so Vite rewrites the base per deploy target
+         (/ on mothtrap.blue, /mothtrap/ on GitHub Pages). The manifest itself
+         uses relative paths, resolved against its own URL. -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#15181c" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-title" content="Mothtrap" />
   </head>
   <body>
     <div id="app"></div>

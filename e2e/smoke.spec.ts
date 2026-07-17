@@ -540,3 +540,28 @@ test('settings persist across reload', async ({ page }) => {
   await expect(page.locator('.config .val').first()).toHaveText('8')
   await expect(page.locator('.seg button.on')).toHaveText('top')
 })
+
+test('is installable as a PWA (manifest + icons wired up)', async ({ page }) => {
+  await page.goto('/')
+  // Head links present (Vite rewrites the base per deploy target; at the
+  // preview root they stay at "/...").
+  await expect(page.locator('link[rel="manifest"]')).toHaveAttribute('href', /manifest\.webmanifest$/)
+  await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute('href', /apple-touch-icon\.png$/)
+  await expect(page.locator('link[rel="icon"][type="image/svg+xml"]')).toHaveAttribute('href', /favicon\.svg$/)
+
+  // Manifest is served, parses, and declares standalone + 192/512 icons.
+  const res = await page.request.get('/manifest.webmanifest')
+  expect(res.ok()).toBeTruthy()
+  const m = await res.json()
+  expect(m.name).toBe('Mothtrap')
+  expect(m.display).toBe('standalone')
+  const sizes = m.icons.map((i: { sizes: string }) => i.sizes)
+  expect(sizes).toContain('192x192')
+  expect(sizes).toContain('512x512')
+  expect(m.icons.some((i: { purpose?: string }) => i.purpose?.includes('maskable'))).toBeTruthy()
+
+  // The relative icon src resolves (against the manifest URL) to a real PNG.
+  const icon = await page.request.get('/icon-512.png')
+  expect(icon.ok()).toBeTruthy()
+  expect(icon.headers()['content-type']).toContain('image/png')
+})
