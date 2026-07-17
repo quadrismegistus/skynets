@@ -312,27 +312,46 @@
   // its replies hang below as a tidy tree. The math lives in treeTargets (pure,
   // tested); here we resolve each node's parent through displayNodeOf (run head /
   // representative) so childrenOf and root-detection agree by construction.
-  const targets = $derived.by<Target[]>(() => {
+  // A topic PILL is laid out like the root of a reply tree: it's a synthetic
+  // node anchored at its LOUDEST visible member's semantic position, and its
+  // member OPs (with their reply-subtrees) hang below it — instead of a pill at
+  // the members' centroid with edges radiating across the page. treeTargets
+  // does both the post trees and the pill trees in one pass; we split the result.
+  const treeLayout = $derived.by(() => {
     // When the digest panel is open it overlays the right edge, so shrink the
     // usable width by the panel so every node stays visible to its left.
     const panelW = showDigest ? Math.min(PANEL_W, w * 0.88) : 0
     const innerW = Math.max(0, w - 2 * PAD_X - panelW)
     const innerH = Math.max(0, h - PAD_TOP - Math.max(PAD_BOTTOM, bottomChrome + 8))
     const present = new Set(visibleNodes.map((n) => n.uri))
-    const treeNodes: TreeNode[] = visibleNodes.map((n) => {
+
+    // Topics with 2+ visible members become trees. Anchor the pill at the
+    // loudest member (smallest y = highest engagement); re-parent each member to
+    // the pill (below, in the post loop). A member that's mid-thread keeps its
+    // real reply-parent, so only thread ROOTS attach to the pill.
+    const pillOf = new Map<string, string>() // member display-uri → pill sid
+    const pillNodes: TreeNode[] = []
+    for (const pill of topicMembership) {
+      const members = [...new Set(pill.uris.map((u) => displayNodeOf(u)))].filter((u) => present.has(u))
+      if (members.length < 2) continue
+      let loudest = members[0]
+      for (const u of members) if ((nodeLayout.get(u)?.y ?? 1) < (nodeLayout.get(loudest)?.y ?? 1)) loudest = u
+      const a = nodeLayout.get(loudest) ?? { x: 0.5, y: 0.5, sizeRank: 0.5 }
+      pillNodes.push({ uri: pill.sid, timestamp: 0, parent: undefined, x: a.x, y: a.y, sizeRank: 1 })
+      for (const u of members) pillOf.set(u, pill.sid)
+    }
+
+    const postNodes: TreeNode[] = visibleNodes.map((n) => {
       const raw = parentUriOf(n.item)
       const p = raw ? displayNodeOf(raw) : undefined
       const a = nodeLayout.get(n.uri) ?? { x: 0.5, y: 0.5, sizeRank: 0.5 }
-      return {
-        uri: n.uri,
-        timestamp: n.timestamp,
-        parent: p && p !== n.uri && present.has(p) ? p : undefined,
-        x: a.x,
-        y: a.y,
-        sizeRank: a.sizeRank,
-      }
+      // Real reply-parent wins (keep threads intact); a thread-root that's a
+      // topic member hangs under its pill instead of anchoring on its own.
+      const parent = (p && p !== n.uri && present.has(p) ? p : undefined) ?? pillOf.get(n.uri)
+      return { uri: n.uri, timestamp: n.timestamp, parent, x: a.x, y: a.y, sizeRank: a.sizeRank }
     })
-    return treeTargets(treeNodes, {
+
+    const all = treeTargets([...pillNodes, ...postNodes], {
       padX: PAD_X,
       padTop: PAD_TOP,
       innerW,
@@ -340,7 +359,13 @@
       minSize: MIN_SIZE,
       maxSize: MAX_SIZE,
     })
+    const posts: Target[] = []
+    const pills = new Map<string, Target>()
+    for (const t of all) (t.id.startsWith('topic:') ? pills.set(t.id, t) : posts.push(t))
+    return { posts, pills }
   })
+  const targets = $derived(treeLayout.posts)
+  const pillTargets = $derived(treeLayout.pills)
 
   const nodeByUri = $derived(new Map(visibleNodes.map((n) => [n.uri, n])))
 
@@ -422,6 +447,11 @@
   const topicTargets = $derived.by<Target[]>(() =>
     topicMembership
       .map((m) => {
+        // 2+ visible members → the pill is a tree root (positioned by treeLayout);
+        // keep its wide collision radius but take the tree position.
+        const tree = pillTargets.get(m.sid)
+        if (tree) return { ...tree, r: 52 }
+        // Fewer than 2 visible → sit at the members' centroid, as before.
         const pts = m.uris.map((u) => targetByUri.get(displayNodeOf(u))).filter((t): t is Target => t != null)
         if (pts.length === 0) return null
         return {
