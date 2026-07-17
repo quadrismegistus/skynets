@@ -24,8 +24,9 @@
       feed — so you can triage, not doomscroll.
     </p>
 
-    <section>
-      <h3>Reading the map</h3>
+    <div class="sections">
+      <section>
+        <h3>Reading the map</h3>
       <ul>
         <li><b>Left → right:</b> older → newer.</li>
         <li><b>Bottom → top:</b> quieter → louder (likes + reposts + replies).</li>
@@ -76,6 +77,7 @@
         <li><b>Live:</b> pull in new posts every 60 seconds.</li>
       </ul>
     </section>
+    </div>
   </div>
 </div>
 
@@ -92,7 +94,7 @@
   }
   .modal {
     width: 100%;
-    max-width: 440px;
+    max-width: 720px;
     background: var(--bg-elev);
     border: 1px solid var(--border);
     border-radius: 14px;
@@ -120,8 +122,21 @@
     font-size: 0.88rem;
     line-height: 1.45;
   }
-  section {
+  /* Flow the sections into as many columns as fit (2 on desktop, 1 on a phone),
+     so the dialog reads wide-and-short instead of a tall single column. Each
+     section stays whole. */
+  .sections {
+    column-width: 15rem;
+    column-gap: 1.6rem;
     margin-top: 1rem;
+  }
+  section {
+    break-inside: avoid;
+    margin: 0 0 1rem;
+  }
+  /* No leading gap before the first section in each column. */
+  .sections > section:first-child {
+    margin-top: 0;
   }
   h3 {
     margin: 0 0 0.4rem;
