@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { getTimeline, type FeedItem } from '../api/timeline'
+  import { getFeedPage, type FeedItem } from '../api/timeline'
+  import { feeds } from '../state/feeds.svelte'
   import { bskyUrl, reposter, reposterProfile } from '../api/post'
   import {
     buildGraph,
@@ -898,6 +899,20 @@
     if (!loading && cursor && total < settings.nodeLimit) load(true)
   })
 
+  // Feed switch: when the user picks a different feed tab, clear the loaded feed
+  // and reload from scratch. The FIRST load is boot()'s job (reload-paint), so
+  // skip the initial run — this only fires on an actual change of `feeds.active`.
+  let lastFeed = feeds.active
+  $effect(() => {
+    const f = feeds.active
+    if (f === lastFeed) return
+    lastFeed = f
+    items = []
+    cursor = undefined
+    turnoverOffset = 0
+    load(false)
+  })
+
   // Auto-cycle timer: while on, rotate the queue one step per interval.
   // (Mix mode has no meaningful rotation, so it only applies to top/recent.)
   $effect(() => {
@@ -917,7 +932,7 @@
   async function pollNew() {
     if (loading) return
     try {
-      const page = await getTimeline()
+      const page = await getFeedPage(feeds.active)
       void corpus.record(page.items)
       const have = new Set(items.map((i) => i.post.uri))
       const fresh = page.items.filter((i) => !have.has(i.post.uri))
@@ -1018,7 +1033,7 @@
     loading = true
     error = undefined
     try {
-      const page = await getTimeline(append ? cursor : undefined)
+      const page = await getFeedPage(feeds.active, append ? cursor : undefined)
       void corpus.record(page.items)
       items = append ? [...items, ...page.items] : page.items
       cursor = page.cursor

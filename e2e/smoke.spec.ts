@@ -514,6 +514,13 @@ test('reload-paint: the on-screen feed is snapshotted, and reload re-renders', a
   expect(await page.locator('button.node').count()).toBeGreaterThan(5)
 })
 
+test('the top tabs are feed names (Following), not Graph/List', async ({ page }) => {
+  await graphReady(page)
+  await expect(page.locator('.tabs button', { hasText: 'Following' })).toBeVisible()
+  await expect(page.locator('.tabs button', { hasText: 'List' })).toHaveCount(0)
+  await expect(page.locator('.tabs button', { hasText: 'Graph' })).toHaveCount(0)
+})
+
 test('help dialog opens and closes', async ({ page }) => {
   await graphReady(page)
   await page.locator('.help').click()

@@ -1,17 +1,24 @@
 <script lang="ts">
   import { session } from './lib/state/session.svelte'
   import { compose } from './lib/state/compose.svelte'
+  import { feeds } from './lib/state/feeds.svelte'
   import Login from './lib/components/Login.svelte'
-  import Timeline from './lib/components/Timeline.svelte'
   import Graph from './lib/components/Graph.svelte'
   import Compose from './lib/components/Compose.svelte'
   import Help from './lib/components/Help.svelte'
 
-  type View = 'graph' | 'list'
-  let view = $state<View>('graph')
   let showHelp = $state(false)
 
   session.init()
+
+  // Load the account's pinned feeds (the tab bar) once signed in.
+  let feedsLoaded = false
+  $effect(() => {
+    if (session.status === 'logged-in' && !feedsLoaded) {
+      feedsLoaded = true
+      feeds.load()
+    }
+  })
 </script>
 
 {#if session.status === 'loading'}
@@ -22,9 +29,15 @@
   <div class="app">
     <header class="topbar">
       <div class="brand"><strong>Mothtrap</strong></div>
-      <div class="tabs">
-        <button class:on={view === 'graph'} onclick={() => (view = 'graph')}>Graph</button>
-        <button class:on={view === 'list'} onclick={() => (view = 'list')}>List</button>
+      <div class="tabs" role="tablist" aria-label="Feeds">
+        {#each feeds.list as f (f.key)}
+          <button
+            role="tab"
+            aria-selected={feeds.active === f.key}
+            class:on={feeds.active === f.key}
+            onclick={() => feeds.setActive(f.key)}>{f.name}</button
+          >
+        {/each}
       </div>
       <div class="who">
         <button class="help" title="How Mothtrap works" aria-label="Help" onclick={() => (showHelp = true)}>?</button>
@@ -38,11 +51,7 @@
       </div>
     </header>
     <main class="content">
-      {#if view === 'graph'}
-        <Graph />
-      {:else}
-        <Timeline />
-      {/if}
+      <Graph />
     </main>
   </div>
   <Compose />
@@ -83,14 +92,26 @@
     z-index: 10;
   }
   .brand {
-    flex: 1;
-  }
-  .tabs {
-    display: flex;
-    gap: 0.25rem;
     flex-shrink: 0;
   }
+  /* The feed tabs take the middle and scroll horizontally when there are more
+     than fit — so brand + actions never get squeezed (matters on mobile). */
+  .tabs {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    gap: 0.25rem;
+    overflow-x: auto;
+    padding: 0 0.5rem;
+    scrollbar-width: none; /* Firefox */
+    -webkit-overflow-scrolling: touch;
+  }
+  .tabs::-webkit-scrollbar {
+    display: none;
+  }
   .tabs button {
+    flex-shrink: 0;
+    white-space: nowrap;
     padding: 0.3rem 0.8rem;
     font-size: 0.85rem;
     background: transparent;
@@ -101,7 +122,7 @@
     color: var(--text);
   }
   .who {
-    flex: 1;
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: flex-end;
