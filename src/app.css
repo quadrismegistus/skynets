@@ -22,8 +22,15 @@
 html,
 body {
   margin: 0;
-  min-height: 100vh; /* fallback */
-  min-height: 100dvh;
+  height: 100%;
+  /* The app is a fixed canvas, not a document: it must fill the viewport
+     exactly and never scroll. On a phone the graph's captions and topic pills
+     extend past the nodes the force sim clamps, so the content box grew wider
+     than the screen — which makes the whole document pannable in BOTH axes,
+     and that is what carried the top bar off-screen. min-height let the body
+     grow to fit that overflow; height + hidden refuses to. */
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {

@@ -99,8 +99,12 @@
   }
   .content {
     flex: 1;
+    min-width: 0;
     min-height: 0;
-    overflow-y: auto;
+    /* Clip rather than scroll. Nodes are clamped inside the canvas by the force
+       sim, and a caption or pill straying past the edge should be cropped, not
+       turn the graph into a scrollable pane. */
+    overflow: hidden;
   }
   .topbar {
     display: flex;
