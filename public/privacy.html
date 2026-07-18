@@ -104,8 +104,12 @@
         these requests: the web server logs only the usual line (time, IP, and the path requested)
         and the model service logs only that a request happened and how long it took. Nothing is
         retained for analysis, used for training, or passed to any third party. The model is
-        self-hosted — nothing goes to a commercial AI provider. Short text embeddings of the
-        generated labels are computed the same way, to merge near-duplicate topics.
+        self-hosted — nothing goes to a commercial AI provider.
+      </p>
+      <p>
+        Grouping the resulting topics into conversations needs text embeddings, and those are
+        computed <strong>entirely inside your browser</strong> — the model is downloaded once, on
+        first use, and runs on your device. Nothing is sent anywhere for that step.
       </p>
       <p>
         If you run Mothtrap locally you can point it at your own machine's model instead, or at a

@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { centroid, cosine, embedTexts, noveltyGate } from './embed'
-import { digestConsent } from '../state/digestConsent.svelte'
+import * as local from './localEmbed'
 
-// These cover the transport, not the privacy gate — the gate has its own
-// tests in state/digestConsent.test.ts. Consent it once so the network
-// paths below are reachable.
-beforeEach(() => digestConsent.grant())
+// embedTexts runs the model on-device now, so the boundary worth stubbing is
+// the worker client — there is no network call left to mock.
+vi.mock('./localEmbed', () => ({
+  localEmbed: vi.fn(async (texts: string[]) => texts.map(() => [1, 0, 0])),
+  localEmbedAvailable: () => true,
+  disposeLocalEmbed: () => {},
+}))
 
 describe('centroid', () => {
   it('averages equal-dimension unit vectors', () => {
@@ -49,19 +52,30 @@ describe('noveltyGate', () => {
   })
 })
 
-describe('embedTexts length guard', () => {
+describe('embedTexts', () => {
   afterEach(() => vi.restoreAllMocks())
+
   it('throws when the model returns fewer vectors than inputs', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        statusText: 'OK',
-        json: async () => ({ embeddings: [[1, 0, 0]] }), // 1 vector for 2 inputs
-        text: async () => '',
-      } as Response),
-    )
-    await expect(embedTexts(['a', 'b'], { ollamaUrl: 'http://x' })).rejects.toThrow(/vectors for/)
+    // Callers rely on 1:1 alignment; a short result would misalign every vector
+    // against its label and silently corrupt the grouping.
+    vi.mocked(local.localEmbed).mockResolvedValueOnce([[1, 0, 0]]) // 1 for 2
+    await expect(embedTexts(['a', 'b'])).rejects.toThrow(/vectors for/)
+  })
+
+  it('embeds on-device, with no network call at all', async () => {
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+    const out = await embedTexts(['hello', 'world'])
+    expect(out).toHaveLength(2)
+    expect(local.localEmbed).toHaveBeenCalledWith(['hello', 'world'])
+    expect(fetchSpy).not.toHaveBeenCalled() // the whole point of the change
+  })
+
+  it('propagates a local failure rather than falling back to a server', async () => {
+    // Degrading from on-device to "sends your text somewhere" because a download
+    // flaked is a privacy regression nobody opted into. The caller's fallback
+    // (token-overlap grouping) is local too.
+    vi.mocked(local.localEmbed).mockRejectedValueOnce(new Error('model missing'))
+    await expect(embedTexts(['a'])).rejects.toThrow('model missing')
   })
 })

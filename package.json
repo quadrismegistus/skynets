@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "description": "A network-map Bluesky client — Mastotron reborn",
+  "description": "A network-map Bluesky client \u2014 Mastotron reborn",
   "scripts": {
     "dev": "vite",
     "build": "svelte-check --tsconfig ./tsconfig.json && vite build",
@@ -13,7 +13,9 @@
     "test:watch": "vitest",
     "e2e": "playwright test",
     "gen:metadata": "node scripts/gen-client-metadata.mjs",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "fetch:embed-model": "bash scripts/fetch-embed-model.sh",
+    "prebuild": "bash scripts/fetch-embed-model.sh"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
@@ -33,6 +35,7 @@
   "dependencies": {
     "@atproto/api": "^0.13.35",
     "@atproto/oauth-client-browser": "^0.4.8",
+    "@huggingface/transformers": "^4.2.0",
     "d3-force": "^3.0.0",
     "idb": "^8.0.3",
     "idb-keyval": "^6.3.0"

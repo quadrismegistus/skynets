@@ -12,3 +12,6 @@ public/client-metadata.json
 /playwright-report
 /blob-report
 /.playwright
+
+# Fetched at build time by scripts/fetch-embed-model.sh (~23MB of weights)
+public/models/
