@@ -69,13 +69,16 @@ class DigestConsent {
   pending = $state(false)
   /** Where the blocked request was headed, so the dialog can say so. */
   destination = $state<Destination>('server')
+  /** Dismissed without answering this session — see dismiss(). Never persisted:
+   * "I didn't answer" should not survive a reload the way a real answer does. */
+  #deferred = false
 
   /** True when work with these settings may proceed. Raises the dialog if not. */
   allows(provider: string, ollamaUrl?: string): boolean {
     const dest = destinationOf(provider, ollamaUrl)
     if (dest === 'local') return true // nothing leaves; nothing to consent to
     if (this.state === 'granted') return true
-    if (this.state === 'unasked') {
+    if (this.state === 'unasked' && !this.#deferred) {
       this.destination = dest
       this.pending = true
     }
@@ -100,6 +103,7 @@ class DigestConsent {
   ask(provider: string, ollamaUrl?: string) {
     const dest = destinationOf(provider, ollamaUrl)
     if (dest === 'local') return
+    this.#deferred = false
     this.destination = dest
     this.pending = true
   }
@@ -110,9 +114,28 @@ class DigestConsent {
     return this.state === 'declined' && destinationOf(provider, ollamaUrl) !== 'local'
   }
 
+  /**
+   * Close the dialog without answering — a backdrop click or Escape.
+   *
+   * Deliberately NOT the same as declining. Dismissing used to record a
+   * permanent "no", so one stray click outside the modal disabled the digest
+   * forever with no visible trace. A misclick shouldn't be able to make a
+   * lasting privacy decision; an explicit "No thanks" is the only thing that
+   * should stick.
+   *
+   * Suppressed for the rest of the session (in memory, never persisted) so it
+   * doesn't immediately reappear on the next live-poll tick, then asked again
+   * next time — which is the honest reading of "I didn't answer".
+   */
+  dismiss() {
+    this.pending = false
+    this.#deferred = true
+  }
+
   grant() {
     this.state = 'granted'
     this.pending = false
+    this.#deferred = false
     this.#save()
   }
 
@@ -126,6 +149,7 @@ class DigestConsent {
   reset() {
     this.state = 'unasked'
     this.pending = false
+    this.#deferred = false
     this.#save()
   }
 

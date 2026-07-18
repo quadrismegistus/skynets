@@ -3,11 +3,18 @@
 
   const base = import.meta.env.BASE_URL ?? '/'
   const cloud = $derived(digestConsent.destination === 'cloud')
+
+  // Escape closes without answering, like the backdrop — never a silent decline.
+  function onKey(e: KeyboardEvent) {
+    if (e.key === 'Escape' && digestConsent.pending) digestConsent.dismiss()
+  }
 </script>
+
+<svelte:window onkeydown={onKey} />
 
 {#if digestConsent.pending}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="backdrop" onclick={() => digestConsent.decline()}>
+  <div class="backdrop" onclick={() => digestConsent.dismiss()}>
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div
       class="modal"

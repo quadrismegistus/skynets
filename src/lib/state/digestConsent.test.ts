@@ -91,6 +91,30 @@ describe('digestConsent gate', () => {
     expect(digestConsent.pending).toBe(false)
   })
 
+  // A backdrop click or Escape must not make a lasting privacy decision.
+  it('dismissing is not declining', () => {
+    digestConsent.allows('ollama', 'https://mothtrap.blue/ollama')
+    expect(digestConsent.pending).toBe(true)
+    digestConsent.dismiss()
+    expect(digestConsent.pending).toBe(false)
+    expect(digestConsent.state).toBe('unasked') // NOT 'declined'
+    // …and it isn't reported as a block, so the panel doesn't claim the user
+    // turned it off when they merely clicked past the dialog.
+    expect(digestConsent.blocks('ollama', 'https://mothtrap.blue/ollama')).toBe(false)
+  })
+
+  it('a dismissed dialog stays down for the session, not forever', () => {
+    digestConsent.allows('ollama', 'https://mothtrap.blue/ollama')
+    digestConsent.dismiss()
+    // The live poll keeps calling allows(); it must not pop back up each tick.
+    digestConsent.allows('ollama', 'https://mothtrap.blue/ollama')
+    digestConsent.allows('ollama', 'https://mothtrap.blue/ollama')
+    expect(digestConsent.pending).toBe(false)
+    // But an explicit request overrides the deferral — the user asked for it.
+    digestConsent.ask('ollama', 'https://mothtrap.blue/ollama')
+    expect(digestConsent.pending).toBe(true)
+  })
+
   it('require() throws rather than letting a send through', () => {
     expect(() => digestConsent.require('ollama', 'https://mothtrap.blue/ollama')).toThrow(
       /permission/i,
