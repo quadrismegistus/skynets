@@ -66,7 +66,17 @@ function load(): Partial<Persisted> {
  */
 class DigestState {
   apiKey = $state('')
-  provider = $state<Provider>('anthropic')
+  // Anthropic retired for now — a client for a social network shouldn't be
+  // quietly routing people's posts through a commercial AI company. The
+  // transport in api/llm.ts is left intact; see the note at the persistence
+  // restore below for what re-enabling takes. If a cloud option ever comes
+  // back it should be a GENERIC OpenAI-compatible endpoint (base URL + model +
+  // key), not a named vendor — Ollama, LM Studio, llama.cpp and vLLM all speak
+  // it, so one field covers every case and Mothtrap endorses nobody. Note that
+  // the compat layer gives up `think: false` and `options.num_ctx`, both of
+  // which PLAN §7 measured as load-bearing, so it can't simply replace the
+  // native Ollama path.
+  provider = $state<Provider>('ollama')
   model = $state(DEFAULT_MODEL)
   ollamaModel = $state(DEFAULT_OLLAMA_MODEL)
   /** Models installed in the local Ollama (smallest first), fetched from
@@ -125,7 +135,10 @@ class DigestState {
 
   constructor() {
     const p = load()
-    if (p.provider === 'anthropic' || p.provider === 'ollama') this.provider = p.provider
+    // Anthropic retired — ignore a persisted 'anthropic' so nobody is left
+    // stuck on a provider the UI no longer offers. Re-enable by restoring this
+    // line, the deploy-config line below, and the panel's provider toggle.
+    if (p.provider === 'ollama') this.provider = p.provider
     if (typeof p.model === 'string') this.model = p.model
     if (typeof p.ollamaModel === 'string') this.ollamaModel = p.ollamaModel
     if (typeof p.ollamaModelPinned === 'boolean') this.ollamaModelPinned = p.ollamaModelPinned
@@ -175,8 +188,10 @@ class DigestState {
         $effect(() => {
           const c = deploy.config
           if (!c) return
-          if (c.provider === 'anthropic' || c.provider === 'ollama') this.provider = c.provider
-          if (c.hideOllama && this.provider === 'ollama') this.provider = 'anthropic'
+          // Anthropic retired: a deployment asking for it is ignored rather
+          // than honoured, and hideOllama no longer has a provider to fall back
+          // to — such a deploy simply gets no digest.
+          if (c.provider === 'ollama') this.provider = c.provider
           if (typeof c.ollamaUrl === 'string') this.ollamaUrl = c.ollamaUrl
           if (typeof c.model === 'string') {
             if (this.provider === 'ollama') {

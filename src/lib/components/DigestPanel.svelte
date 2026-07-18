@@ -122,14 +122,11 @@
     {#if deploy.locked}
       <p class="note">This instance runs a shared model — nothing to configure; the digest runs by itself.</p>
     {:else if !deploy.hideOllama}
-      <div class="seg">
-        <button class:on={digest.provider === 'anthropic'} onclick={() => (digest.provider = 'anthropic')}>
-          Anthropic
-        </button>
-        <button class:on={digest.provider === 'ollama'} onclick={() => (digest.provider = 'ollama')}>
-          Ollama (local)
-        </button>
-      </div>
+      <!-- Provider toggle retired with the Anthropic option: Ollama is the only
+           one left, so a one-button segmented control would be noise. Restore
+           this block (and the two lines in digest.svelte.ts) to bring a choice
+           back — ideally as a generic OpenAI-compatible endpoint, not a vendor. -->
+      <p class="note">The digest runs on a local model via Ollama.</p>
     {/if}
 
     <div class="row window">
@@ -450,6 +447,9 @@
     font-size: 0.72rem;
     font-style: italic;
   }
+  /* Parked with the provider toggle above — restore together. Kept rather than
+     deleted so bringing a provider choice back is one edit, not a re-style. */
+  /*
   .seg {
     display: flex;
     border: 1px solid var(--border);
@@ -470,6 +470,7 @@
     background: var(--accent);
     color: #fff;
   }
+  */
   .go {
     flex: none;
     background: var(--accent);
