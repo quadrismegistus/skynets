@@ -75,7 +75,11 @@
     background: rgba(0, 0, 0, 0.55);
     display: grid;
     place-items: center;
-    z-index: 1000;
+    /* Above the other modals (1000), because this one is raised BY them: the
+       Settings view's "Turn on" summons it, and Settings mounts later in
+       App.svelte, so at equal z-index Settings painted over the dialog it had
+       just opened — leaving the way back visible but unclickable. */
+    z-index: 1100;
     padding: 1rem;
   }
   .modal {

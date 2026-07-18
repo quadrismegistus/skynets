@@ -10,6 +10,7 @@ import { initOAuth, revokeOAuth, signInOAuth } from '../api/oauth'
 import { isDemo } from '../api/demo'
 import { read } from './read.svelte'
 import { moderation } from './moderation.svelte'
+import { disposeLocalEmbed } from '../api/localEmbed'
 
 type Status = 'loading' | 'logged-out' | 'logged-in'
 type Method = 'oauth' | 'app-password'
@@ -128,6 +129,9 @@ class SessionState {
     setActiveAgent(null)
     read.reset()
     moderation.reset()
+    // The embedding worker holds ~100MB of loaded weights; signing out should
+    // not leave another account's session sharing them.
+    disposeLocalEmbed()
     this.markLoggedOut()
   }
 }

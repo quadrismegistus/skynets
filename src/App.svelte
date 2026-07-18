@@ -7,9 +7,11 @@
   import Compose from './lib/components/Compose.svelte'
   import Help from './lib/components/Help.svelte'
   import ReportDialog from './lib/components/ReportDialog.svelte'
+  import Settings from './lib/components/Settings.svelte'
   import DigestConsent from './lib/components/DigestConsent.svelte'
 
   let showHelp = $state(false)
+  let showSettings = $state(false)
 
   session.init()
 
@@ -43,6 +45,7 @@
       </div>
       <div class="who">
         <button class="help" title="How Mothtrap works" aria-label="Help" onclick={() => (showHelp = true)}>?</button>
+        <button class="settings-btn" title="Settings" aria-label="Settings" onclick={() => (showSettings = true)}>⚙</button>
         <button class="compose-btn" onclick={() => compose.openNew()}
           ><span class="wide-only">New post</span><span class="narrow-only">Post</span></button
         >
@@ -65,6 +68,9 @@
   <DigestConsent />
   {#if showHelp}
     <Help onclose={() => (showHelp = false)} />
+  {/if}
+  {#if showSettings}
+    <Settings onclose={() => (showSettings = false)} />
   {/if}
 {/if}
 
@@ -138,7 +144,8 @@
     font-size: 0.9rem;
     color: var(--text-dim);
   }
-  .who .help {
+  .who .help,
+  .who .settings-btn {
     width: 30px;
     height: 30px;
     padding: 0;

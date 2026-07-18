@@ -645,3 +645,40 @@ test('publishes reachable contact and privacy pages, linked from Help', async ({
   expect(privacy).toContain('digest')
   expect(privacy).toMatch(/handles/i)
 })
+
+test('settings view exposes data controls and the consent toggle', async ({ page }) => {
+  // A remote endpoint is what consent exists for; the default localhost one has
+  // nothing to gate, and demo mode short-circuits before the network anyway.
+  await page.addInitScript(() =>
+    localStorage.setItem('skynets.llm', JSON.stringify({ ollamaUrl: 'https://mothtrap.blue/ollama' })),
+  )
+  await graphReady(page)
+  await page.locator('button[aria-label="Settings"]').click()
+  const dlg = page.locator('[role="dialog"][aria-label="Settings"]')
+  await expect(dlg).toBeVisible()
+
+  // Consent is answerable BOTH ways from here — a grant used to be permanent
+  // because reset() was never wired to any UI.
+  await expect(dlg.locator('.state').first()).toHaveText(/Not yet answered/)
+  await dlg.getByRole('button', { name: 'Turn on' }).click()
+  const consent = page.locator('[role="dialog"][aria-label="Topic grouping"]')
+  await expect(consent).toBeVisible() // must sit ABOVE settings, which raised it
+  await consent.getByRole('button', { name: 'Group my feed' }).click()
+  await expect(dlg.locator('.state').first()).toHaveText(/^On$/)
+  await dlg.getByRole('button', { name: 'Turn off' }).click()
+  await expect(dlg.locator('.state').first()).toHaveText(/declined/)
+
+  // Deleting stored data is two-step, never one click.
+  await expect(dlg.getByRole('button', { name: 'Yes, delete everything' })).toHaveCount(0)
+  await dlg.getByRole('button', { name: 'Delete stored data' }).click()
+  await expect(dlg.getByRole('button', { name: 'Yes, delete everything' })).toBeVisible()
+  await dlg.getByRole('button', { name: 'Cancel' }).click()
+  await expect(dlg.getByRole('button', { name: 'Yes, delete everything' })).toHaveCount(0)
+
+  await expect(dlg.getByRole('link', { name: 'Privacy', exact: true })).toHaveAttribute(
+    'href',
+    /privacy\.html$/,
+  )
+  await page.keyboard.press('Escape')
+  await expect(dlg).toHaveCount(0)
+})

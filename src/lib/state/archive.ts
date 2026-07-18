@@ -1,4 +1,4 @@
-import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
+import { deleteDB, openDB, type DBSchema, type IDBPDatabase } from 'idb'
 import { AppBskyFeedPost } from '@atproto/api'
 import type { FeedItem } from '../api/timeline'
 import { reposterProfile } from '../api/post'
@@ -197,6 +197,28 @@ export class Archive {
    * spend their one-shot markers against a closed DB (reads return [] then). */
   get ready(): boolean {
     return this.#db !== undefined
+  }
+
+  /**
+   * Delete everything this device has stored for the current account, and leave
+   * the archive closed.
+   *
+   * The privacy page tells people that clearing site storage erases the archive
+   * permanently and that there is no server-side copy — so the app should be
+   * able to do it directly, rather than making them dig through browser
+   * settings to exercise a control we advertise.
+   *
+   * The in-memory dedup caches go too: keeping them would make a re-opened
+   * archive silently skip re-recording posts it no longer holds.
+   */
+  async wipe(): Promise<void> {
+    const name = `skynets-archive-${this.#did}`
+    this.#db?.close()
+    this.#db = undefined
+    this.#seenAppearance.clear()
+    this.#lastCounts.clear()
+    this.#lastProfile.clear()
+    await deleteDB(name)
   }
 
   /** Upsert posts, append new appearances, and sample counts on change.
