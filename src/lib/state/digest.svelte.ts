@@ -1,4 +1,5 @@
 import {
+  cleanLabel,
   DEFAULT_MODEL,
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_OLLAMA_URL,
@@ -324,7 +325,12 @@ class DigestState {
         const rows = await archive.getLabels()
         const stored = new Set(rows.map((r) => r.uri))
         for (const r of rows) {
-          if (r.model === modelKey && !this.#labels.has(r.uri)) this.#labels.set(r.uri, r.label)
+          // Re-clean on the way in: casing rules can change after a label was
+          // stored, and re-running the cleaner is free where re-asking the
+          // model for every post in the archive would not be.
+          if (r.model === modelKey && !this.#labels.has(r.uri)) {
+            this.#labels.set(r.uri, cleanLabel(r.label))
+          }
         }
         // Backfill: labels computed by passes that ran before the archive
         // opened exist only in memory — persist them now.

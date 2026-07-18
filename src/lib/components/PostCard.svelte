@@ -42,6 +42,10 @@
     onleave: () => void
     /** Touch: explicit close (hover-out doesn't exist there). */
     onclose?: () => void
+    /** Show that close button. Passed from the same JS check that decides the
+     * tap behaviour, so the two can't disagree — a CSS-only @media rule left
+     * the ✕ hidden on anything the media query and matchMedia read differently. */
+    showClose?: boolean
     /** Contiguous self-reply run this card fronts (item = run[0]): the
      * continuation posts render as a scrollable sequence below the head. */
     run?: FeedItem[]
@@ -60,6 +64,7 @@
     onkeep,
     onleave,
     onclose,
+    showClose = false,
     run,
   }: Props = $props()
 
@@ -213,7 +218,7 @@
   onmouseenter={onkeep}
   onmouseleave={onleave}
 >
-  {#if onclose}
+  {#if onclose && showClose}
     <button class="card-close" aria-label="Close" onclick={onclose}>✕</button>
   {/if}
   {#if rt}
@@ -545,7 +550,6 @@
     z-index: 100;
     width: 360px;
     max-width: 84vw;
-    --card-close: none;
     max-height: 72vh;
     overflow-y: auto;
     overflow-x: hidden;
@@ -997,7 +1001,7 @@
 
   /* Touch: a real close button (hover-out doesn't exist). 44px Apple floor. */
   .card-close {
-    display: var(--card-close);
+    display: grid;
     position: sticky;
     top: 0;
     float: right;
@@ -1012,11 +1016,6 @@
     color: var(--text-dim);
     font-size: 1rem;
     z-index: 101;
-  }
-  @media (pointer: coarse) {
-    .card {
-      --card-close: grid;
-    }
   }
 
   /* Continuation posts of a self-reply run: a compact scrollable sequence.

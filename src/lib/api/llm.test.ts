@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { summarizeFeed, exemplars, contextFor, extractJson, labelFeed, rollFeed, type Conversation } from './llm'
+import { summarizeFeed, exemplars, contextFor, extractJson, labelFeed, rollFeed, cleanLabel, type Conversation } from './llm'
 import { mkPost } from '../testing'
 import { digestConsent } from '../state/digestConsent.svelte'
 
@@ -34,7 +34,7 @@ describe('labelFeed', () => {
       [reply.post.uri, reply],
     ])
     const out = await labelFeed([reply], { provider: 'ollama', model: 'm', ollamaUrl: 'http://x', postByUri })
-    expect(out.get('at://r/1')).toBe('Gendered cooking') // cleaned + sentence-cased
+    expect(out.get('at://r/1')).toBe('Gendered Cooking') // cleaned + title-cased
     const content = JSON.parse(fetchMock.mock.calls[0][1].body as string).messages[1].content as string
     expect(content).toContain('[replying to: "')
     expect(content).not.toContain('@') // no handles: labelling is content-only
@@ -374,5 +374,40 @@ describe('consent gate is actually wired into every send path', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ollamaText('{"clusters":[]}')))
     await expect(summarizeFeed([item], opts)).resolves.toBeDefined()
     vi.restoreAllMocks()
+  })
+})
+
+
+describe('label casing', () => {
+  it('stops labels shouting', () => {
+    // The 1.5b picks shouting up from the posts it reads.
+    expect(cleanLabel('STUPIDITY')).toBe('Stupidity')
+    expect(cleanLabel('BREAKING')).toBe('Breaking')
+    expect(cleanLabel('WATER INFRASTRUCTURE DESTRUCTION')).toBe('Water Infrastructure Destruction')
+  })
+
+  it('keeps genuine acronyms, which is the whole difficulty', () => {
+    // ICE is a real topic in this feed and would be wrong lowercased; length
+    // separates an acronym from shouting better than any word list could.
+    expect(cleanLabel('ICE')).toBe('ICE')
+    expect(cleanLabel('ICE raids')).toBe('ICE Raids')
+    expect(cleanLabel('NASA budget')).toBe('NASA Budget')
+    expect(cleanLabel('EU trade deal')).toBe('EU Trade Deal')
+  })
+
+  it('leaves stylised names alone', () => {
+    expect(cleanLabel('iOS release')).toBe('iOS Release')
+    expect(cleanLabel('YouTube policy')).toBe('YouTube Policy')
+  })
+
+  it('title-cases, keeping small words down except first', () => {
+    expect(cleanLabel('war in iran')).toBe('War in Iran')
+    expect(cleanLabel('the future of work')).toBe('The Future of Work')
+    expect(cleanLabel('BREAKING: war in iran')).toBe('Breaking: War in Iran')
+  })
+
+  it('still does the rest of the cleaning', () => {
+    expect(cleanLabel('Label: climate crisis')).toBe('Climate Crisis')
+    expect(cleanLabel('"A_Title_Here"')).toBe('A Title Here')
   })
 })

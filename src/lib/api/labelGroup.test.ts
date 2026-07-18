@@ -147,33 +147,33 @@ describe('groupByEmbedding', () => {
 
 describe('cleanLabel', () => {
   it('strips quotes, prefixes, and trailing punctuation', () => {
-    expect(cleanLabel('"Trump tariffs"')).toBe('Trump tariffs')
-    expect(cleanLabel('Label: ICE raids')).toBe('ICE raids')
+    expect(cleanLabel('"Trump tariffs"')).toBe('Trump Tariffs')
+    expect(cleanLabel('Label: ICE raids')).toBe('ICE Raids')
     expect(cleanLabel('Topic: climate.')).toBe('Climate')
-    expect(cleanLabel('**bold topic**')).toBe('Bold topic')
+    expect(cleanLabel('**bold topic**')).toBe('Bold Topic')
   })
   it('turns snake_case into spaces', () => {
     expect(cleanLabel('A_Title_Here')).toBe('A Title Here')
     expect(cleanLabel('Fire_Crisis_Update_')).toBe('Fire Crisis Update')
   })
   it('strips trailing punctuation but keeps ? and !', () => {
-    expect(cleanLabel('Something, something,')).toBe('Something, something')
-    expect(cleanLabel('Crystal Palace, Iguanadon, Dining Experience,')).toBe(
-      'Crystal Palace, Iguanadon, Dining Experience',
-    )
+    expect(cleanLabel('Something, something,')).toBe('Something, Something')
     expect(cleanLabel('Education Awards —')).toBe('Education Awards')
-    expect(cleanLabel('Ban vs ban company;')).toBe('Ban vs ban company')
-    expect(cleanLabel('Why now?')).toBe('Why now?')
+    expect(cleanLabel('Why now?')).toBe('Why Now?')
     expect(cleanLabel('Scandal!')).toBe('Scandal!')
   })
   it('takes the first non-empty line and caps length', () => {
-    expect(cleanLabel('\n\nFirst topic\nSecond line')).toBe('First topic')
-    expect(cleanLabel('one two three four five six seven')).toBe('One two three four five')
+    expect(cleanLabel('\n\nFirst topic\nSecond line')).toBe('First Topic')
+    expect(cleanLabel('one two three four five six seven')).toBe('One Two Three Four Five')
   })
-  it('sentence-cases the first letter but leaves the rest (acronyms/proper nouns)', () => {
+  it('title-cases, keeping acronyms and stylised names as they are', () => {
+    // Sentence case used to leave everything after the first word alone, so a
+    // shouting label stayed shouting. Title case normalises the words that are
+    // ordinary and leaves the ones that mean their capitals.
     expect(cleanLabel('phonology')).toBe('Phonology')
-    expect(cleanLabel('ICE raids')).toBe('ICE raids')
-    expect(cleanLabel('MF DOOM demo')).toBe('MF DOOM demo')
-    expect(cleanLabel('iOS 19')).toBe('iOS 19') // mixed-case first word left as-is
+    expect(cleanLabel('ICE raids')).toBe('ICE Raids')
+    expect(cleanLabel('MF DOOM demo')).toBe('MF DOOM Demo')
+    expect(cleanLabel('iOS 19')).toBe('iOS 19')
+    expect(cleanLabel('ban vs ban company')).toBe('Ban vs Ban Company')
   })
 })

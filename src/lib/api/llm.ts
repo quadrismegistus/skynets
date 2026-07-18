@@ -566,11 +566,46 @@ export function cleanLabel(raw: string): string {
   s = s.split(' ').slice(0, 5).join(' ').slice(0, 48)
   // Trailing punctuation ("Something, something,") — but keep ? and !, they mean something.
   s = s.replace(/[\s,;:.\-\u2013\u2014]+$/g, '')
-  // Consistent capitalization across a weak model's varied casing: sentence-case
-  // ONLY when the first word is all-lowercase, so ICE, MF DOOM, iOS keep theirs.
-  const first = s.split(' ')[0]
-  if (first && first === first.toLowerCase()) s = s.charAt(0).toUpperCase() + s.slice(1)
+  return titleish(s)
+}
+
+/** Words left lowercase inside a title, but never as the first word. */
+const SMALL_WORDS = new Set([
+  'a', 'an', 'the', 'of', 'in', 'on', 'at', 'to', 'for', 'and', 'or', 'but',
+  'with', 'by', 'from', 'as', 'is', 'vs', 'via', 'into', 'over',
+])
+
+/**
+ * Longest all-caps run treated as an acronym rather than shouting.
+ *
+ * This is the whole difficulty. A weak model happily returns STUPIDITY and
+ * BREAKING — shouting picked up from the post it read — but ICE, NASA, NHS and
+ * EU are genuine names that would be wrong lowercased, and ICE in particular is
+ * a real topic in this feed. Length separates them better than any word list:
+ * acronyms are short, shouting rarely is. UNESCO and COVID lose their caps at
+ * this threshold, which UK style guides do anyway (Unesco, Covid).
+ */
+const ACRONYM_MAX = 4
+
+/**
+ * Title-ish casing: capitalise each significant word, keep genuine acronyms and
+ * stylised names (iOS, MacBook) exactly as they are, and stop labels shouting.
+ */
+export function titleish(s: string): string {
   return s
+    .split(' ')
+    .map((w, i) => {
+      const letters = w.replace(/[^A-Za-z]/g, '')
+      if (!letters) return w
+      // Internal capitals mean the writer meant it: iOS, MacBook, YouTube.
+      if (/[a-z]/.test(w) && /[A-Z]/.test(w.slice(1))) return w
+      // A short all-caps run is an acronym; a long one is shouting.
+      if (letters === letters.toUpperCase() && letters.length <= ACRONYM_MAX) return w
+      const lower = w.toLowerCase()
+      if (i > 0 && SMALL_WORDS.has(lower.replace(/[^a-z]/g, ''))) return lower
+      return lower.charAt(0).toUpperCase() + lower.slice(1)
+    })
+    .join(' ')
 }
 
 /** Offline/demo label: the first couple of content words, Title-cased. */
