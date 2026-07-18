@@ -144,6 +144,60 @@ test('non-followed authors are marked (dashed) and followed are not', async ({ p
   expect(await page.locator('.wrap:not(.unfollowed)').count()).toBeGreaterThan(0)
 })
 
+test('a labeled post is covered on both node and card until revealed', async ({ page }) => {
+  await graphReady(page)
+  // The demo carries one !warn-labeled post. The node only signals "covered";
+  // the card names the reason and is the only place offering a way in.
+  const covered = page.locator('button.node.covered')
+  await expect(covered).toHaveCount(1)
+  await expect(page.locator('button.node.covered .cover-mark')).toBeVisible()
+
+  await covered.hover()
+  await expect(page.locator('.card .cover-why')).toHaveText(/Content warning/)
+  // The head and actions stay readable under a cover — you must be able to see
+  // whose post it is, and act on it, exactly when it's covered.
+  await expect(page.locator('.card .name')).toBeVisible()
+  await expect(page.locator('.card .actions')).toBeVisible()
+  await expect(page.locator('.card .text')).toHaveCount(0)
+
+  await page.locator('.card .cover-show').click()
+  await expect(page.locator('.card .text')).toBeVisible()
+  await expect(page.locator('.card .cover-why')).toHaveCount(0)
+  await expect(page.locator('button.node.covered')).toHaveCount(0) // node uncovers too
+})
+
+test('the ⋯ menu offers report, mute and block; blocking hides the author', async ({ page }) => {
+  await graphReady(page)
+  await page.locator('.wrap').first().click() // pin so the card survives
+  await page.locator('.card .act.more').first().click()
+  const menu = page.locator('.card .menu')
+  await expect(menu.getByText('Report post')).toBeVisible()
+  await expect(menu.getByText(/^Mute @/)).toBeVisible()
+  await expect(menu.getByText(/^Block @/)).toBeVisible()
+
+  // Report opens a dialog that outlives the card, and sending needs a reason.
+  await menu.getByText('Report post').click()
+  const dialog = page.locator('[role="dialog"][aria-label="Report"]')
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Send report' })).toBeDisabled()
+  await dialog.getByText('Spam', { exact: true }).click()
+  await expect(dialog.getByRole('button', { name: 'Send report' })).toBeEnabled()
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+})
+
+test('blocking an author removes their posts from the graph at once', async ({ page }) => {
+  await graphReady(page)
+  const before = await page.locator('button.node').count()
+  await page.locator('.wrap').first().click()
+  const handle = await page.locator('.card .handle').first().innerText()
+  await page.locator('.card .act.more').first().click()
+  await page.locator('.card .menu').getByText(/^Block @/).click()
+  // No refetch: the optimistic overlay has to suppress the author immediately.
+  await expect(page.locator(`.card .handle:has-text("${handle.trim()}")`)).toHaveCount(0)
+  expect(await page.locator('button.node').count()).toBeLessThanOrEqual(before)
+})
+
 test('single-click pins a node and keeps its card shown', async ({ page }) => {
   await graphReady(page)
   await page.locator('.wrap').first().click()
@@ -430,7 +484,11 @@ test('per-post label mode tags nodes and groups by topic', async ({ page }) => {
   const captions = await page.locator('.node-caption').count()
   const pills = await page.locator('.topic-node').count()
   expect(captions + pills).toBeGreaterThan(2)
-  expect(await page.locator('.convos > li').count()).toBeGreaterThan(0)
+  // Captions appear WHILE labeling (live token-merge grouping), but the panel's
+  // list only renders once loading finishes — so this has to wait rather than
+  // sample a count. It was racing all along; the Ollama default merely exposed
+  // it, labelFeed running at concurrency 2 where Anthropic ran at 6.
+  await expect(page.locator('.convos > li').first()).toBeVisible({ timeout: 10000 })
 })
 
 test('merge slider re-groups labels without re-labeling', async ({ page }) => {
@@ -564,4 +622,26 @@ test('is installable as a PWA (manifest + icons wired up)', async ({ page }) => 
   const icon = await page.request.get('/icon-512.png')
   expect(icon.ok()).toBeTruthy()
   expect(icon.headers()['content-type']).toContain('image/png')
+})
+
+test('publishes reachable contact and privacy pages, linked from Help', async ({ page }) => {
+  await page.goto(DEMO)
+  await page.locator('.help').click()
+  const legal = page.locator('.modal .legal')
+  await expect(legal.getByRole('link', { name: 'Contact' })).toHaveAttribute('href', /contact\.html$/)
+  await expect(legal.getByRole('link', { name: 'Privacy' })).toHaveAttribute('href', /privacy\.html$/)
+
+  // Guideline 1.2 wants contact info a person can actually reach, so the page
+  // has to be served — not just linked — and carry a real address.
+  for (const path of ['/contact.html', '/privacy.html']) {
+    const res = await page.request.get(path)
+    expect(res.ok(), `${path} should be served`).toBeTruthy()
+    expect(res.headers()['content-type']).toContain('text/html')
+    expect(await res.text()).toContain('contact@mothtrap.blue')
+  }
+
+  // The privacy page must keep disclosing the one thing that leaves the device.
+  const privacy = await (await page.request.get('/privacy.html')).text()
+  expect(privacy).toContain('digest')
+  expect(privacy).toMatch(/handles/i)
 })

@@ -502,10 +502,101 @@ describe('treeTargets', () => {
     expect(byId.get('r1')!.tx).toBeLessThan(byId.get('r2')!.tx) // r1 (older) on the left
   })
 
-  it('places a lone node at its own semantic anchor', () => {
+  it('centres a lone conversation rather than stranding it at its root', () => {
+    // There is nothing to rank a single conversation against, so it goes to the
+    // middle. It used to keep its root's own coordinates — which is by
+    // construction the oldest, quietest post — so a feed showing one thread
+    // parked it in a corner, and it then leapt the full diagonal as soon as a
+    // second conversation arrived. Continuous beats "accurate" for n=1.
     const [t] = treeTargets([mk('solo', { x: 0.25, y: 0.75 })], box)
-    expect(t.tx).toBeCloseTo(250)
-    expect(t.ty).toBeCloseTo(750)
+    expect(t.tx).toBeCloseTo(500)
+    expect(t.ty).toBeCloseTo(500)
+  })
+
+  it('does not strand a topic pill in 1970 when it has no reparented members', () => {
+    // Mid-thread members keep their real parent, so a pill can pass the
+    // 2-member gate and still have no children of its own. Its timestamp is
+    // then its whole subtree, and a 0 there ranked it oldest-on-canvas.
+    const posts = [
+      mk('op', { timestamp: 1000 }),
+      mk('r1', { timestamp: 2000, parent: 'op' }),
+      mk('r2', { timestamp: 3000, parent: 'op' }),
+      mk('other', { timestamp: 4000 }),
+    ]
+    // r1/r2 are mid-thread, so neither reparents — the pill would have no
+    // children at all. It is skipped rather than becoming a stranded root.
+    const combined = withTopicPills(posts, [{ sid: 'topic:x', members: ['r1', 'r2'] }])
+    expect(combined.find((c) => c.uri === 'topic:x')).toBeUndefined()
+
+    // A pill over genuine thread ROOTS still becomes a tree, and carries its
+    // members' recency rather than the epoch.
+    const roots = [mk('a', { timestamp: 1000 }), mk('b', { timestamp: 5000 }), mk('c', { timestamp: 9000 })]
+    const withPill = withTopicPills(roots, [{ sid: 'topic:y', members: ['a', 'b'] }])
+    const pill = withPill.find((x) => x.uri === 'topic:y')!
+    expect(pill.timestamp).toBe(5000) // newest member, not 0
+    const t = treeTargets(withPill, box)
+    const byId = new Map(t.map((x) => [x.id, x]))
+    expect(byId.get('topic:y')!.tx).toBeGreaterThan(0) // not pinned to 1970's corner
+  })
+
+  // A root is always the OLDEST post in its thread. Anchoring on it hauled every
+  // conversation back to its opening post's time, so threads piled up on the left
+  // while standalone posts kept their real recency on the right — two placement
+  // rules, two clusters. These pin the single-rule behaviour.
+  it('places a thread by its NEWEST activity, not by when it started', () => {
+    const t = treeTargets(
+      [
+        // An old thread that is still going: its own x-rank says far left.
+        mk('a0', { timestamp: 1, x: 0 }),
+        mk('a1', { timestamp: 100, parent: 'a0', x: 0 }),
+        // A standalone post, newer than a0 but staler than the live reply.
+        mk('b0', { timestamp: 50, x: 1 }),
+      ],
+      box,
+    )
+    const byId = new Map(t.map((x) => [x.id, x]))
+    // Old behaviour: a0 used its own x=0 and sat left of b0 (x=1). Now the live
+    // conversation wins the right-hand side.
+    expect(byId.get('a0')!.tx).toBeGreaterThan(byId.get('b0')!.tx)
+    // …and the reply still hangs directly under its parent — tree undeformed.
+    expect(byId.get('a1')!.tx).toBeCloseTo(byId.get('a0')!.tx)
+    expect(byId.get('a1')!.ty - byId.get('a0')!.ty).toBeCloseTo(Y_UNIT)
+  })
+
+  it('places a thread by its LOUDEST post, not by how quiet the opener was', () => {
+    const t = treeTargets(
+      [
+        mk('a0', { timestamp: 1, y: 1 }), // quietest post on the canvas…
+        mk('a1', { timestamp: 2, parent: 'a0', y: 0 }), // …but it blew up
+        mk('b0', { timestamp: 3, y: 0.5 }),
+      ],
+      box,
+    )
+    const byId = new Map(t.map((x) => [x.id, x]))
+    expect(byId.get('a0')!.ty).toBeLessThan(byId.get('b0')!.ty) // louder ⇒ higher
+  })
+
+  it('spreads conversations across the canvas, not the posts within them', () => {
+    // Three conversations of very different sizes. Anchors should land at the
+    // rank extremes and midpoint regardless of how many posts each contains.
+    const t = treeTargets(
+      [
+        mk('a0', { timestamp: 1 }),
+        mk('a1', { timestamp: 2, parent: 'a0' }),
+        mk('a2', { timestamp: 3, parent: 'a0' }),
+        mk('b0', { timestamp: 10 }),
+        mk('c0', { timestamp: 20 }),
+      ],
+      box,
+    )
+    const byId = new Map(t.map((x) => [x.id, x]))
+    expect(byId.get('b0')!.tx).toBeCloseTo(500) // middle conversation
+    expect(byId.get('c0')!.tx).toBeCloseTo(1000) // newest, hard right
+    // The oldest conversation wants the far left, but it has two replies, so
+    // subtree-fitting nudges its anchor right by exactly half a sibling slot —
+    // putting its LEFTMOST reply on the edge rather than off it.
+    expect(byId.get('a1')!.tx).toBeCloseTo(0)
+    expect(byId.get('a0')!.tx).toBeLessThan(byId.get('b0')!.tx)
   })
 })
 

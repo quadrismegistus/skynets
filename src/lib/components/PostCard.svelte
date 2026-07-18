@@ -20,6 +20,8 @@
   import { profiles } from '../state/profiles.svelte'
   import { session } from '../state/session.svelte'
   import { settings } from '../state/settings.svelte'
+  import { moderation } from '../state/moderation.svelte'
+  import { report } from '../state/report.svelte'
   import ProfileHover from './ProfileHover.svelte'
 
   interface Props {
@@ -102,6 +104,10 @@
   const images = $derived(postImages(item))
   const quoted = $derived(postQuote(item))
   const external = $derived(postExternal(item))
+  // The head (who posted) and the action row stay visible even under a cover:
+  // you need to be able to see whose post this is, and act on it, precisely
+  // when it's the kind of post you'd want to act on.
+  const cover = $derived(moderation.cover(item))
 
   function quoteUrl(q: QuotedPost): string {
     return `https://bsky.app/profile/${q.handle}/post/${q.uri.split('/').pop()}`
@@ -117,6 +123,45 @@
 
   /** Which post's repost menu is open (uri) — per-post, since a run card holds many. */
   let repostMenuFor = $state<string | null>(null)
+  /** Same, for the ⋯ (report / mute / block) menu. */
+  let moreMenuFor = $state<string | null>(null)
+  /**
+   * This menu is positioned FIXED rather than absolute, unlike the repost menu
+   * just above it. The card is `overflow: hidden auto`, and four items are tall
+   * enough to escape the card's top edge — where they're clipped away and can't
+   * be clicked at all. The repost menu only has two items so it fits, which is
+   * why the card has got away with clipping until now.
+   *
+   * Fixed also needs a flip: opening upward near the top of the screen puts the
+   * menu under the topbar, which eats the pointer events.
+   */
+  const MORE_MENU_H = 190
+  let moreMenuUp = $state(true)
+  let moreMenuPos = $state({ left: 0, top: 0 })
+  function toggleMore(e: MouseEvent, uri: string) {
+    if (moreMenuFor === uri) {
+      moreMenuFor = null
+      return
+    }
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    moreMenuUp = r.top > MORE_MENU_H + 8
+    moreMenuPos = { left: r.left + r.width / 2, top: moreMenuUp ? r.top - 6 : r.bottom + 6 }
+    moreMenuFor = uri
+  }
+  const muted = $derived(moderation.isMuted(item.post.author))
+  const blocked = $derived(moderation.isBlocked(item.post.author))
+  /** Mute and block are fire-and-forget from the card's point of view, but a
+   * failure must not pass silently — the overlay rolls back and we say so. */
+  let modError = $state<string | undefined>(undefined)
+  async function runModAction(fn: () => Promise<void>) {
+    modError = undefined
+    moreMenuFor = null
+    try {
+      await fn()
+    } catch (err) {
+      modError = err instanceof Error ? err.message : 'That didn’t work'
+    }
+  }
   let copied = $state(false)
   const isSelf = $derived(item.post.author.did === session.did)
   const following = $derived(follows.following(item.post.author))
@@ -218,7 +263,9 @@
     <div class="meta">
       <span class="name">{authorName(item)}</span>
       <span class="handle">
-        @{item.post.author.handle}{#if followsYou && !isSelf}<span class="follows-you">follows you</span>{/if}
+        <span class="handle-text">@{item.post.author.handle}</span>{#if followsYou && !isSelf}<span
+            class="follows-you">follows you</span
+          >{/if}
       </span>
     </div>
     {#if !isSelf}
@@ -239,55 +286,84 @@
       onclick={(e) => e.stopPropagation()}>{timeAgo(item)}</a
     >
   </div>
-  <div class="text">
-    {#each textSegs as seg}{#if seg.href}<a
-          href={seg.href}
-          target="_blank"
-          rel="noreferrer"
-          onclick={(e) => e.stopPropagation()}>{seg.text}</a
-        >{:else}{seg.text}{/if}{/each}
-  </div>
-
-  {#if images.length}
-    <div class="images" data-n={Math.min(images.length, 4)}>
-      {#each images.slice(0, 4) as img}
-        <img src={img.thumb} alt={img.alt} title={img.alt} />
-      {/each}
+  {#if cover.blur && !cover.media}
+    <div class="cover">
+      <span class="cover-why">⚠ {cover.reason}</span>
+      {#if cover.canReveal}
+        <button
+          class="cover-show"
+          onclick={(e) => {
+            e.stopPropagation()
+            moderation.reveal(item)
+          }}>Show anyway</button
+        >
+      {/if}
     </div>
-  {/if}
+  {:else}
+    <div class="text">
+      {#each textSegs as seg}{#if seg.href}<a
+            href={seg.href}
+            target="_blank"
+            rel="noreferrer"
+            onclick={(e) => e.stopPropagation()}>{seg.text}</a
+          >{:else}{seg.text}{/if}{/each}
+    </div>
 
-  {#if external}
-    <a
-      class="external"
-      href={external.uri}
-      target="_blank"
-      rel="noreferrer"
-      onclick={(e) => e.stopPropagation()}
-    >
-      {#if external.thumb}<img class="ext-thumb" src={external.thumb} alt="" />{/if}
-      <div class="ext-body">
-        <span class="ext-host">{hostOf(external.uri)}</span>
-        <span class="ext-title">{external.title}</span>
-        {#if external.description}<span class="ext-desc">{external.description}</span>{/if}
-      </div>
-    </a>
-  {/if}
+    {#if images.length}
+      {#if cover.media}
+        <button
+          class="cover cover-media"
+          disabled={!cover.canReveal}
+          onclick={(e) => {
+            e.stopPropagation()
+            moderation.reveal(item)
+          }}
+        >
+          <span class="cover-why">⚠ {cover.reason}</span>
+          {#if cover.canReveal}<span class="cover-hint">Show</span>{/if}
+        </button>
+      {:else}
+        <div class="images" data-n={Math.min(images.length, 4)}>
+          {#each images.slice(0, 4) as img}
+            <img src={img.thumb} alt={img.alt} title={img.alt} />
+          {/each}
+        </div>
+      {/if}
+    {/if}
 
-  {#if quoted}
-    <a
-      class="quoted"
-      href={quoteUrl(quoted)}
-      target="_blank"
-      rel="noreferrer"
-      onclick={(e) => e.stopPropagation()}
-    >
-      <div class="q-head">
-        {#if quoted.avatar}<img class="q-avatar" src={quoted.avatar} alt="" />{/if}
-        <span class="q-name">{quoted.name}</span>
-        <span class="q-handle">@{quoted.handle}</span>
-      </div>
-      <p class="q-text">{quoted.text}</p>
-    </a>
+    {#if external}
+      <a
+        class="external"
+        href={external.uri}
+        target="_blank"
+        rel="noreferrer"
+        onclick={(e) => e.stopPropagation()}
+      >
+        {#if external.thumb}<img class="ext-thumb" src={external.thumb} alt="" />{/if}
+        <div class="ext-body">
+          <span class="ext-host">{hostOf(external.uri)}</span>
+          <span class="ext-title">{external.title}</span>
+          {#if external.description}<span class="ext-desc">{external.description}</span>{/if}
+        </div>
+      </a>
+    {/if}
+
+    {#if quoted}
+      <a
+        class="quoted"
+        href={quoteUrl(quoted)}
+        target="_blank"
+        rel="noreferrer"
+        onclick={(e) => e.stopPropagation()}
+      >
+        <div class="q-head">
+          {#if quoted.avatar}<img class="q-avatar" src={quoted.avatar} alt="" />{/if}
+          <span class="q-name">{quoted.name}</span>
+          <span class="q-handle">@{quoted.handle}</span>
+        </div>
+        <p class="q-text">{quoted.text}</p>
+      </a>
+    {/if}
   {/if}
 
   <!-- Actions sit with the post they act on: the head's bar directly under the
@@ -298,6 +374,7 @@
   {#if continuation.length}
     <div class="run-more">
       {#each continuation as c (c.post.uri)}
+        {@const cc = moderation.cover(c)}
         <div class="run-post">
           <a
             class="run-time"
@@ -307,7 +384,27 @@
             title={fullDate(c)}
             onclick={(e) => e.stopPropagation()}>{timeAgo(c)}</a
           >
-          <div class="run-text">{postText(c)}</div>
+          <!-- Every post in a run needs its own check. `cover` above is computed
+               for the run HEAD only, so a run whose third post is labelled (or
+               hits a muted word) was rendering that post's full text. Mute and
+               block are uniform across a run — same author by construction — so
+               what leaked here was specifically labels, muted words and hidden
+               posts, the very things the module promises to cover. -->
+          {#if cc.blur}
+            <button
+              class="cover cover-media"
+              disabled={!cc.canReveal}
+              onclick={(e) => {
+                e.stopPropagation()
+                moderation.reveal(c)
+              }}
+            >
+              <span class="cover-why">⚠ {cc.reason}</span>
+              {#if cc.canReveal}<span class="cover-hint">Show</span>{/if}
+            </button>
+          {:else}
+            <div class="run-text">{postText(c)}</div>
+          {/if}
           {@render actionRow(c, true)}
         </div>
       {/each}
@@ -374,7 +471,48 @@
       </svg>
       <span>{interactions.likeCount(p)}</span>
     </button>
+
+    <div class="more-wrap">
+      <button
+        class="act more"
+        title="Report, mute or block"
+        aria-label="More actions"
+        onclick={(e) => toggleMore(e, p.post.uri)}>⋯</button
+      >
+      {#if moreMenuFor === p.post.uri}
+        <div
+          class="menu floating"
+          class:up={moreMenuUp}
+          style="left: {moreMenuPos.left}px; top: {moreMenuPos.top}px;"
+        >
+          <button
+            onclick={() => {
+              report.show(p)
+              moreMenuFor = null
+            }}>Report post</button
+          >
+          {#if !isSelf}
+            <button onclick={() => runModAction(() => (muted ? moderation.unmute(p.post.author) : moderation.mute(p.post.author)))}>
+              {muted ? 'Unmute' : 'Mute'} @{p.post.author.handle}
+            </button>
+            <button
+              class="danger"
+              onclick={() => runModAction(() => (blocked ? moderation.unblock(p.post.author) : moderation.block(p.post.author)))}
+            >
+              {blocked ? 'Unblock' : 'Block'} @{p.post.author.handle}
+            </button>
+            <button
+              onclick={() => {
+                report.show(p, 'account')
+                moreMenuFor = null
+              }}>Report account</button
+            >
+          {/if}
+        </div>
+      {/if}
+    </div>
   </div>
+  {#if modError && !compact}<p class="mod-error">{modError}</p>{/if}
 {/snippet}
 
 <style>
@@ -441,7 +579,7 @@
     margin-bottom: 0.45rem;
   }
   .follow {
-    margin-left: auto;
+    flex: none;
     align-self: center;
     padding: 0.2rem 0.6rem;
     font-size: 0.75rem;
@@ -463,7 +601,7 @@
     font-weight: 500;
   }
   .time {
-    margin-left: auto;
+    flex: none;
     align-self: flex-start;
     color: var(--text-dim);
     font-size: 0.75rem;
@@ -491,9 +629,17 @@
     left: 0;
     z-index: 20;
   }
+  /* The name/handle column absorbs all the slack in the head, so the Follow
+     button and timestamp are the only things against the right edge and land in
+     the same place on every card. Previously .follow and .time BOTH had
+     margin-left:auto, and flex splits free space equally between two auto
+     margins — so the timestamp anchored right correctly but the button floated
+     at "meta's end plus half the slack", drifting up to 45px with how long the
+     author's name happened to be. */
   .meta {
     display: flex;
     flex-direction: column;
+    flex: 1;
     min-width: 0;
   }
   .name {
@@ -506,6 +652,17 @@
     display: flex;
     align-items: center;
     gap: 0.35rem;
+    min-width: 0;
+  }
+  /* The handle is what gives, so the badge never has to. Without this the flex
+     children refuse to shrink, spill out of .handle's own (shrunken) box and
+     paint on top of the Follow button — which is what "follows you" was doing
+     under "Following" on any longish handle. */
+  .handle-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .follows-you {
     padding: 0.05rem 0.3rem;
@@ -515,6 +672,7 @@
     background: color-mix(in srgb, var(--accent) 22%, transparent);
     border-radius: 0.3rem;
     white-space: nowrap;
+    flex: none;
   }
   .text {
     white-space: pre-wrap;
@@ -525,6 +683,46 @@
   }
   .text a {
     color: var(--accent);
+  }
+  /* Content warning. Stands in for the post body (or just its media), never
+     for the head or the actions — you can always see who posted and act on it. */
+  .cover {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    width: 100%;
+    margin-bottom: 0.5rem;
+    padding: 0.6rem 0.7rem;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    text-align: left;
+  }
+  .cover-why {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+  }
+  .cover-show,
+  .cover-hint {
+    flex: none;
+    font-size: 0.78rem;
+    font-family: inherit;
+    color: var(--accent);
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+  }
+  .cover-show:hover,
+  .cover-media:not(:disabled):hover .cover-hint {
+    text-decoration: underline;
+  }
+  .cover-media {
+    cursor: pointer;
+  }
+  .cover-media:disabled {
+    cursor: default;
   }
   .images {
     display: grid;
@@ -670,6 +868,32 @@
     position: relative;
     flex: 1;
     display: flex;
+  }
+  .more-wrap {
+    position: relative;
+    display: flex;
+  }
+  .act.more {
+    font-size: 1rem;
+    line-height: 1;
+    letter-spacing: 0.05em;
+  }
+  /* Escapes the card's overflow clip — see toggleMore(). */
+  .menu.floating {
+    position: fixed;
+    bottom: auto;
+    z-index: 900; /* over the topbar and the graph, under the modals (1000) */
+  }
+  .menu.floating.up {
+    transform: translate(-50%, -100%);
+  }
+  .menu button.danger {
+    color: var(--danger);
+  }
+  .mod-error {
+    margin: 0.35rem 0 0;
+    font-size: 0.78rem;
+    color: var(--danger);
   }
   .act {
     flex: 1;

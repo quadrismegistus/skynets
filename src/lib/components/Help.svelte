@@ -4,6 +4,9 @@
   }
   let { onclose }: Props = $props()
 
+  /** '/' locally and on mothtrap.blue, '/mothtrap/' on GitHub Pages. */
+  const base = import.meta.env.BASE_URL ?? '/'
+
   function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape') onclose()
   }
@@ -76,6 +79,15 @@
         <li><b>Auto-cycle:</b> rotate the queued posts through over time.</li>
         <li><b>Live:</b> pull in new posts every 60 seconds.</li>
       </ul>
+    </section>
+
+    <section class="legal">
+      <!-- Static pages under public/, so they get real URLs a reviewer (or an
+           App Store Connect field) can be pointed at. BASE_URL keeps them
+           working under the GitHub Pages /mothtrap/ base as well as at root. -->
+      <a href="{base}contact.html" target="_blank" rel="noreferrer">Contact</a>
+      <span aria-hidden="true">·</span>
+      <a href="{base}privacy.html" target="_blank" rel="noreferrer">Privacy</a>
     </section>
     </div>
   </div>
@@ -185,5 +197,17 @@
     color: var(--text);
     font-size: 0.78rem;
     font-family: inherit;
+  }
+  .legal {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 0.8rem;
+  }
+  .legal a {
+    color: var(--accent);
   }
 </style>

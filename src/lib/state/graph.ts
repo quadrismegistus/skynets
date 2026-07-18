@@ -289,6 +289,43 @@ export function treeTargets(nodes: TreeNode[], box: TreeLayoutBox): TreeTarget[]
     }
   }
 
+  // Anchor each tree by the CONVERSATION, not by its root post. A root is by
+  // definition the oldest post in its thread and often the quietest, so anchoring
+  // on it dragged every thread leftward and let a busy conversation sit low —
+  // while a standalone post kept its true position. Two placement rules meant two
+  // populations on screen (a dense mass of threads up-left, singletons scattered
+  // right) with the newest+quietest corner unreachable: a recent quiet post is
+  // nearly always a reply, hauled back to its root. Summarising the whole subtree
+  // — newest activity on x, peak engagement on y — puts every conversation,
+  // including a conversation of one, under a single rule.
+  const rootUris = [...extent.keys()]
+  const summary = new Map<string, { t: number; y: number }>()
+  for (const u of rootUris) summary.set(u, { t: -Infinity, y: Infinity })
+  for (const n of nodes) {
+    const s = summary.get(nodeRoot.get(n.uri) ?? n.uri)
+    if (!s) continue
+    // Number.isFinite, not a bare >: an unparseable createdAt yields NaN, every
+    // comparison against it is false, and the root kept the -Infinity sentinel —
+    // pinning a post with a malformed date to the far left. createdAt is
+    // attacker-controllable, so this is reachable from the network.
+    if (Number.isFinite(n.timestamp) && n.timestamp > s.t) s.t = n.timestamp
+    if (n.y < s.y) s.y = n.y // y is 1 - scoreRank, so LOWER means louder
+  }
+  // Rank conversations among conversations. layoutPositions ranks every visible
+  // post, but only these anchors ever consume a rank and they're a biased subset
+  // of them — so a spread that is uniform over posts arrived clumped over the
+  // things actually placed. Re-ranking here restores it by construction.
+  // No special case for a lone conversation: fractionalRanks already returns
+  // 0.5 for n=1, which centres it. Falling back to the root's own coordinates
+  // instead put it at the root's position — by construction the oldest and
+  // usually quietest post, i.e. the exact corner this whole change exists to
+  // stop using — and then flung it across the full diagonal the moment a second
+  // conversation appeared. Centring is both better and continuous.
+  const anchor = new Map<string, { x: number; y: number }>()
+  const ax = fractionalRanks(rootUris.map((u) => summary.get(u)!.t))
+  const ay = fractionalRanks(rootUris.map((u) => summary.get(u)!.y))
+  rootUris.forEach((u, i) => anchor.set(u, { x: ax[i], y: ay[i] }))
+
   // Clamp v into [lo, hi]; if the span doesn't fit (lo > hi), centre it.
   const fit = (v: number, lo: number, hi: number) => (lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, v)))
   return nodes.map((n) => {
@@ -296,10 +333,13 @@ export function treeTargets(nodes: TreeNode[], box: TreeLayoutBox): TreeTarget[]
     const rootUri = nodeRoot.get(n.uri) ?? n.uri
     const root = byUri.get(rootUri) ?? n
     const e = extent.get(rootUri) ?? { minDx: 0, maxDx: 0, maxDy: 0 }
+    const a = anchor.get(rootUri) ?? { x: root.x, y: root.y }
     // Place the root so its leftmost/rightmost/bottommost descendants stay in
     // bounds, then hang the tree off that fitted root — no per-node edge cramming.
-    const rootX = fit(padX + root.x * innerW, padX - e.minDx, padX + innerW - e.maxDx)
-    const rootY = fit(padTop + root.y * innerH, padTop, padTop + innerH - e.maxDy)
+    // The tree itself is untouched: `o` is a rigid offset from the root, so
+    // changing the anchor translates the whole constellation without deforming it.
+    const rootX = fit(padX + a.x * innerW, padX - e.minDx, padX + innerW - e.maxDx)
+    const rootY = fit(padTop + a.y * innerH, padTop, padTop + innerH - e.maxDy)
     return {
       id: n.uri,
       tx: rootX + o.dx,
@@ -333,11 +373,29 @@ export function withTopicPills(posts: TreeNode[], pills: TopicPill[]): TreeNode[
   const pillNodes: TreeNode[] = []
   for (const pill of pills) {
     const members = pill.members.filter((u) => byUri.has(u))
-    if (members.length < 2) continue
+    // Gate on members that will actually REPARENT, not merely on visible ones.
+    // A mid-thread post keeps its real parent (below), so a pill can clear a
+    // 2-visible-member bar and still end up with no children — a synthetic root
+    // whose whole subtree is itself. It then consumes a rank of its own and
+    // ties with the conversation its members already live in, landing at a
+    // canvas edge with edges radiating back to them: exactly the centroid
+    // pathology the pill-as-tree-root design was built to remove. Skipped here,
+    // it falls back to the caller's centroid like any other under-populated pill.
+    // One reparenting member is enough to make a real tree (a pill over a
+    // thread root plus its replies). The pathology is specifically ZERO.
+    const attachable = members.filter((u) => !byUri.get(u)!.parent)
+    if (members.length < 2 || attachable.length === 0) continue
     let loudest = members[0]
     for (const u of members) if (byUri.get(u)!.y < byUri.get(loudest)!.y) loudest = u
     const a = byUri.get(loudest)!
-    pillNodes.push({ uri: pill.sid, timestamp: 0, parent: undefined, x: a.x, y: a.y, sizeRank: 1 })
+    // The pill's OWN timestamp matters now that treeTargets ranks conversations
+    // by last activity. A pill whose members all keep real parents (mid-thread
+    // posts aren't reparented) ends up with no children, so its subtree is just
+    // itself — and a 0 here made it the oldest thing on the canvas, pinning it
+    // to the corner while its members sat mid-canvas with edges radiating out:
+    // precisely the layout the pill-as-tree-root design replaced.
+    const newest = members.reduce((t, u) => Math.max(t, byUri.get(u)!.timestamp || 0), 0)
+    pillNodes.push({ uri: pill.sid, timestamp: newest, parent: undefined, x: a.x, y: a.y, sizeRank: 1 })
     for (const u of members) pillOf.set(u, pill.sid)
   }
   const reparented = posts.map((p) => (p.parent || !pillOf.has(p.uri) ? p : { ...p, parent: pillOf.get(p.uri) }))

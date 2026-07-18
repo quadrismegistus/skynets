@@ -20,6 +20,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # The prebuild hook fetches ~23MB of model weights from HuggingFace and now
+      # FAILS the build if it can't verify them. Cache on the script's hash — it
+      # holds the pinned revision and the checksums, so a deliberate bump busts
+      # the cache and nothing else does.
+      - name: Cache embedding model
+        uses: actions/cache@v4
+        with:
+          path: public/models/all-MiniLM-L6-v2
+          key: embed-model-${{ hashFiles('scripts/fetch-embed-model.sh') }}
       - run: npm ci
       - run: npm test
       - run: npm run build # svelte-check + vite build
@@ -32,6 +41,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # The prebuild hook fetches ~23MB of model weights from HuggingFace and now
+      # FAILS the build if it can't verify them. Cache on the script's hash — it
+      # holds the pinned revision and the checksums, so a deliberate bump busts
+      # the cache and nothing else does.
+      - name: Cache embedding model
+        uses: actions/cache@v4
+        with:
+          path: public/models/all-MiniLM-L6-v2
+          key: embed-model-${{ hashFiles('scripts/fetch-embed-model.sh') }}
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run build
@@ -62,6 +80,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # The prebuild hook fetches ~23MB of model weights from HuggingFace and now
+      # FAILS the build if it can't verify them. Cache on the script's hash — it
+      # holds the pinned revision and the checksums, so a deliberate bump busts
+      # the cache and nothing else does.
+      - name: Cache embedding model
+        uses: actions/cache@v4
+        with:
+          path: public/models/all-MiniLM-L6-v2
+          key: embed-model-${{ hashFiles('scripts/fetch-embed-model.sh') }}
       - run: npm ci
       - run: npm run gen:metadata
       - run: npm run build
@@ -93,6 +120,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # The prebuild hook fetches ~23MB of model weights from HuggingFace and now
+      # FAILS the build if it can't verify them. Cache on the script's hash — it
+      # holds the pinned revision and the checksums, so a deliberate bump busts
+      # the cache and nothing else does.
+      - name: Cache embedding model
+        uses: actions/cache@v4
+        with:
+          path: public/models/all-MiniLM-L6-v2
+          key: embed-model-${{ hashFiles('scripts/fetch-embed-model.sh') }}
       - run: npm ci
       - run: npm run gen:metadata
       - run: npm run build

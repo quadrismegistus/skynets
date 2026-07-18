@@ -2,6 +2,7 @@
   import { AppBskyFeedPost } from '@atproto/api'
   import type { GraphNode } from '../state/graph'
   import { authorName, reposterProfile } from '../api/post'
+  import { moderation } from '../state/moderation.svelte'
 
   interface Props {
     node: GraphNode
@@ -48,6 +49,9 @@
 
   const avatar = $derived(node.item.post.author.avatar)
   const repost = $derived(reposterProfile(node.item))
+  // A node is too small to explain itself: it only signals "covered". The
+  // reason and the way in live on the card, which has room for both.
+  const cover = $derived(moderation.cover(node.item))
   const isReply = $derived.by(() => {
     const rec = node.item.post.record
     return AppBskyFeedPost.isRecord(rec) && !!rec.reply
@@ -109,7 +113,8 @@
   <button
     class="node"
     class:replies={hasReplies}
-    aria-label={authorName(node.item)}
+    class:covered={cover.blur}
+    aria-label={cover.blur ? `${authorName(node.item)} — ${cover.reason}` : authorName(node.item)}
     onclick={() => !dragMoved && onclick(node)}
     ondblclick={() => !dragMoved && ondblclick(node)}
   >
@@ -117,6 +122,9 @@
       <img src={avatar} alt={authorName(node.item)} draggable="false" />
     {:else}
       <span class="initial">{authorName(node.item).charAt(0).toUpperCase()}</span>
+    {/if}
+    {#if cover.blur}
+      <span class="cover-mark" title={cover.reason} aria-hidden="true">⚠</span>
     {/if}
   </button>
 
@@ -190,6 +198,24 @@
   .wrap.pinned .node {
     border-color: #e0a838;
     box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px #e0a838;
+  }
+  /* Content warning: the avatar is obscured but the node keeps its place, size
+     and edges, so the conversation's shape survives intact. */
+  .node.covered img,
+  .node.covered .initial {
+    filter: blur(7px);
+  }
+  .cover-mark {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    font-size: 0.85rem;
+    line-height: 1;
+    color: #fff;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+    background: rgba(0, 0, 0, 0.28);
+    pointer-events: none;
   }
   /* A dismissed ancestor shown only for chain context: strongly dimmed. */
   .wrap.ghost {

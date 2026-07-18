@@ -1,17 +1,20 @@
 import { isDemo } from './demo'
-import { DEFAULT_OLLAMA_URL } from './llm'
+import { localEmbed } from './localEmbed'
 
 /**
- * Local text embeddings via Ollama's `/api/embed`. Used as the always-on cheap
- * signal for the continuous digest's novelty gate (PLAN §7): decide *when* the
- * LLM should (re)run, never to assign posts to clusters (per-post embedding
- * routing is too noisy — the gate is a batch-aggregate judgment only).
+ * Text embeddings, computed ON THIS DEVICE (see ./localEmbed + the worker).
  *
- * all-minilm (MiniLM-L6, ~45MB) benchmarked best for this — better than the
- * larger mxbai, whose compressed cosine range hurts discrimination. Runs through
- * the same Ollama the LLM uses, so the whole pipeline stays local and $0.
+ * Two jobs: merging topic labels that mean the same thing without sharing a
+ * word, and — on the currently-parked cluster path — the novelty gate that
+ * decides *when* the LLM should re-run. Aggregate judgments only; embeddings
+ * never route individual posts (PLAN §7: per-post routing is too noisy).
+ *
+ * MiniLM-L6 benchmarked best here, better than the larger mxbai whose
+ * compressed cosine range hurts discrimination. It used to run through Ollama,
+ * which meant the text left the machine; it is now the same model running in a
+ * worker, so the vectors are the same 384-dim space and nothing is sent.
  */
-export const DEFAULT_EMBED_MODEL = 'all-minilm'
+export const DEFAULT_EMBED_MODEL = 'all-MiniLM-L6-v2'
 
 export interface EmbedOpts {
   ollamaUrl?: string
@@ -62,37 +65,30 @@ function demoEmbed(text: string, d = 32): number[] {
   return norm(v)
 }
 
-/** Embed a batch of texts to unit vectors. Order matches the input. */
+/**
+ * Embed a batch of texts to unit vectors, ON THIS DEVICE. Order matches input.
+ *
+ * This used to POST to Ollama, which meant the text left the machine. It now
+ * runs all-MiniLM-L6-v2 in a worker via transformers.js — the same model, so
+ * vectors stay in the same 384-dim space and anything already cached (in the
+ * archive, or in the digest's label→vector map) is still valid, as is the
+ * road-tested 0.68 merge threshold.
+ *
+ * There is deliberately no network fallback. If the local model can't load, the
+ * caller falls back to token-overlap grouping, which is worse but is also local
+ * — degrading from "on-device" to "sends your text to a server" would be a
+ * privacy regression triggered by a flaky download, which is not a trade anyone
+ * opted into.
+ */
 export async function embedTexts(texts: string[], opts: EmbedOpts = {}): Promise<number[][]> {
+  void opts // ollamaUrl is vestigial now; kept so callers need no change
   if (texts.length === 0) return []
   if (isDemo()) return texts.map((t) => demoEmbed(t))
-  const base = (opts.ollamaUrl || DEFAULT_OLLAMA_URL).replace(/\/$/, '')
-  let res: Response
-  try {
-    res = await fetch(`${base}/api/embed`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model: opts.model || DEFAULT_EMBED_MODEL, input: texts }),
-    })
-  } catch {
-    throw new Error(
-      `Could not reach Ollama at ${base} for embeddings. Is it running, and is the model pulled (ollama pull ${opts.model || DEFAULT_EMBED_MODEL})?`,
-    )
-  }
-  if (!res.ok) {
-    const detail = await res.text().catch(() => '')
-    throw new Error(`Ollama embed ${res.status}: ${detail.slice(0, 160) || res.statusText}`)
-  }
-  const data = (await res.json()) as { embeddings?: number[][] }
-  const out = (data.embeddings ?? []).map(norm)
-  // A 200 with a missing/short embeddings array (wrong or unpulled model) must
-  // NOT pass silently — callers rely on 1:1 alignment with `texts`, and a
-  // partial result would misalign vectors or wipe out grouping. Fail loudly so
-  // the caller's fallback (e.g. token grouping) can take over.
+  const out = (await localEmbed(texts)).map(norm)
+  // Callers rely on 1:1 alignment with `texts` — a partial result would
+  // misalign vectors and silently corrupt grouping. Fail loudly instead.
   if (out.length !== texts.length) {
-    throw new Error(
-      `Ollama embed returned ${out.length} vectors for ${texts.length} inputs (is "${opts.model || DEFAULT_EMBED_MODEL}" pulled?).`,
-    )
+    throw new Error(`Local embedding returned ${out.length} vectors for ${texts.length} inputs`)
   }
   return out
 }

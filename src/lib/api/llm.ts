@@ -1,6 +1,7 @@
 import { AppBskyFeedPost } from '@atproto/api'
 import type { FeedItem } from './timeline'
 import { isDemo } from './demo'
+import { digestConsent } from '../state/digestConsent.svelte'
 import { postQuote } from './post'
 import { postScoreRate } from '../state/score'
 
@@ -322,6 +323,7 @@ export async function summarizeFeed(
   onProgress?: OnProgress,
 ): Promise<Digest> {
   if (isDemo()) return demoDigest(items)
+  digestConsent.require(opts.provider, opts.ollamaUrl)
   const content = userContent(items, opts.previous, opts.postByUri)
   if (opts.provider === 'ollama') return summarizeOllama(items, content, opts, onProgress)
   if (!opts.apiKey) return demoDigest(items)
@@ -521,6 +523,7 @@ export async function rollFeed(
 ): Promise<RollUpdate[]> {
   if (newItems.length === 0) return []
   if (isDemo()) return demoRoll(newItems)
+  digestConsent.require(opts.provider, opts.ollamaUrl)
   const content = rollContent(newItems, existing, opts.postByUri)
   if (opts.provider === 'ollama') {
     return coerceRoll(await ollamaRaw(ROLL_SYSTEM, content, ROLL_SCHEMA, opts, onProgress), newItems)
@@ -656,6 +659,7 @@ export async function labelFeed(
   onLabel?: OnLabel,
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>()
+  if (items.length && !isDemo()) digestConsent.require(opts.provider, opts.ollamaUrl)
   const queue = [...items]
   const concurrency = opts.provider === 'anthropic' ? 6 : 2
   const worker = async () => {

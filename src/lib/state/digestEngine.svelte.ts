@@ -8,6 +8,7 @@ import {
   type SummarizeOpts,
 } from '../api/llm'
 import { centroid, cosine, embedTexts, noveltyGate, type GateResult } from '../api/embed'
+import { ConsentRequired } from './digestConsent.svelte'
 import { archive } from './archive'
 
 /** Force a roll once this many posts have buffered, even if the gate keeps
@@ -226,8 +227,16 @@ export class DigestEngine {
       // A path succeeded — NOW mark these seen so they're not re-processed.
       for (const it of fresh) this.#item.set(it.post.uri, it)
     } catch (err) {
-      this.phase = 'error'
-      this.error = err instanceof Error ? err.message : 'Digest engine failed'
+      if (err instanceof ConsentRequired) {
+        // Not a failure — the consent dialog is up. Showing a red error in the
+        // panel while we're asking permission would be exactly wrong, and the
+        // posts stay un-ingested so they're retried once the user says yes.
+        this.phase = 'idle'
+        this.error = undefined
+      } else {
+        this.phase = 'error'
+        this.error = err instanceof Error ? err.message : 'Digest engine failed'
+      }
     } finally {
       this.streamText = ''
       this.#busy = false

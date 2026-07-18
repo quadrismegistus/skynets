@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Privacy — Mothtrap</title>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <style>
+      :root {
+        --bg: #15181c;
+        --bg-elev: #1e2228;
+        --border: #2b313a;
+        --text: #e7ecf2;
+        --text-dim: #97a3b2;
+        --accent: #4a90e2;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 2.5rem 1.25rem 4rem;
+        background: var(--bg);
+        color: var(--text);
+        font: 16px/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+      main { max-width: 42rem; margin: 0 auto; }
+      a { color: var(--accent); }
+      h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+      h2 { font-size: 1.05rem; margin: 2rem 0 0.5rem; }
+      .sub { color: var(--text-dim); margin: 0 0 2rem; font-size: 0.9rem; }
+      p, li { color: var(--text); }
+      ul { padding-left: 1.2rem; }
+      li { margin-bottom: 0.4rem; }
+      .note {
+        background: var(--bg-elev);
+        border: 1px solid var(--border);
+        border-left: 3px solid var(--accent);
+        border-radius: 8px;
+        padding: 0.85rem 1rem;
+        margin: 1rem 0;
+      }
+      code {
+        background: var(--bg-elev);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 0.05rem 0.3rem;
+        font-size: 0.88em;
+      }
+      footer {
+        margin-top: 3rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border);
+        color: var(--text-dim);
+        font-size: 0.86rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Privacy</h1>
+      <p class="sub">Mothtrap · last updated 18 July 2026</p>
+
+      <p>
+        Mothtrap is a client for <a href="https://bsky.app" rel="noreferrer">Bluesky</a>, run as a
+        personal research project. It is a static web app: your browser talks to Bluesky directly,
+        and there is no Mothtrap account, database, or user record anywhere.
+      </p>
+
+      <h2>What stays on your device</h2>
+      <p>Almost everything. Mothtrap keeps the following in your own browser storage:</p>
+      <ul>
+        <li>An archive of posts your feed has shown you, in IndexedDB (<code>skynets-archive-&lt;your-did&gt;</code>), so the graph can be rebuilt without refetching.</li>
+        <li>The list of posts you've dismissed.</li>
+        <li>Your display settings and which feed tab you last used.</li>
+        <li>Your login session, if you signed in with an app password.</li>
+      </ul>
+      <p>
+        None of that is transmitted to us. Clearing your browser storage for this site erases all of
+        it permanently — there is no server-side copy to restore from.
+      </p>
+
+      <h2>What leaves your device</h2>
+
+      <div class="note">
+        <strong>The topic digest sends post text to a server we run.</strong> This is the one place
+        Mothtrap is not purely local, and it is worth reading carefully.
+      </div>
+
+      <p>
+        Mothtrap groups your feed into topics using a small language model. On
+        <strong>mothtrap.blue</strong> that model runs on our server, so generating a digest sends it:
+      </p>
+      <ul>
+        <li>the text of the posts currently in your graph (truncated, up to a few hundred characters each);</li>
+        <li>the <strong>handles</strong> of their authors — so this includes people other than you;</li>
+        <li>for replies and quotes, the text and handle of the post being replied to or quoted.</li>
+      </ul>
+      <p>
+        Each post is sent once, to be given a short topic label, and the label is then kept on your
+        device — so re-opening Mothtrap doesn't send the same post again.
+      </p>
+      <p>
+        It is sent to generate short topic labels, is processed in memory to answer that request, and
+        is then gone. Neither the web server nor the model service records the <em>content</em> of
+        these requests: the web server logs only the usual line (time, IP, and the path requested)
+        and the model service logs only that a request happened and how long it took. Nothing is
+        retained for analysis, used for training, or passed to any third party. The model is
+        self-hosted — nothing goes to a commercial AI provider.
+      </p>
+      <p>
+        Grouping the resulting topics into conversations needs text embeddings, and those are
+        computed <strong>entirely inside your browser</strong> — the model is downloaded once, on
+        first use, and runs on your device. Nothing is sent anywhere for that step.
+      </p>
+      <p>
+        If you run Mothtrap locally you can point it at your own machine's model instead, or at a
+        provider of your choosing with your own API key, in which case that provider's terms apply
+        and nothing reaches us at all.
+      </p>
+
+      <h2>Bluesky and other services</h2>
+      <ul>
+        <li>
+          <strong>Your credentials go to Bluesky, never to us.</strong> Signing in with OAuth happens
+          on Bluesky's own site. If you use an app password instead, your browser sends it directly to
+          your Bluesky server to exchange for a session token, which is then stored only on your device.
+        </li>
+        <li>Reading your timeline, posting, liking, following, muting, blocking and reporting are all requests from your browser to your Bluesky server.</li>
+        <li>Avatars and image thumbnails load from Bluesky's CDN, which will see your IP address, as any website's images would.</li>
+        <li>Reports you submit go to the moderation service for the author's server and to any labellers you subscribe to. Mothtrap does not receive or review them.</li>
+      </ul>
+
+      <h2>What we don't do</h2>
+      <ul>
+        <li>No analytics, telemetry, or tracking of any kind.</li>
+        <li>No advertising, and no sale or sharing of data.</li>
+        <li>No third-party scripts or embedded trackers.</li>
+        <li>No cookies used to identify or follow you.</li>
+        <li>No accounts, so nothing to profile you with.</li>
+      </ul>
+      <p>
+        Our web server keeps ordinary request logs — IP address, time, and the file requested, as
+        essentially every web server does. They are rotated daily and kept for 14 days, are used only
+        to keep the site running, record no request content, and are not connected to any Bluesky
+        identity.
+      </p>
+
+      <h2>Your control</h2>
+      <ul>
+        <li>Sign out to remove your session from this device.</li>
+        <li>Clear this site's browser storage to delete the archive, dismissals and settings outright.</li>
+        <li>Your posts, follows, mutes and blocks live in your Bluesky account, not in Mothtrap — manage or delete them there and Mothtrap reflects it.</li>
+        <li>Don't open the digest and no post text is ever sent anywhere.</li>
+      </ul>
+
+      <h2>Children</h2>
+      <p>
+        Mothtrap shows unfiltered content from a public social network and is not intended for
+        children.
+      </p>
+
+      <h2>Changes</h2>
+      <p>
+        If this policy changes in a way that affects what leaves your device, the date at the top will
+        change and the change will be described here.
+      </p>
+
+      <h2>Contact</h2>
+      <p>
+        Questions, corrections, or privacy requests:
+        <a href="mailto:contact@mothtrap.blue">contact@mothtrap.blue</a>. More on the
+        <a href="./contact.html">contact page</a>.
+      </p>
+
+      <footer><a href="./">← Back to Mothtrap</a></footer>
+    </main>
+  </body>
+</html>

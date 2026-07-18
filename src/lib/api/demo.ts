@@ -1,3 +1,4 @@
+import { BSKY_LABELER_DID } from '@atproto/api'
 import type { FeedItem } from './timeline'
 
 /** Demo/fixture mode: `?demo=1` renders the graph with local fake posts, no login. */
@@ -33,6 +34,8 @@ interface Spec {
   repostBy?: number
   link?: string
   image?: string
+  /** Moderation label values, as if applied by the default Bluesky labeler. */
+  labels?: string[]
   quote?: { ai: number; text: string }
   external?: { uri: string; title: string; description: string; thumb?: string }
 }
@@ -88,6 +91,14 @@ function make(s: Spec): FeedItem {
       likeCount: s.likes,
       indexedAt: created,
     },
+  }
+  if (s.labels?.length) {
+    ;(item.post as Record<string, unknown>).labels = s.labels.map((val) => ({
+      src: BSKY_LABELER_DID,
+      uri,
+      val,
+      cts: created,
+    }))
   }
   if (s.repostBy !== undefined) {
     const [rh, rn] = AUTHORS[s.repostBy]
@@ -173,6 +184,8 @@ export function demoFeed(): FeedItem[] {
   specs.push({ id: 'img', ai: 3, text: 'a photo from today', image: DEMO_IMG, likes: 26, reposts: 7, replies: 3, minsAgo: 14 })
   specs.push({ id: 'quote', ai: 2, text: 'exactly this — well put', quote: { ai: 5, text: 'You cannot convince me that a technology where I can type this into a text box and expect to get an interesting response is not, at some level, genuinely astonishing — even if you also worry about where it all goes.' }, likes: 19, reposts: 6, replies: 1, minsAgo: 10 })
   specs.push({ id: 'ext', ai: 4, text: 'good writeup', external: { uri: 'https://docs.bsky.app/blog', title: 'Building on the AT Protocol', description: 'A guide to client apps, feeds, and the firehose.', thumb: DEMO_IMG }, likes: 14, reposts: 3, replies: 1, minsAgo: 6 })
+  // Labeled post: renders as a blurred node + a card cover you can click past.
+  specs.push({ id: 'cw', ai: 5, text: 'a post the labelers flagged — covered until you ask for it', labels: ['!warn'], likes: 34, reposts: 9, replies: 2, minsAgo: 5 })
 
   // A 2-post mini-thread (a post + one reply) — shows as a connected edge.
   const miniRoot = 'at://did:plc:erao.bsky.social/app.bsky.feed.post/m0'

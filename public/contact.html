@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Contact — Mothtrap</title>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <style>
+      :root {
+        --bg: #15181c;
+        --bg-elev: #1e2228;
+        --border: #2b313a;
+        --text: #e7ecf2;
+        --text-dim: #97a3b2;
+        --accent: #4a90e2;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 2.5rem 1.25rem 4rem;
+        background: var(--bg);
+        color: var(--text);
+        font: 16px/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+      main { max-width: 42rem; margin: 0 auto; }
+      a { color: var(--accent); }
+      h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+      h2 { font-size: 1.05rem; margin: 2rem 0 0.5rem; }
+      .sub { color: var(--text-dim); margin: 0 0 2rem; font-size: 0.9rem; }
+      ul { padding-left: 1.2rem; }
+      li { margin-bottom: 0.4rem; }
+      .email {
+        display: inline-block;
+        background: var(--bg-elev);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.6rem 0.9rem;
+        margin: 0.5rem 0 1rem;
+        font-size: 1.05rem;
+      }
+      .note {
+        background: var(--bg-elev);
+        border: 1px solid var(--border);
+        border-left: 3px solid var(--accent);
+        border-radius: 8px;
+        padding: 0.85rem 1rem;
+        margin: 1rem 0;
+      }
+      footer {
+        margin-top: 3rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border);
+        color: var(--text-dim);
+        font-size: 0.86rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Contact</h1>
+      <p class="sub">Mothtrap · a research project by Ryan Heuser</p>
+
+      <p>
+        Mothtrap is an independent client for <a href="https://bsky.app" rel="noreferrer">Bluesky</a>
+        that draws your timeline as a map of conversations rather than a scrolling list. It's built and
+        maintained by one person as a research project.
+      </p>
+
+      <p class="email"><a href="mailto:contact@mothtrap.blue">contact@mothtrap.blue</a></p>
+
+      <p>
+        Write about anything — bugs, questions, privacy requests, or concerns about how the app
+        behaves. I read everything sent here and aim to reply within a few working days.
+      </p>
+
+      <h2>Reporting a post or an account</h2>
+
+      <p>
+        Use the <strong>⋯ menu</strong> on any post in the app. From there you can:
+      </p>
+      <ul>
+        <li><strong>Report</strong> the post or the account, choosing a reason;</li>
+        <li><strong>Mute</strong> an account, so you stop seeing them without them knowing;</li>
+        <li><strong>Block</strong> an account, which is mutual and public.</li>
+      </ul>
+
+      <div class="note">
+        Mothtrap displays Bluesky — it does not host any of it. Reports therefore go to the moderation
+        service for the author's server, and to any labellers you subscribe to, because those are the
+        parties who can actually remove a post or suspend an account. Mothtrap cannot do either, and
+        does not receive a copy of your report.
+      </div>
+
+      <p>
+        Mothtrap does honour the outcomes: it applies the content labels, mutes and blocks from your
+        Bluesky account, hiding or covering posts accordingly. If you think it is failing to respect a
+        label, mute or block, that is a bug in Mothtrap and I want to hear about it at the address
+        above.
+      </p>
+
+      <p>
+        To report something to Bluesky directly, or to appeal a moderation decision on your own
+        account, see
+        <a href="https://bsky.social/about/support" rel="noreferrer">Bluesky's support pages</a>.
+      </p>
+
+      <h2>Content and conduct</h2>
+      <p>
+        Mothtrap has no tolerance for abusive users or for content that is illegal, harassing, or
+        sexually exploitative. Because the content comes from Bluesky, enforcement happens through the
+        reporting, muting and blocking above, and through the moderation services those reports reach.
+      </p>
+
+      <h2>Privacy</h2>
+      <p>
+        What Mothtrap stores and what leaves your device is set out on the
+        <a href="./privacy.html">privacy page</a>. The short version: nearly everything stays in your
+        browser, with one documented exception for the topic digest.
+      </p>
+
+      <footer><a href="./">← Back to Mothtrap</a></footer>
+    </main>
+  </body>
+</html>

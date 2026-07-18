@@ -1,6 +1,7 @@
 import { getAgent } from '../api/agent'
 import { isDemo } from '../api/demo'
 import { FOLLOWING } from '../api/timeline'
+import { moderation } from './moderation.svelte'
 
 /** A feed the user can view in the graph. `key` doubles as the fetch target:
  * the sentinel 'following' (home timeline) or a feed-generator AT-uri, so it
@@ -56,6 +57,10 @@ class Feeds {
     try {
       const agent = getAgent()
       const prefs = await agent.getPreferences()
+      // The same response carries the account's moderation settings (labelers,
+      // per-label warn/hide, adult opt-in, muted words). Free — no extra call.
+      // On failure we fall through to the catch and keep Bluesky's defaults.
+      moderation.adopt(prefs.moderationPrefs)
       const out: Feed[] = [FOLLOWING_FEED]
       const feedUris: string[] = []
       const listUris: string[] = []

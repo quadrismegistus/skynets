@@ -9,6 +9,7 @@ import {
 import { initOAuth, revokeOAuth, signInOAuth } from '../api/oauth'
 import { isDemo } from '../api/demo'
 import { read } from './read.svelte'
+import { moderation } from './moderation.svelte'
 
 type Status = 'loading' | 'logged-out' | 'logged-in'
 type Method = 'oauth' | 'app-password'
@@ -47,7 +48,12 @@ class SessionState {
     this.method = method
     this.status = 'logged-in'
     await this.resolveIdentity()
-    if (this.did) await read.load(this.did)
+    if (this.did) {
+      // Before feeds.load() adopts the real prefs: moderation is already on,
+      // running Bluesky's defaults, so nothing is ever unmoderated.
+      moderation.setUser(this.did)
+      await read.load(this.did)
+    }
   }
 
   private markLoggedOut() {
@@ -68,6 +74,7 @@ class SessionState {
       this.method = 'app-password'
       this.handle = 'demo.bsky.social'
       this.did = 'did:plc:demo'
+      moderation.setUser(this.did)
       await read.load(this.did)
       return
     }
@@ -120,6 +127,7 @@ class SessionState {
     }
     setActiveAgent(null)
     read.reset()
+    moderation.reset()
     this.markLoggedOut()
   }
 }

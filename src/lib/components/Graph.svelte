@@ -19,6 +19,7 @@
   import { ForceLayout, type Target } from '../state/forceLayout'
   import { buildConversations, planView } from '../state/conversations'
   import { read } from '../state/read.svelte'
+  import { moderation } from '../state/moderation.svelte'
   import { settings, debugAllowed } from '../state/settings.svelte'
   import { compose } from '../state/compose.svelte'
   import { threads } from '../state/threads.svelte'
@@ -108,6 +109,11 @@
   // a stranger — the root cause of the "unfollowed node, unexplained" saga.
   const feedItems = $derived(
     items.filter((i) => {
+      // Moderation gates feed INFLOW only: a post your settings hide never
+      // enters your feed. It may still arrive as somebody's reply parent, and
+      // there it stays (covered, not dropped) — deleting an ancestor would
+      // tear a hole in the conversation. See state/moderation.svelte.ts.
+      if (moderation.hidden(i)) return false
       const rp = reposterProfile(i)
       if (rp && !settings.showReposts) return false
       // Pruning: unfollowing takes effect immediately. A repost goes when its
@@ -1232,7 +1238,7 @@
 >
   {#if settings.cohesion < 0.5}
     <div class="axis y-axis">← quieter · louder →</div>
-    <div class="axis x-axis">← older · newer →</div>
+    <div class="axis x-axis">← last active: older · newer →</div>
   {/if}
   <div class="axis legend"><span class="dot"></span> size = replies</div>
 
