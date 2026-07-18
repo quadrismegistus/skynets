@@ -1183,13 +1183,12 @@
   function onNodeClick(node: GraphNode) {
     clearTimeout(clickTimer)
     if (coarsePointer) {
-      // Touch has no hover, so a tap simply opens the card and the ✕ closes it.
-      // A repeat tap used to pin instead, which gave the same gesture two
-      // different meanings depending on invisible state — and pinning is a
-      // pointer-era idea that exists to survive hover-out, which touch doesn't
-      // have. Tapping the same node again just closes it.
-      if (hovered === node.uri) clearAll()
-      else setHovered(node.uri)
+      // One gesture, one meaning: a tap always shows that post. Closing is
+      // tapping anywhere else, dismissing is the ✕ on the card. A repeat tap
+      // used to pin — a pointer-era idea that exists to survive hover-out,
+      // which touch doesn't have — so the same gesture meant two things
+      // depending on state you couldn't see.
+      setHovered(node.uri)
       return
     }
     clickTimer = setTimeout(() => togglePin(node), 220)
@@ -1355,6 +1354,7 @@
       onquote={(it) => compose.openQuote(it)}
       onmapreplies={toggleMapReplies}
       showClose={coarsePointer}
+      ondismiss={() => dismiss(c.node.uri)}
       onkeep={() => setHovered(c.node.uri)}
       onleave={scheduleClear}
       onclose={() => {

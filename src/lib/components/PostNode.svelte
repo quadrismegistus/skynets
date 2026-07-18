@@ -340,8 +340,14 @@
     place-items: center;
     z-index: 60;
   }
-  .wrap:hover .dismiss {
-    display: grid;
+  /* Only where hover is real. On touch, iOS treats the first tap on an element
+     with hover-revealed content as the hover and swallows the click — which is
+     why the first tap on a node produced a ✕ instead of the post. Touch gets
+     its dismiss from the card's ✕ instead. */
+  @media (hover: hover) {
+    .wrap:hover .dismiss {
+      display: grid;
+    }
   }
   .dismiss:hover {
     color: #fff;

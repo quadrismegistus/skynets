@@ -65,6 +65,12 @@ export default defineConfig({
   // GitHub Pages project pages serve under /<repo>/. Set BASE_PATH at build
   // time (the deploy workflow does); dev stays at root.
   base: process.env.BASE_PATH ?? '/',
+  // WKWebView caches the main document hard, so a rebuilt app kept loading the
+  // previous bundle in the iOS simulator until the app was reinstalled. This is
+  // dev/preview tooling only and never ships.
+  preview: {
+    headers: { 'Cache-Control': 'no-store, must-revalidate' },
+  },
   server: {
     // atproto OAuth loopback mode requires the app to run on 127.0.0.1
     // (not "localhost"), so bind there by default. When Tauri targets a

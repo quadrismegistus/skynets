@@ -42,6 +42,10 @@
     onleave: () => void
     /** Touch: explicit close (hover-out doesn't exist there). */
     onclose?: () => void
+    /** Touch: mark this post read and drop it from the graph — what the node's
+     * hover ✕ does with a pointer. On touch that ✕ can't exist (see PostNode),
+     * so the card carries the action instead. */
+    ondismiss?: () => void
     /** Show that close button. Passed from the same JS check that decides the
      * tap behaviour, so the two can't disagree — a CSS-only @media rule left
      * the ✕ hidden on anything the media query and matchMedia read differently. */
@@ -64,6 +68,7 @@
     onkeep,
     onleave,
     onclose,
+    ondismiss,
     showClose = false,
     run,
   }: Props = $props()
@@ -218,8 +223,10 @@
   onmouseenter={onkeep}
   onmouseleave={onleave}
 >
-  {#if onclose && showClose}
-    <button class="card-close" aria-label="Close" onclick={onclose}>✕</button>
+  {#if showClose && (ondismiss || onclose)}
+    <!-- Dismiss, not close: tapping outside the card closes it and leaves the
+         post alone, so the one button here is the one that does something. -->
+    <button class="card-close" aria-label="Dismiss post" onclick={ondismiss ?? onclose}>✕</button>
   {/if}
   {#if rt}
     <div class="repost">
