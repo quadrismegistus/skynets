@@ -20,6 +20,7 @@
   import { profiles } from '../state/profiles.svelte'
   import { session } from '../state/session.svelte'
   import { settings } from '../state/settings.svelte'
+  import { moderation } from '../state/moderation.svelte'
   import ProfileHover from './ProfileHover.svelte'
 
   interface Props {
@@ -102,6 +103,10 @@
   const images = $derived(postImages(item))
   const quoted = $derived(postQuote(item))
   const external = $derived(postExternal(item))
+  // The head (who posted) and the action row stay visible even under a cover:
+  // you need to be able to see whose post this is, and act on it, precisely
+  // when it's the kind of post you'd want to act on.
+  const cover = $derived(moderation.cover(item))
 
   function quoteUrl(q: QuotedPost): string {
     return `https://bsky.app/profile/${q.handle}/post/${q.uri.split('/').pop()}`
@@ -239,55 +244,84 @@
       onclick={(e) => e.stopPropagation()}>{timeAgo(item)}</a
     >
   </div>
-  <div class="text">
-    {#each textSegs as seg}{#if seg.href}<a
-          href={seg.href}
-          target="_blank"
-          rel="noreferrer"
-          onclick={(e) => e.stopPropagation()}>{seg.text}</a
-        >{:else}{seg.text}{/if}{/each}
-  </div>
-
-  {#if images.length}
-    <div class="images" data-n={Math.min(images.length, 4)}>
-      {#each images.slice(0, 4) as img}
-        <img src={img.thumb} alt={img.alt} title={img.alt} />
-      {/each}
+  {#if cover.blur && !cover.media}
+    <div class="cover">
+      <span class="cover-why">⚠ {cover.reason}</span>
+      {#if cover.canReveal}
+        <button
+          class="cover-show"
+          onclick={(e) => {
+            e.stopPropagation()
+            moderation.reveal(item)
+          }}>Show anyway</button
+        >
+      {/if}
     </div>
-  {/if}
+  {:else}
+    <div class="text">
+      {#each textSegs as seg}{#if seg.href}<a
+            href={seg.href}
+            target="_blank"
+            rel="noreferrer"
+            onclick={(e) => e.stopPropagation()}>{seg.text}</a
+          >{:else}{seg.text}{/if}{/each}
+    </div>
 
-  {#if external}
-    <a
-      class="external"
-      href={external.uri}
-      target="_blank"
-      rel="noreferrer"
-      onclick={(e) => e.stopPropagation()}
-    >
-      {#if external.thumb}<img class="ext-thumb" src={external.thumb} alt="" />{/if}
-      <div class="ext-body">
-        <span class="ext-host">{hostOf(external.uri)}</span>
-        <span class="ext-title">{external.title}</span>
-        {#if external.description}<span class="ext-desc">{external.description}</span>{/if}
-      </div>
-    </a>
-  {/if}
+    {#if images.length}
+      {#if cover.media}
+        <button
+          class="cover cover-media"
+          disabled={!cover.canReveal}
+          onclick={(e) => {
+            e.stopPropagation()
+            moderation.reveal(item)
+          }}
+        >
+          <span class="cover-why">⚠ {cover.reason}</span>
+          {#if cover.canReveal}<span class="cover-hint">Show</span>{/if}
+        </button>
+      {:else}
+        <div class="images" data-n={Math.min(images.length, 4)}>
+          {#each images.slice(0, 4) as img}
+            <img src={img.thumb} alt={img.alt} title={img.alt} />
+          {/each}
+        </div>
+      {/if}
+    {/if}
 
-  {#if quoted}
-    <a
-      class="quoted"
-      href={quoteUrl(quoted)}
-      target="_blank"
-      rel="noreferrer"
-      onclick={(e) => e.stopPropagation()}
-    >
-      <div class="q-head">
-        {#if quoted.avatar}<img class="q-avatar" src={quoted.avatar} alt="" />{/if}
-        <span class="q-name">{quoted.name}</span>
-        <span class="q-handle">@{quoted.handle}</span>
-      </div>
-      <p class="q-text">{quoted.text}</p>
-    </a>
+    {#if external}
+      <a
+        class="external"
+        href={external.uri}
+        target="_blank"
+        rel="noreferrer"
+        onclick={(e) => e.stopPropagation()}
+      >
+        {#if external.thumb}<img class="ext-thumb" src={external.thumb} alt="" />{/if}
+        <div class="ext-body">
+          <span class="ext-host">{hostOf(external.uri)}</span>
+          <span class="ext-title">{external.title}</span>
+          {#if external.description}<span class="ext-desc">{external.description}</span>{/if}
+        </div>
+      </a>
+    {/if}
+
+    {#if quoted}
+      <a
+        class="quoted"
+        href={quoteUrl(quoted)}
+        target="_blank"
+        rel="noreferrer"
+        onclick={(e) => e.stopPropagation()}
+      >
+        <div class="q-head">
+          {#if quoted.avatar}<img class="q-avatar" src={quoted.avatar} alt="" />{/if}
+          <span class="q-name">{quoted.name}</span>
+          <span class="q-handle">@{quoted.handle}</span>
+        </div>
+        <p class="q-text">{quoted.text}</p>
+      </a>
+    {/if}
   {/if}
 
   <!-- Actions sit with the post they act on: the head's bar directly under the
@@ -525,6 +559,46 @@
   }
   .text a {
     color: var(--accent);
+  }
+  /* Content warning. Stands in for the post body (or just its media), never
+     for the head or the actions — you can always see who posted and act on it. */
+  .cover {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    width: 100%;
+    margin-bottom: 0.5rem;
+    padding: 0.6rem 0.7rem;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    text-align: left;
+  }
+  .cover-why {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+  }
+  .cover-show,
+  .cover-hint {
+    flex: none;
+    font-size: 0.78rem;
+    font-family: inherit;
+    color: var(--accent);
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+  }
+  .cover-show:hover,
+  .cover-media:not(:disabled):hover .cover-hint {
+    text-decoration: underline;
+  }
+  .cover-media {
+    cursor: pointer;
+  }
+  .cover-media:disabled {
+    cursor: default;
   }
   .images {
     display: grid;

@@ -144,6 +144,28 @@ test('non-followed authors are marked (dashed) and followed are not', async ({ p
   expect(await page.locator('.wrap:not(.unfollowed)').count()).toBeGreaterThan(0)
 })
 
+test('a labeled post is covered on both node and card until revealed', async ({ page }) => {
+  await graphReady(page)
+  // The demo carries one !warn-labeled post. The node only signals "covered";
+  // the card names the reason and is the only place offering a way in.
+  const covered = page.locator('button.node.covered')
+  await expect(covered).toHaveCount(1)
+  await expect(page.locator('button.node.covered .cover-mark')).toBeVisible()
+
+  await covered.hover()
+  await expect(page.locator('.card .cover-why')).toHaveText(/Content warning/)
+  // The head and actions stay readable under a cover — you must be able to see
+  // whose post it is, and act on it, exactly when it's covered.
+  await expect(page.locator('.card .name')).toBeVisible()
+  await expect(page.locator('.card .actions')).toBeVisible()
+  await expect(page.locator('.card .text')).toHaveCount(0)
+
+  await page.locator('.card .cover-show').click()
+  await expect(page.locator('.card .text')).toBeVisible()
+  await expect(page.locator('.card .cover-why')).toHaveCount(0)
+  await expect(page.locator('button.node.covered')).toHaveCount(0) // node uncovers too
+})
+
 test('single-click pins a node and keeps its card shown', async ({ page }) => {
   await graphReady(page)
   await page.locator('.wrap').first().click()
