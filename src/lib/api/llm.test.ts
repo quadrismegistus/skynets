@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { summarizeFeed, exemplars, contextFor, extractJson, labelFeed, type Conversation } from './llm'
+import { summarizeFeed, exemplars, contextFor, extractJson, labelFeed, rollFeed, type Conversation } from './llm'
 import { mkPost } from '../testing'
 import { digestConsent } from '../state/digestConsent.svelte'
 
-// These cover the transport, not the privacy gate — the gate has its own
-// tests in state/digestConsent.test.ts. Consent it once so the network
-// paths below are reachable.
-beforeEach(() => digestConsent.grant())
+// These cover the transport, not the privacy gate — the gate has its own tests
+// in state/digestConsent.test.ts, and its WIRING is covered at the bottom of
+// this file. Reset before granting: a grant now pins the destination it was
+// given for, so a stale pin from a previous test would re-ask on the next one.
+beforeEach(() => {
+  digestConsent.reset()
+  digestConsent.grant()
+})
 
 function ollamaText(text: string) {
   return {
@@ -339,5 +343,34 @@ describe('exemplars', () => {
     ])
     const convo: Conversation = { id: 'c', label: 'L', summary: '', status: 'steady', postUris: ['at://q', 'at://l'] }
     expect(exemplars(convo, byUri).map((i) => i.post.uri)).toEqual(['at://l', 'at://q'])
+  })
+})
+
+// The gate's WIRING, not its logic. Deleting every digestConsent.require() call
+// from this module left the whole suite green — the one guarantee the privacy
+// work exists to provide had no regression test at the point it is applied.
+describe('consent gate is actually wired into every send path', () => {
+  const item = mkPost({ uri: 'at://x/1' })
+  const opts = { provider: 'ollama' as const, model: 'm', ollamaUrl: 'https://mothtrap.blue/ollama' }
+
+  beforeEach(() => digestConsent.reset())
+
+  it('summarizeFeed refuses to send without consent', async () => {
+    await expect(summarizeFeed([item], opts)).rejects.toThrow(/permission/i)
+  })
+
+  it('labelFeed refuses to send without consent', async () => {
+    await expect(labelFeed([item], opts)).rejects.toThrow(/permission/i)
+  })
+
+  it('rollFeed refuses to send without consent', async () => {
+    await expect(rollFeed([item], [{ label: 'x' }], opts)).rejects.toThrow(/permission/i)
+  })
+
+  it('and each one proceeds once consent is given', async () => {
+    digestConsent.grant('ollama', 'https://mothtrap.blue/ollama')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ollamaText('{"clusters":[]}')))
+    await expect(summarizeFeed([item], opts)).resolves.toBeDefined()
+    vi.restoreAllMocks()
   })
 })

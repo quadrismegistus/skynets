@@ -18,11 +18,31 @@
  */
 
 const KEY = 'mothtrap.digestConsent'
+const HOST_KEY = 'mothtrap.digestConsentHost'
 
 export type Consent = 'unasked' | 'granted' | 'declined'
 
 /** Where a request would go, in the words the dialog needs. */
 export type Destination = 'local' | 'server' | 'cloud'
+
+/** Where a request would go, as a stable identity to record consent against. */
+export function hostFor(provider: string, ollamaUrl?: string): string {
+  if (provider !== 'ollama') return `cloud:${provider}`
+  try {
+    const origin = typeof location !== 'undefined' ? location.origin : 'http://localhost'
+    return new URL(ollamaUrl || 'http://localhost:11434', origin).host
+  } catch {
+    return 'unknown'
+  }
+}
+
+function readHost(): string {
+  try {
+    return localStorage.getItem(HOST_KEY) ?? ''
+  } catch {
+    return ''
+  }
+}
 
 function read(): Consent {
   try {
@@ -50,7 +70,11 @@ export function destinationOf(provider: string, ollamaUrl?: string): Destination
   } catch {
     return 'server' // unparseable → assume it leaves; erring the safe way
   }
-  const local = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0.0.0.0'
+  // The URL parser hands back IPv6 hosts bracketed ('[::1]'), so a bare '::1'
+  // comparison never matched and a genuinely local IPv6 Ollama was classified
+  // remote — prompting for a request that never leaves the machine.
+  const bare = host.replace(/^\[|\]$/g, '').toLowerCase()
+  const local = bare === 'localhost' || bare === '127.0.0.1' || bare === '::1' || bare === '0.0.0.0'
   return local ? 'local' : 'server'
 }
 
@@ -65,6 +89,11 @@ export class ConsentRequired extends Error {
 
 class DigestConsent {
   state = $state<Consent>(read())
+  /** The endpoint host the answer was given FOR. A grant is consent to send to
+   * a particular place — the dialog names it — so if the deployment config or
+   * the panel's URL field later points somewhere else, that consent no longer
+   * covers it and we must ask again. */
+  grantedFor = $state<string>(readHost())
   /** A request was blocked and the dialog should show. */
   pending = $state(false)
   /** Where the blocked request was headed, so the dialog can say so. */
@@ -77,7 +106,23 @@ class DigestConsent {
   allows(provider: string, ollamaUrl?: string): boolean {
     const dest = destinationOf(provider, ollamaUrl)
     if (dest === 'local') return true // nothing leaves; nothing to consent to
-    if (this.state === 'granted') return true
+    if (this.state === 'granted') {
+      const host = hostFor(provider, ollamaUrl)
+      // A grant with no recorded destination predates this check (or came from
+      // a bare grant()). Honour it, but PIN the host now, so that a later move
+      // does trigger a re-ask rather than riding on the old answer forever.
+      if (!this.grantedFor) {
+        this.grantedFor = host
+        this.#save()
+        return true
+      }
+      if (this.grantedFor === host) return true
+      // The endpoint moved after consent was given — the dialog named a
+      // specific destination, and this isn't it. Ask again for the new one.
+      this.destination = dest
+      this.pending = true
+      return false
+    }
     if (this.state === 'unasked' && !this.#deferred) {
       this.destination = dest
       this.pending = true
@@ -108,10 +153,18 @@ class DigestConsent {
     this.pending = true
   }
 
-  /** True when a declined answer is the reason the digest isn't running — so
-   * the UI can say so instead of showing an empty panel and a dead button. */
+  /**
+   * True when the digest is waiting on the user — so the UI can say so instead
+   * of showing an empty panel and a button that does nothing.
+   *
+   * Covers BOTH a decline and a dismissal. Dismissing suppresses the dialog for
+   * the session, which without this left the panel showing its normal label
+   * over a dead button — recreating the exact silent dead end that dismiss()
+   * was added to prevent, one layer along.
+   */
   blocks(provider: string, ollamaUrl?: string): boolean {
-    return this.state === 'declined' && destinationOf(provider, ollamaUrl) !== 'local'
+    if (destinationOf(provider, ollamaUrl) === 'local') return false
+    return this.state === 'declined' || (this.state === 'unasked' && this.#deferred)
   }
 
   /**
@@ -132,7 +185,8 @@ class DigestConsent {
     this.#deferred = true
   }
 
-  grant() {
+  grant(provider?: string, ollamaUrl?: string) {
+    if (provider) this.grantedFor = hostFor(provider, ollamaUrl)
     this.state = 'granted'
     this.pending = false
     this.#deferred = false
@@ -150,11 +204,13 @@ class DigestConsent {
     this.state = 'unasked'
     this.pending = false
     this.#deferred = false
+    this.grantedFor = '' // the destination is part of the answer, so it goes too
     this.#save()
   }
 
   #save() {
     try {
+      localStorage.setItem(HOST_KEY, this.grantedFor)
       localStorage.setItem(KEY, this.state)
     } catch {
       /* private mode — the choice just won't persist */

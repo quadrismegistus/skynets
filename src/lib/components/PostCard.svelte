@@ -374,6 +374,7 @@
   {#if continuation.length}
     <div class="run-more">
       {#each continuation as c (c.post.uri)}
+        {@const cc = moderation.cover(c)}
         <div class="run-post">
           <a
             class="run-time"
@@ -383,7 +384,27 @@
             title={fullDate(c)}
             onclick={(e) => e.stopPropagation()}>{timeAgo(c)}</a
           >
-          <div class="run-text">{postText(c)}</div>
+          <!-- Every post in a run needs its own check. `cover` above is computed
+               for the run HEAD only, so a run whose third post is labelled (or
+               hits a muted word) was rendering that post's full text. Mute and
+               block are uniform across a run — same author by construction — so
+               what leaked here was specifically labels, muted words and hidden
+               posts, the very things the module promises to cover. -->
+          {#if cc.blur}
+            <button
+              class="cover cover-media"
+              disabled={!cc.canReveal}
+              onclick={(e) => {
+                e.stopPropagation()
+                moderation.reveal(c)
+              }}
+            >
+              <span class="cover-why">⚠ {cc.reason}</span>
+              {#if cc.canReveal}<span class="cover-hint">Show</span>{/if}
+            </button>
+          {:else}
+            <div class="run-text">{postText(c)}</div>
+          {/if}
           {@render actionRow(c, true)}
         </div>
       {/each}

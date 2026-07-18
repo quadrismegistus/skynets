@@ -81,6 +81,20 @@ const BUILTIN_LABEL_NAMES: Record<string, string> = {
   gore: 'Graphic media',
 }
 
+/**
+ * Identity of the labels currently on a post, for the decision cache key.
+ * Sorted so ordering churn from the API can't invalidate a good entry, and
+ * `neg` included because a retraction is as much a change as an application.
+ */
+function labelFingerprint(item: FeedItem): string {
+  const all = [...(item.post.labels ?? []), ...(item.post.author.labels ?? [])]
+  if (all.length === 0) return ''
+  return all
+    .map((l) => `${l.src}/${l.val}${l.neg ? '!' : ''}`)
+    .sort()
+    .join(',')
+}
+
 /** What a cover says it's covering for. */
 function causeReason(cause: ModerationCause | undefined): string {
   if (!cause) return 'Content warning'
@@ -173,7 +187,12 @@ class Moderation {
   }
 
   decisionFor(item: FeedItem): ModerationDecision {
-    const key = `${item.post.uri}:${item.post.cid}`
+    // The key must include the LABELS, not just uri+cid. A labeler applying a
+    // label doesn't change the cid — the record is untouched — so keying on
+    // uri:cid alone pinned the first (clean) verdict for the whole session and
+    // a label arriving later was never honoured. Mothtrap sits open re-polling
+    // a feed, so a labeler catching up with a post is the ordinary case.
+    const key = `${item.post.uri}:${item.post.cid}:${labelFingerprint(item)}`
     let d = this.#cache.get(key)
     if (!d) {
       d = moderatePost(item.post, this.opts)
@@ -209,22 +228,34 @@ class Moderation {
    * graphic-media image doesn't take the words down with it.
    */
   cover(item: FeedItem): Cover {
-    if (this.#revealed.has(item.post.uri)) return NO_COVER
-    // Same as hidden(): an action taken this session outranks the fetched state,
-    // so a blocked author's pulled-in reply parent is covered immediately.
-    if (this.isBlocked(item.post.author)) {
+    const author = item.post.author
+    // A block is absolute and outranks everything, INCLUDING a prior reveal.
+    // Reading a post and then deciding to block its author is the ordinary
+    // order of events; checking `#revealed` first left exactly that post
+    // uncovered afterwards.
+    if (this.isBlocked(author)) {
       return { blur: true, media: false, reason: 'Blocked account', canReveal: false }
     }
-    if (this.isMuted(item.post.author)) {
-      return { blur: true, media: false, reason: 'Muted account', canReveal: true }
-    }
+
     const d = this.decisionFor(item)
     const list = d.ui('contentList')
     const media = d.ui('contentMedia')
-    // If any layer refuses override, offer no way in at all: a full cover on a
-    // porn-labeled post is overridable at list level but not at media level,
-    // and revealing via the outer one would walk straight past the inner.
+    // canReveal is the AND across every layer with an opinion, and it must be
+    // computed BEFORE any mute is considered. Returning the mute's permissive
+    // verdict early meant muting an author *unsealed* their no-override labels:
+    // a porn- or !hide-labelled post went from canReveal:false to revealable,
+    // so muting somebody weakened moderation of their content.
     const canReveal = !list.noOverride && !media.noOverride
+
+    // A reveal only clears the layers that permit override. Deliberately still
+    // honoured under a mute: you asked to see this one post, and a mute governs
+    // what arrives rather than what you've already chosen to open. A block is
+    // the hard boundary, and it's handled above.
+    if (this.#revealed.has(item.post.uri) && canReveal) return NO_COVER
+
+    if (this.isMuted(author)) {
+      return { blur: true, media: false, reason: 'Muted account', canReveal }
+    }
     if (list.filter || list.blur) {
       return {
         blur: true,
@@ -295,6 +326,19 @@ class Moderation {
     this.#blocked.set(actor.did, null) // suppress now, learn the uri in a moment
     try {
       const res = await blockActor(actor.did)
+      // The user can unblock while this is in flight — the menu already reads
+      // "Unblock", because isBlocked() is optimistically true. If they did,
+      // the overlay entry is gone, and writing the uri back would silently
+      // re-block them AND leave a public app.bsky.graph.block record they
+      // believe they removed. Undo it instead.
+      if (!this.#blocked.has(actor.did)) {
+        await unblockActor(res.uri).catch(() => {
+          // Best effort. Re-record it so the UI stops claiming they're
+          // unblocked when the record is demonstrably still there.
+          this.#blocked.set(actor.did, res.uri)
+        })
+        return
+      }
       this.#blocked.set(actor.did, res.uri)
     } catch (err) {
       this.#blocked.delete(actor.did)
@@ -305,8 +349,11 @@ class Moderation {
   async unblock(actor: Actor) {
     const uri = this.blockUri(actor)
     const prev = this.#blocked.get(actor.did)
+    // Delete FIRST: an in-flight block() checks for this entry after its await
+    // and treats its absence as "the user changed their mind", undoing the
+    // record it just created.
     this.#blocked.delete(actor.did)
-    if (!uri) return // block still in flight, or we never knew the record
+    if (!uri) return // in-flight (uri not known yet — block() will undo it)
     try {
       await unblockActor(uri)
     } catch (err) {

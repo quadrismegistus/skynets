@@ -46,11 +46,28 @@ describe('digestConsent gate', () => {
     expect(digestConsent.destination).toBe('cloud')
   })
 
-  it('permits everything once granted', () => {
+  it('permits the destination it was granted for', () => {
+    digestConsent.grant('ollama', 'https://mothtrap.blue/ollama')
+    expect(digestConsent.allows('ollama', 'https://mothtrap.blue/ollama')).toBe(true)
+    expect(digestConsent.pending).toBe(false)
+  })
+
+  // Consent is to send to a PARTICULAR place — the dialog names it. The endpoint
+  // can move afterwards (the deploy config is refetched at runtime, and the
+  // panel exposes a free-text URL field), and a blanket 'granted' would have
+  // carried the old answer to the new host silently.
+  it('re-asks when the endpoint moves after consent was given', () => {
+    digestConsent.grant('ollama', 'https://mothtrap.blue/ollama')
+    expect(digestConsent.allows('ollama', 'https://somewhere-else.example/ollama')).toBe(false)
+    expect(digestConsent.pending).toBe(true)
+  })
+
+  it('honours a grant with no recorded destination, then pins it', () => {
+    // Upgrade path: an answer stored before destinations were recorded.
     digestConsent.grant()
     expect(digestConsent.allows('ollama', 'https://mothtrap.blue/ollama')).toBe(true)
-    expect(digestConsent.allows('anthropic')).toBe(true)
-    expect(digestConsent.pending).toBe(false)
+    // …and having learned the host, a later move does re-ask.
+    expect(digestConsent.allows('ollama', 'https://elsewhere.example/ollama')).toBe(false)
   })
 
   it('stays blocked after declining, and does NOT re-raise the dialog', () => {
@@ -98,9 +115,11 @@ describe('digestConsent gate', () => {
     digestConsent.dismiss()
     expect(digestConsent.pending).toBe(false)
     expect(digestConsent.state).toBe('unasked') // NOT 'declined'
-    // …and it isn't reported as a block, so the panel doesn't claim the user
-    // turned it off when they merely clicked past the dialog.
-    expect(digestConsent.blocks('ollama', 'https://mothtrap.blue/ollama')).toBe(false)
+    // But it IS reported as blocking, so the panel offers the way back. Without
+    // that, a dismissal left the normal button label above a dead button —
+    // recreating the silent dead end dismiss() exists to avoid.
+    expect(digestConsent.blocks('ollama', 'https://mothtrap.blue/ollama')).toBe(true)
+    expect(digestConsent.blocks('ollama', 'http://localhost:11434')).toBe(false)
   })
 
   it('a dismissed dialog stays down for the session, not forever', () => {

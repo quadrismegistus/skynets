@@ -1,5 +1,6 @@
 <script lang="ts">
   import { digestConsent } from '../state/digestConsent.svelte'
+  import { digest } from '../state/digest.svelte'
 
   const base = import.meta.env.BASE_URL ?? '/'
   const cloud = $derived(digestConsent.destination === 'cloud')
@@ -61,7 +62,7 @@
 
       <div class="row">
         <button onclick={() => digestConsent.decline()}>No thanks</button>
-        <button class="primary" onclick={() => digestConsent.grant()}>Group my feed</button>
+        <button class="primary" onclick={() => digestConsent.grant(digest.provider, digest.ollamaUrl)}>Group my feed</button>
       </div>
     </div>
   </div>

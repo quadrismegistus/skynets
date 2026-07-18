@@ -502,10 +502,41 @@ describe('treeTargets', () => {
     expect(byId.get('r1')!.tx).toBeLessThan(byId.get('r2')!.tx) // r1 (older) on the left
   })
 
-  it('places a lone node at its own semantic anchor', () => {
+  it('centres a lone conversation rather than stranding it at its root', () => {
+    // There is nothing to rank a single conversation against, so it goes to the
+    // middle. It used to keep its root's own coordinates — which is by
+    // construction the oldest, quietest post — so a feed showing one thread
+    // parked it in a corner, and it then leapt the full diagonal as soon as a
+    // second conversation arrived. Continuous beats "accurate" for n=1.
     const [t] = treeTargets([mk('solo', { x: 0.25, y: 0.75 })], box)
-    expect(t.tx).toBeCloseTo(250)
-    expect(t.ty).toBeCloseTo(750)
+    expect(t.tx).toBeCloseTo(500)
+    expect(t.ty).toBeCloseTo(500)
+  })
+
+  it('does not strand a topic pill in 1970 when it has no reparented members', () => {
+    // Mid-thread members keep their real parent, so a pill can pass the
+    // 2-member gate and still have no children of its own. Its timestamp is
+    // then its whole subtree, and a 0 there ranked it oldest-on-canvas.
+    const posts = [
+      mk('op', { timestamp: 1000 }),
+      mk('r1', { timestamp: 2000, parent: 'op' }),
+      mk('r2', { timestamp: 3000, parent: 'op' }),
+      mk('other', { timestamp: 4000 }),
+    ]
+    // r1/r2 are mid-thread, so neither reparents — the pill would have no
+    // children at all. It is skipped rather than becoming a stranded root.
+    const combined = withTopicPills(posts, [{ sid: 'topic:x', members: ['r1', 'r2'] }])
+    expect(combined.find((c) => c.uri === 'topic:x')).toBeUndefined()
+
+    // A pill over genuine thread ROOTS still becomes a tree, and carries its
+    // members' recency rather than the epoch.
+    const roots = [mk('a', { timestamp: 1000 }), mk('b', { timestamp: 5000 }), mk('c', { timestamp: 9000 })]
+    const withPill = withTopicPills(roots, [{ sid: 'topic:y', members: ['a', 'b'] }])
+    const pill = withPill.find((x) => x.uri === 'topic:y')!
+    expect(pill.timestamp).toBe(5000) // newest member, not 0
+    const t = treeTargets(withPill, box)
+    const byId = new Map(t.map((x) => [x.id, x]))
+    expect(byId.get('topic:y')!.tx).toBeGreaterThan(0) // not pinned to 1970's corner
   })
 
   // A root is always the OLDEST post in its thread. Anchoring on it hauled every
