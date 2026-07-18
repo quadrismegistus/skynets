@@ -315,7 +315,11 @@
     position: absolute;
     top: 0;
     right: 0;
-    bottom: 0;
+    /* Stop above the bottom control bar rather than sliding under it. Raising
+       the panel's z-index instead would bury the Digest button that closes it —
+       the fix would hide its own undo. --bottom-chrome is the height Graph
+       already measures for the force sim's keep-out. */
+    bottom: calc(var(--bottom-chrome, 0px) + 8px);
     width: 340px;
     max-width: 88vw;
     background: var(--bg-elev);

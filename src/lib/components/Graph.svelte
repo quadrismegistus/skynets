@@ -1235,6 +1235,7 @@
 
 <div
   class="graph"
+  style="--bottom-chrome: {bottomChrome}px"
   bind:this={graphEl}
   bind:clientWidth={w}
   bind:clientHeight={h}
@@ -1525,8 +1526,24 @@
     <button class="digest-btn" onclick={() => (showDigest ? (showDigest = false) : summarize())} title="Summarize conversations">
       ✦ Digest
     </button>
-    <button class="load-more" onclick={() => load(true)} disabled={loading || !cursor}>
-      {loading ? 'Loading…' : 'Load more'}
+    <button
+      class="refresh"
+      class:spinning={loading}
+      onclick={() => load(true)}
+      disabled={loading || !cursor}
+      title={loading ? 'Loading…' : 'Load more posts'}
+      aria-label="Load more posts"
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </svg>
     </button>
   </div>
 
@@ -1826,6 +1843,38 @@
     background: color-mix(in srgb, var(--bg-elev) 88%, transparent);
     backdrop-filter: blur(6px);
     font-size: 0.82rem;
+  }
+  /* Was a "Load more" text button; an icon says the same thing in a third of
+     the width, which matters on a phone where the bottom bar is crowded. */
+  .refresh {
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    color: var(--text);
+    background: color-mix(in srgb, var(--bg-elev) 88%, transparent);
+    backdrop-filter: blur(6px);
+  }
+  .refresh svg {
+    /* Explicit size: the svg has only a viewBox, so without this it collapses
+       and the button renders empty. */
+    width: 17px;
+    height: 17px;
+    display: block;
+  }
+  .refresh:disabled {
+    opacity: 0.4;
+  }
+  .refresh.spinning svg {
+    animation: refresh-spin 0.9s linear infinite;
+  }
+  @keyframes refresh-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
   .err-toast {
     position: absolute;
