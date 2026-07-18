@@ -87,6 +87,29 @@ class DigestConsent {
     if (!this.allows(provider, ollamaUrl)) throw new ConsentRequired()
   }
 
+  /**
+   * Re-open the question from an explicit user action.
+   *
+   * `allows()` deliberately only raises the dialog when the answer is still
+   * `unasked`, so a declined user isn't nagged on every live-poll tick. That
+   * left no way back: declining once disabled the digest permanently and
+   * silently. This is the way back, and it must be reachable from the UI.
+   *
+   * No-op when nothing would leave the device — there is nothing to consent to.
+   */
+  ask(provider: string, ollamaUrl?: string) {
+    const dest = destinationOf(provider, ollamaUrl)
+    if (dest === 'local') return
+    this.destination = dest
+    this.pending = true
+  }
+
+  /** True when a declined answer is the reason the digest isn't running — so
+   * the UI can say so instead of showing an empty panel and a dead button. */
+  blocks(provider: string, ollamaUrl?: string): boolean {
+    return this.state === 'declined' && destinationOf(provider, ollamaUrl) !== 'local'
+  }
+
   grant() {
     this.state = 'granted'
     this.pending = false

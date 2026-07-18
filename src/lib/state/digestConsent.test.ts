@@ -66,6 +66,31 @@ describe('digestConsent gate', () => {
     expect(digestConsent.allows('ollama', 'http://localhost:11434')).toBe(true)
   })
 
+  // Declining once used to disable the digest permanently AND silently: allows()
+  // won't re-raise the dialog (correctly — that would nag on every poll tick),
+  // so without an explicit way back the feature was simply gone.
+  it('reports when a decline is what is blocking the digest', () => {
+    expect(digestConsent.blocks('ollama', 'https://mothtrap.blue/ollama')).toBe(false)
+    digestConsent.decline()
+    expect(digestConsent.blocks('ollama', 'https://mothtrap.blue/ollama')).toBe(true)
+    // …but not for someone whose model is local, where nothing was ever gated.
+    expect(digestConsent.blocks('ollama', 'http://localhost:11434')).toBe(false)
+  })
+
+  it('ask() re-opens the choice after a decline', () => {
+    digestConsent.decline()
+    expect(digestConsent.pending).toBe(false)
+    digestConsent.ask('ollama', 'https://mothtrap.blue/ollama')
+    expect(digestConsent.pending).toBe(true)
+    digestConsent.grant()
+    expect(digestConsent.allows('ollama', 'https://mothtrap.blue/ollama')).toBe(true)
+  })
+
+  it('ask() stays quiet when nothing would leave the device', () => {
+    digestConsent.ask('ollama', 'http://localhost:11434')
+    expect(digestConsent.pending).toBe(false)
+  })
+
   it('require() throws rather than letting a send through', () => {
     expect(() => digestConsent.require('ollama', 'https://mothtrap.blue/ollama')).toThrow(
       /permission/i,

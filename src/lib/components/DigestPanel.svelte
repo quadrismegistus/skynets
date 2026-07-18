@@ -1,6 +1,7 @@
 <script lang="ts">
   import { digest } from '../state/digest.svelte'
   import { deploy } from '../state/deploy.svelte'
+  import { digestConsent } from '../state/digestConsent.svelte'
   import { convoColor, exemplars, MODELS, type Conversation } from '../api/llm'
   import { formatSize } from '../api/ollama'
   import { reposter } from '../api/post'
@@ -18,6 +19,10 @@
 
   const byUri = $derived(new Map(items.map((i) => [i.post.uri, i])))
   const convos = $derived(digest.digest?.conversations ?? [])
+  // Declining consent used to disable the digest silently and permanently: every
+  // attempt threw, was caught as a non-error, and the panel just said "press
+  // Summarize" at a button that did nothing. Surface it, and offer the way back.
+  const consentBlocked = $derived(digestConsent.blocks(digest.provider, digest.ollamaUrl))
   // Config folds away once there's a digest, so the results get the room.
   let showConfig = $state(digest.digest == null)
   const actionLabel = $derived(
@@ -91,8 +96,12 @@
   </header>
 
   <div class="actionbar">
-    <button class="go wide" onclick={onsummarize} disabled={digest.loading || items.length === 0}>
-      {actionLabel}
+    <button
+      class="go wide"
+      onclick={() => (consentBlocked ? digestConsent.ask(digest.provider, digest.ollamaUrl) : onsummarize())}
+      disabled={digest.loading || items.length === 0}
+    >
+      {consentBlocked ? 'Turn on topic grouping' : actionLabel}
     </button>
     <button
       class="cfg-toggle"
@@ -265,6 +274,11 @@
         <pre class="stream">{liveStream}</pre>
       {/if}
     </div>
+  {:else if consentBlocked}
+    <p class="empty">
+      Topic grouping is off — you chose not to send post text to the model. Nothing else in
+      Mothtrap is affected. Use the button above to change that.
+    </p>
   {:else if convos.length === 0}
     <p class="empty">No digest yet — press Summarize.</p>
   {/if}
