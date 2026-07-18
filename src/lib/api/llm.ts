@@ -85,7 +85,7 @@ function postText(item: FeedItem): string {
 function quoteContext(item: FeedItem): string {
   const q = postQuote(item)
   if (!q || !q.text) return ''
-  return ` [quoting @${q.handle}: "${q.text.replace(/\s+/g, ' ').slice(0, 160)}"]`
+  return ` [quoting: "${q.text.replace(/\s+/g, ' ').slice(0, 160)}"]`
 }
 
 /** Choose an Ollama context window that fits the whole prompt plus room for the
@@ -112,16 +112,15 @@ function promptLines(items: FeedItem[], postByUri?: Map<string, FeedItem>): stri
   return items
     .map((i, n) => {
       const p = i.post
-      const handle = p.author.handle
       let t = postText(i).replace(/\s+/g, ' ').slice(0, 280)
       const pu = parentUriOf(i)
       const parent = pu && postByUri ? postByUri.get(pu) : undefined
       if (parent) {
         const pt = postText(parent).replace(/\s+/g, ' ').slice(0, 160)
-        t = `[re @${parent.post.author.handle}: "${pt}"] ${t}`
+        t = `[re: "${pt}"] ${t}`
       }
       t += quoteContext(i)
-      return `[${n}]\t@${handle}\t♥${p.likeCount ?? 0} ↻${p.repostCount ?? 0} ↺${p.replyCount ?? 0}\t${t}`
+      return `[${n}]\t♥${p.likeCount ?? 0} ↻${p.repostCount ?? 0} ↺${p.replyCount ?? 0}\t${t}`
     })
     .join('\n')
 }
@@ -546,7 +545,7 @@ function demoRoll(newItems: FeedItem[]): RollUpdate[] {
 /** Bump when LABEL_SYSTEM changes materially. Persisted labels are keyed by
  * model + prompt version, so a better prompt re-asks every post — including
  * the failed attempts (empty labels) a fixed prompt would freeze forever. */
-export const LABEL_PROMPT_V = 2
+export const LABEL_PROMPT_V = 3
 
 const LABEL_SYSTEM =
   'You label a single social-media post with its topic. Reply with ONLY a 2–4 word topic label in sentence case (capitalize the first word; keep proper nouns and acronyms as-is) — no quotes, no punctuation, no explanation, no "Label:" prefix. When the post replies to or quotes another post (shown in brackets), base the label on what that referenced content is about, not on the reaction itself. Prefer the concrete subject (a person, event, or thing) over a vague category. Derive the label from THIS post only; never reuse wording from these instructions.'
@@ -638,9 +637,17 @@ async function labelOne(item: FeedItem, opts: SummarizeOpts): Promise<string> {
   const pu = parentUriOf(item)
   const parent = pu && opts.postByUri ? opts.postByUri.get(pu) : undefined
   const parentCtx = parent
-    ? ` [replying to @${parent.post.author.handle}: "${postText(parent).replace(/\s+/g, ' ').slice(0, 200)}"]`
+    ? ` [replying to: "${postText(parent).replace(/\s+/g, ' ').slice(0, 200)}"]`
     : ''
-  const content = `Post by @${item.post.author.handle}:\n"${body}"${parentCtx}${quoteContext(item)}`
+  // NO HANDLES. Labelling is pure content summarisation — the prompt never
+  // refers to the author, only to what the post and anything it references are
+  // about. Sending handles put third-party identities on the wire for nothing,
+  // and measurably hurt: given a vague post the model reaches for the handle as
+  // the subject, so "@quietcrit: people are being weird about this" came back
+  // labelled "Quiet Crit Post" instead of "Public Reaction". Measured across
+  // qwen3.5:4b and the deployed qwen2.5:1.5b, removing them cost no label
+  // quality at all.
+  const content = `Post:\n"${body}"${parentCtx}${quoteContext(item)}`
   return cleanLabel(await chatText(LABEL_SYSTEM, content, opts))
 }
 

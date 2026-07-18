@@ -36,7 +36,8 @@ describe('labelFeed', () => {
     const out = await labelFeed([reply], { provider: 'ollama', model: 'm', ollamaUrl: 'http://x', postByUri })
     expect(out.get('at://r/1')).toBe('Gendered cooking') // cleaned + sentence-cased
     const content = JSON.parse(fetchMock.mock.calls[0][1].body as string).messages[1].content as string
-    expect(content).toContain('replying to @anon.test')
+    expect(content).toContain('[replying to: "')
+    expect(content).not.toContain('@') // no handles: labelling is content-only
     expect(content).toContain('pot noodle')
   })
 })
@@ -118,7 +119,8 @@ describe('summarizeFeed', () => {
     await summarizeFeed([a], { provider: 'anthropic', apiKey: 'sk-ant-test', model: 'm' })
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string)
     const content = body.messages[0].content as string
-    expect(content).toContain('quoting @bob.test')
+    expect(content).toContain('quoting: ')
+    expect(content).not.toContain('@bob.test')
     expect(content).toContain('the original insight')
   })
 
@@ -301,7 +303,7 @@ describe('summarizeFeed', () => {
     })
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)
     const userMsg = body.messages.find((m: { role: string }) => m.role === 'user').content
-    expect(userMsg).toContain('re @alice.test')
+    expect(userMsg).toContain('[re: ')
     expect(userMsg).toContain('the original claim') // parent text is present
   })
 

@@ -36,10 +36,12 @@
       <p class="what">To label your feed, these are sent {cloud ? 'to a third-party AI provider' : 'to the Mothtrap server'}:</p>
       <ul>
         <li>the text of the posts on screen</li>
-        <li><strong>the handles of the people who wrote them</strong></li>
-        <li>for a reply or quote, the post it responds to</li>
+        <li>for a reply or quote, the text of the post it responds to</li>
       </ul>
-      <p class="fine">Each post is sent once; its label is then cached on your device.</p>
+      <p class="fine">
+        <strong>No names or handles</strong> — labelling is a summary of what a post is about, so
+        who wrote it is never sent. Each post is sent once; its label is then cached on your device.
+      </p>
 
       {#if cloud}
         <p class="note">

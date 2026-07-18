@@ -101,10 +101,10 @@
           {consentState === 'granted' ? 'On' : consentState === 'declined' ? 'Off — you declined' : 'Not yet answered'}
         </p>
         <p class="blurb">
-          Grouping your feed into topics sends the text of the posts on screen, and
-          <strong>the handles of the people who wrote them</strong>, to
+          Grouping your feed into topics sends the text of the posts on screen — and nothing else,
+          <strong>no names or handles</strong> — to
           {destination === 'cloud' ? 'a third-party AI provider' : 'the Mothtrap server'}. It's used
-          to answer that one request and discarded — not stored, not logged, never passed on. Full
+          to answer that one request and discarded: not stored, not logged, never passed on. Full
           detail on the <a href="{base}privacy.html" target="_blank" rel="noreferrer">privacy page</a>.
         </p>
         <div class="actions">
