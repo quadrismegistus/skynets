@@ -61,8 +61,8 @@
       {#if sent}
         <h2>Report sent</h2>
         <p class="blurb">
-          It's gone to the moderation service for {item.post.author.handle}'s server and to any
-          labellers you subscribe to. Mothtrap doesn't review reports itself.
+          It's been submitted to the moderation service for your Bluesky account — the people who
+          can remove a post or suspend an account. Mothtrap doesn't review reports itself.
         </p>
         <p class="blurb">
           Reporting doesn't hide anything on its own — you can also mute or block this account from
