@@ -50,6 +50,7 @@
   const PANEL_W = 340 // DigestPanel width; nodes lay out left of it when open
   const MIN_SIZE = 34
   const MAX_SIZE = 66
+
   const CARD_W = 360
 
   let items = $state<FeedItem[]>([])
@@ -84,12 +85,42 @@
 
   let w = $state(0)
   let h = $state(0)
+
+  // ---- Pill mode (speculative) ---------------------------------------------
+  // Posts render as avatar + opening line instead of a bare avatar, so the graph
+  // can be read without hovering. A pill is roughly four times an avatar's
+  // footprint, so far fewer posts fit — that is the trade, not a side effect.
+  const PILL_H = 56
+  // Narrow canvases get a narrower pill, so a phone still fits one comfortably.
+  // ?pills=1 turns it on without a settings control, so the idea can be looked
+  // at on any build (and screenshotted) before deciding it deserves UI.
+  const pillsParam = typeof location !== 'undefined' && new URLSearchParams(location.search).has('pills')
+  const pill = $derived(
+    settings.postNodes || pillsParam
+      ? // On a phone the pill takes nearly the full width: PAD_X is sized for
+        // avatars, and honouring it here wastes a third of a narrow canvas.
+        { w: Math.round(Math.min(212, Math.max(148, w - 32))), h: PILL_H }
+      : undefined,
+  )
+  /** Half of what geometrically fits: the rest is room for the force layout to
+   * spread a conversation rather than tile it. */
+  const pillBudget = $derived.by(() => {
+    if (!pill) return settings.nodeLimit
+    // By area, not whole columns: on a narrow canvas the column count rounds
+    // down to 1 and throws away most of the height.
+    const cell = (pill.w + 16) * (pill.h + 22)
+    const area = Math.max(0, w - 24) * Math.max(0, h - PAD_TOP - 60)
+    return Math.max(8, Math.min(settings.nodeLimit, Math.round((area / cell) * 0.5)))
+  })
   // Bottom UI chrome, measured so the sim keeps nodes out of the corners it
   // occupies (measured into bottomChrome; the canvas ends above the bar).
   let gearEl = $state<HTMLElement>()
   let hudEl = $state<HTMLElement>()
   // Measured height of the bottom control bar — the canvas ends above it.
   let bottomChrome = $state(0)
+  /** The same bar's top edge WITHOUT the sim's padding, so a panel can sit
+   * flush against it rather than leaving a gap the graph shows through. */
+  let bottomBar = $state(0)
 
   // Live node positions, written by the simulation each tick.
   let positions = $state<Map<string, { x: number; y: number }>>(new Map())
@@ -189,7 +220,7 @@
     return planView(
       convos.filter((c) => c.hasPrimary || forceFull.has(c.id)),
       {
-        budget: settings.nodeLimit,
+        budget: pillBudget,
         // Reply chains OFF = conversations render collapsed unless mapped.
         autoUnrollMax: settings.replyChains ? 10 : 0,
         perAuthorMax: 3,
@@ -366,10 +397,14 @@
       innerH,
       minSize: MIN_SIZE,
       maxSize: MAX_SIZE,
+      pill,
     })
     const posts: Target[] = []
     const pillMap = new Map<string, Target>()
-    for (const t of all) (pillSids.has(t.id) ? pillMap.set(t.id, t) : posts.push(t))
+    // Topic pills are small labels, not posts: they must not reserve a post
+    // pill's footprint or they shove the conversation apart around themselves.
+    for (const t of all)
+      pillSids.has(t.id) ? pillMap.set(t.id, { ...t, hw: undefined, hh: undefined }) : posts.push(t)
     return { posts, pills: pillMap }
   })
   const targets = $derived(treeLayout.posts)
@@ -870,6 +905,7 @@
     const links = [...visibleEdges.map((e) => ({ source: e.from, target: e.to })), ...topicLinks]
     // Clamp nodes inside the canvas so they can't drift up under the top bar (the
     // graph starts below it, but the sim could otherwise push a node to the edge).
+    layout?.setCollision(!!pill) // circles vs rectangles
     layout?.setBounds(w, h, 18, Math.max(24, bottomChrome))
     layout?.update(t, links, new Set(pinned), settings.cohesion)
   })
@@ -894,11 +930,23 @@
     // corner edges, and nodes crossing that x-line flip-flopped between two
     // bottom bounds (sim vs clamp, every tick — visible jitter).
     let inset = 0
+    // The bar's true top edge, kept separate from the sim's keep-out. The
+    // keep-out adds 10px of breathing room, which is right for nodes and wrong
+    // for the digest panel: reusing it left an 18px strip between panel and bar
+    // with the graph showing through.
+    let barTop = 0
     const gr = gearEl?.getBoundingClientRect()
-    if (gr) inset = Math.max(inset, g.bottom - gr.top + 10)
+    if (gr) {
+      barTop = Math.max(barTop, g.bottom - gr.top)
+      inset = Math.max(inset, g.bottom - gr.top + 10)
+    }
     const hr = hudEl?.getBoundingClientRect()
-    if (hr) inset = Math.max(inset, g.bottom - hr.top + 10)
+    if (hr) {
+      barTop = Math.max(barTop, g.bottom - hr.top)
+      inset = Math.max(inset, g.bottom - hr.top + 10)
+    }
     bottomChrome = inset
+    bottomBar = barTop
   })
 
   // Connect replies: pull in the parents of any loaded reply we don't have yet
@@ -1235,7 +1283,7 @@
 
 <div
   class="graph"
-  style="--bottom-chrome: {bottomChrome}px"
+  style="--bottom-chrome: {bottomChrome}px; --bottom-bar: {bottomBar}px"
   bind:this={graphEl}
   bind:clientWidth={w}
   bind:clientHeight={h}
@@ -1296,6 +1344,7 @@
       px={p.px}
       py={p.py}
       size={p.size}
+      {pill}
       hasReplies={(edgeCount.get(p.node.uri) ?? 0) > 0}
       active={hovered === p.node.uri}
       pinned={pinned.has(p.node.uri)}

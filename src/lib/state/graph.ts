@@ -208,12 +208,17 @@ export interface TreeLayoutBox {
   innerH: number
   minSize: number
   maxSize: number
+  /** Pill mode: nodes are w x h rectangles rather than circles up to maxSize. */
+  pill?: { w: number; h: number }
 }
 export interface TreeTarget {
   id: string
   tx: number
   ty: number
   r: number
+  /** Half-extents, set only in pill mode (see rectCollide in forceLayout). */
+  hw?: number
+  hh?: number
 }
 
 /**
@@ -227,13 +232,15 @@ export interface TreeTarget {
  * Pure (no DOM / reactive state) so the layout math is testable in isolation.
  */
 export function treeTargets(nodes: TreeNode[], box: TreeLayoutBox): TreeTarget[] {
-  const { padX, padTop, innerW, innerH, minSize, maxSize } = box
+  const { padX, padTop, innerW, innerH, minSize, maxSize, pill } = box
   // Grid units must EXCEED a node's collision footprint (r up to maxSize/2 plus
   // the collide padding, doubled for two neighbours) or the tidy tree gets shoved
   // into a tangle by the collision force. Rows are taller than columns are wide
   // so a thread reads top-down as a conversation.
-  const X_UNIT = maxSize + 18
-  const Y_UNIT = maxSize + 30
+  // A pill is wide and short, so its columns need far more room than its rows —
+  // the opposite of the avatar case, where rows are the taller unit.
+  const X_UNIT = pill ? pill.w + 16 : maxSize + 18
+  const Y_UNIT = pill ? pill.h + 22 : maxSize + 30
 
   const byUri = new Map(nodes.map((n) => [n.uri, n]))
   const childrenOf = new Map<string, TreeNode[]>()
@@ -345,6 +352,7 @@ export function treeTargets(nodes: TreeNode[], box: TreeLayoutBox): TreeTarget[]
       tx: rootX + o.dx,
       ty: rootY + o.dy,
       r: (minSize + n.sizeRank * (maxSize - minSize)) / 2, // size stays the node's own
+      ...(pill ? { hw: pill.w / 2, hh: pill.h / 2 } : {}),
     }
   })
 }

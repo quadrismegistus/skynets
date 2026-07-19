@@ -6,6 +6,8 @@ interface Persisted {
   /** Persistence-format version. Absent = v1 (see migrateV1). */
   v?: number
   nodeLimit?: number
+  /** Speculative: render posts as readable pills instead of avatar circles. */
+  postNodes?: boolean
   selectMode?: SelectMode
   autoCycle?: boolean
   cycleInterval?: number
@@ -41,6 +43,7 @@ export const DEFAULTS = {
   followsOnly: false,
   hideMutedReplies: false,
   debugMode: false,
+  postNodes: false,
 }
 
 /** What the defaults were when the v1 (persist-everything) format was live.
@@ -121,6 +124,7 @@ class Settings {
   followsOnly = $state(DEFAULTS.followsOnly)
   hideMutedReplies = $state(DEFAULTS.hideMutedReplies)
   debugMode = $state(DEFAULTS.debugMode)
+  postNodes = $state(DEFAULTS.postNodes)
 
   constructor() {
     const p = load()

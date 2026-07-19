@@ -18,6 +18,10 @@ export interface SimNode extends SimulationNodeDatum {
   ty: number
   /** Radius (px), for collision. */
   r: number
+  /** Half-extents (px) when the node is a rectangle rather than a circle.
+   * Set only in pill mode; see setCollision. */
+  hw?: number
+  hh?: number
 }
 
 export interface Target {
@@ -25,6 +29,62 @@ export interface Target {
   tx: number
   ty: number
   r: number
+  hw?: number
+  hh?: number
+}
+
+/**
+ * Axis-aligned rectangle collision, for pill-shaped nodes.
+ *
+ * d3's forceCollide is circular, and a circle circumscribing a 208x56 pill
+ * reserves about four times the area the pill occupies — enough that the graph
+ * reads as a handful of islands instead of a conversation. This resolves the
+ * real overlap instead, separating each pair along whichever axis they overlap
+ * least, so pills stack closely in rows the way they look like they should.
+ *
+ * O(n^2), which is fine: pill mode caps the graph at a few dozen nodes, and a
+ * quadtree would cost more in complexity than it saves in a thousand pair
+ * checks per tick.
+ */
+function rectCollide(pad: number, strength = 0.7, iterations = 2) {
+  let nodes: SimNode[] = []
+  // Deliberately ignores alpha, as d3's own forceCollide does. Scaling the
+  // push by alpha means separation weakens as the sim cools, so overlapping
+  // pills simply freeze that way instead of resolving — which is exactly what
+  // the first version of this did.
+  const force = () => {
+    for (let pass = 0; pass < iterations; pass++)
+    for (let i = 0; i < nodes.length; i++) {
+      const a = nodes[i]
+      if (a.x == null || a.y == null) continue
+      for (let j = i + 1; j < nodes.length; j++) {
+        const b = nodes[j]
+        if (b.x == null || b.y == null) continue
+        const dx = b.x - a.x
+        const dy = b.y - a.y
+        const ox = (a.hw ?? a.r) + (b.hw ?? b.r) + pad - Math.abs(dx)
+        if (ox <= 0) continue
+        const oy = (a.hh ?? a.r) + (b.hh ?? b.r) + pad - Math.abs(dy)
+        if (oy <= 0) continue
+        // Separate along the axis of least penetration: pills that merely graze
+        // side-on shouldn't be flung vertically.
+        const k = strength * 0.5
+        if (ox < oy) {
+          const push = (dx < 0 ? -1 : 1) * ox * k
+          a.vx = (a.vx ?? 0) - push
+          b.vx = (b.vx ?? 0) + push
+        } else {
+          const push = (dy < 0 ? -1 : 1) * oy * k
+          a.vy = (a.vy ?? 0) - push
+          b.vy = (b.vy ?? 0) + push
+        }
+      }
+    }
+  }
+  force.initialize = (n: SimNode[]) => {
+    nodes = n
+  }
+  return force
 }
 
 export interface SimLink {
@@ -63,6 +123,15 @@ export class ForceLayout {
     this.sim.stop()
   }
 
+  /** Circles (avatars) or rectangles (post pills). Cheap to flip: the sim keeps
+   * its nodes and positions, so toggling re-settles rather than restarting. */
+  setCollision(rect: boolean) {
+    this.sim.force(
+      'collide',
+      rect ? rectCollide(9) : forceCollide<SimNode>((d) => d.r + 9).strength(0.9),
+    )
+  }
+
   /** Keep every node fully within the canvas (below `top`, above `bottom`, and
    * inside the left/right edges), respecting its radius. */
   setBounds(w: number, h: number, top: number, bottom: number) {
@@ -72,9 +141,10 @@ export class ForceLayout {
     const { w, h, top, bottom } = this.#bounds
     if (!w || !h) return
     for (const n of this.#nodes) {
-      const r = n.r
-      if (n.x != null) n.x = Math.max(r + 2, Math.min(w - r - 2, n.x))
-      if (n.y != null) n.y = Math.max(top + r, Math.min(h - bottom - r, n.y))
+      const hw = n.hw ?? n.r
+      const hh = n.hh ?? n.r
+      if (n.x != null) n.x = Math.max(hw + 2, Math.min(w - hw - 2, n.x))
+      if (n.y != null) n.y = Math.max(top + hh, Math.min(h - bottom - hh, n.y))
     }
   }
 
@@ -120,11 +190,13 @@ export class ForceLayout {
         const near = anchorFor(t.id)
         const sx = near?.x != null ? near.x + (Math.random() - 0.5) * 24 : t.tx
         const sy = near?.y != null ? near.y + (Math.random() - 0.5) * 24 : t.ty
-        node = { id: t.id, x: sx, y: sy, tx: t.tx, ty: t.ty, r: t.r }
+        node = { id: t.id, x: sx, y: sy, tx: t.tx, ty: t.ty, r: t.r, hw: t.hw, hh: t.hh }
       }
       node.tx = t.tx
       node.ty = t.ty
       node.r = t.r
+      node.hw = t.hw
+      node.hh = t.hh
       // Pinned nodes are fixed at their current position (fx/fy); others are free.
       if (pinned.has(t.id)) {
         node.fx = node.x ?? t.tx

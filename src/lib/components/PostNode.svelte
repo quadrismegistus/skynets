@@ -10,6 +10,9 @@
     px: number
     py: number
     size: number
+    /** Pill mode: render avatar + the opening line of the post, at this fixed
+     * w x h, instead of a bare avatar circle. */
+    pill?: { w: number; h: number }
     hasReplies: boolean
     active: boolean
     pinned: boolean
@@ -32,6 +35,7 @@
     px,
     py,
     size,
+    pill,
     hasReplies,
     active,
     pinned,
@@ -48,6 +52,13 @@
   }: Props = $props()
 
   const avatar = $derived(node.item.post.author.avatar)
+  // The pill shows the opening of the post. CSS line-clamps to two lines, so
+  // this only has to stop the DOM carrying a whole thread's worth of text.
+  const preview = $derived.by(() => {
+    const rec = node.item.post.record
+    const text = AppBskyFeedPost.isRecord(rec) ? rec.text.trim() : ''
+    return text.length > 160 ? text.slice(0, 160) + '…' : text
+  })
   const repost = $derived(reposterProfile(node.item))
   // A node is too small to explain itself: it only signals "covered". The
   // reason and the way in live on the card, which has room for both.
@@ -90,12 +101,13 @@
 
 <div
   class="wrap"
+  class:pill={!!pill}
   class:active
   class:pinned
   class:ghost
   class:unfollowed
   class:thread={node.isThreadRoot}
-  style="left: {px}px; top: {py}px; width: {size}px; height: {size}px;{accent ? ` --accent-topic: ${accent};` : ''}"
+  style="left: {px}px; top: {py}px; width: {pill ? pill.w : size}px; height: {pill ? pill.h : size}px;{accent ? ` --accent-topic: ${accent};` : ''}"
   role="group"
   onpointerenter={(e) => e.pointerType === 'mouse' && onhover(node.uri)}
   onpointerleave={(e) => e.pointerType === 'mouse' && onhover(null)}
@@ -118,13 +130,23 @@
     onclick={() => !dragMoved && onclick(node)}
     ondblclick={() => !dragMoved && ondblclick(node)}
   >
-    {#if avatar}
-      <img src={avatar} alt={authorName(node.item)} draggable="false" />
-    {:else}
-      <span class="initial">{authorName(node.item).charAt(0).toUpperCase()}</span>
-    {/if}
-    {#if cover.blur}
-      <span class="cover-mark" title={cover.reason} aria-hidden="true">⚠</span>
+    <span class="face">
+      {#if avatar}
+        <img src={avatar} alt={authorName(node.item)} draggable="false" />
+      {:else}
+        <span class="initial">{authorName(node.item).charAt(0).toUpperCase()}</span>
+      {/if}
+      {#if cover.blur}
+        <span class="cover-mark" title={cover.reason} aria-hidden="true">⚠</span>
+      {/if}
+    </span>
+    {#if pill}
+      <span class="say">
+        <span class="who">{authorName(node.item)}</span>
+        <!-- Covered posts stay covered here too: the pill would otherwise print
+             in plain text exactly what the blurred avatar is hiding. -->
+        <span class="text">{cover.blur ? cover.reason : preview}</span>
+      </span>
     {/if}
   </button>
 
@@ -259,6 +281,60 @@
     font-weight: 700;
     color: var(--text-dim);
   }
+  /* The avatar lives in its own box so the pill can set text beside it. In
+     circle mode the box just fills the node, so nothing about it changes. */
+  .face {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+  }
+
+  /* ---- Pill mode ---------------------------------------------------------
+     Avatar left, the opening of the post right. Speculative: the graph becomes
+     readable without hovering every node, at the cost of far fewer posts on
+     screen at once. */
+  .wrap.pill .node {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 9px;
+    padding: 0 13px 0 7px;
+    border-radius: 999px;
+    text-align: left;
+  }
+  .wrap.pill .face {
+    flex: 0 0 40px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+  }
+  .say {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0; /* without this the text refuses to clamp and the pill bulges */
+  }
+  .who {
+    font-size: 0.62rem;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .say .text {
+    font-size: 0.72rem;
+    line-height: 1.25;
+    color: var(--text);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
   .node {
     position: relative;
     z-index: 1;
