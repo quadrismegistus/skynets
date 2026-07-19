@@ -1300,7 +1300,11 @@
     <div class="axis y-axis">← quieter · louder →</div>
     <div class="axis x-axis">← last active: older · newer →</div>
   {/if}
-  <div class="axis legend"><span class="dot"></span> size = replies</div>
+  <!-- Pills are a fixed size, so the legend would be describing an encoding
+       that is not on screen. -->
+  {#if !pill}
+    <div class="axis legend"><span class="dot"></span> size = replies</div>
+  {/if}
 
   <svg class="edges" width={w} height={h}>
     <defs>

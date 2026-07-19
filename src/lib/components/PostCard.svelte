@@ -88,10 +88,42 @@
   )
   let showRtProfile = $state(false)
   let rtHoverTimer: ReturnType<typeof setTimeout> | undefined
-  function enterRt() {
+  /**
+   * The profile popover is positioned FIXED, for the same reason the ⋯ menu
+   * below is: the card is `overflow: hidden auto`, so an absolutely-positioned
+   * popover is clipped by the card and scrolls it instead of overlaying it —
+   * you had to scroll the card to read the bottom of a profile.
+   *
+   * Fixed needs the same flip: opening downward near the foot of the screen
+   * runs the popover off it, and opening upward near the top puts it under the
+   * topbar, which eats pointer events.
+   */
+  const POP_W = 240 // .profile-hover is 15rem
+  type Anchor = { left: number; top: number; bottom: number }
+  function anchorOf(e: MouseEvent): Anchor {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    return { left: r.left, top: r.top, bottom: r.bottom }
+  }
+  /** MEASURED, not assumed — a profile with a long bio is taller than one
+   * without, so a hardcoded height would flip at the wrong moment. */
+  function popPos(a: Anchor | null, h: number) {
+    if (typeof window === 'undefined' || !a) return { left: 0, top: 0 }
+    const below = a.bottom + 6
+    const top = below + h > window.innerHeight - 8 ? Math.max(TOPBAR_SAFE, a.top - 6 - h) : below
+    const left = Math.min(Math.max(8, a.left), Math.max(8, window.innerWidth - 8 - POP_W))
+    return { left, top }
+  }
+  let rtAnchor = $state<Anchor | null>(null)
+  let rtPopH = $state(0)
+  const rtPop = $derived(popPos(rtAnchor, rtPopH))
+
+  function enterRt(e: MouseEvent) {
     if (!rtAuthor) return
     clearTimeout(rtHoverTimer)
     profiles.ensure(rtAuthor.did)
+    // Anchor to the name, not to the popover — this same handler runs when the
+    // pointer crosses onto the popover itself.
+    if (!showRtProfile) rtAnchor = anchorOf(e)
     showRtProfile = true
   }
   function leaveRt() {
@@ -197,9 +229,14 @@
   // from flickering as the pointer crosses the small gap to it.
   let showProfile = $state(false)
   let hoverTimer: ReturnType<typeof setTimeout> | undefined
-  function enterAvatar() {
+  let profileAnchor = $state<Anchor | null>(null)
+  let profilePopH = $state(0)
+  const profilePop = $derived(popPos(profileAnchor, profilePopH))
+
+  function enterAvatar(e: MouseEvent) {
     clearTimeout(hoverTimer)
     profiles.ensure(item.post.author.did)
+    if (!showProfile) profileAnchor = anchorOf(e)
     showProfile = true
   }
   function leaveAvatar() {
@@ -236,7 +273,14 @@
         <span class="rt-name" onmouseenter={enterRt} onmouseleave={leaveRt}>
           {rt.name}
           {#if showRtProfile}
-            <div class="profile-pop" onmouseenter={enterRt} onmouseleave={leaveRt} role="tooltip">
+            <div
+              class="profile-pop"
+              style="left: {rtPop.left}px; top: {rtPop.top}px"
+              bind:clientHeight={rtPopH}
+              onmouseenter={enterRt}
+              onmouseleave={leaveRt}
+              role="tooltip"
+            >
               <ProfileHover author={rtAuthor} />
             </div>
           {/if}
@@ -290,7 +334,14 @@
         <div class="avatar avatar-blank"></div>
       {/if}
       {#if showProfile}
-        <div class="profile-pop" onmouseenter={enterAvatar} onmouseleave={leaveAvatar} role="tooltip">
+        <div
+          class="profile-pop"
+          style="left: {profilePop.left}px; top: {profilePop.top}px"
+          bind:clientHeight={profilePopH}
+          onmouseenter={enterAvatar}
+          onmouseleave={leaveAvatar}
+          role="tooltip"
+        >
           <ProfileHover author={item.post.author} />
         </div>
       {/if}
@@ -659,10 +710,9 @@
   }
   /* Profile preview popover — hangs below-right of the avatar, above the card. */
   .profile-pop {
-    position: absolute;
-    top: calc(100% + 6px);
-    left: 0;
-    z-index: 20;
+    /* Fixed, not absolute: see popPos. Absolute meant the card clipped it. */
+    position: fixed;
+    z-index: 60;
   }
   /* The name/handle column absorbs all the slack in the head, so the Follow
      button and timestamp are the only things against the right edge and land in
