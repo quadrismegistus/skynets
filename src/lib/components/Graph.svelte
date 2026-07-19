@@ -1250,9 +1250,73 @@
   // Releasing lets it drift back to its semantic spot — unless it's pinned
   // (by a normal click), in which case it stays where it was dropped.
   let graphEl: HTMLDivElement
-  function onNodeDrag(uri: string, clientX: number, clientY: number) {
+  /**
+   * Pan and zoom. The simulation is untouched -- it keeps working in graph
+   * coordinates and knows nothing about the view -- so panning cannot disturb
+   * the layout the way seeding the sim off-screen did.
+   */
+  const view = $state({ x: 0, y: 0, k: 1 })
+  const ZOOM_MIN = 0.35
+  const ZOOM_MAX = 2.5
+  const atRest = $derived(view.x === 0 && view.y === 0 && view.k === 1)
+
+  /** Screen point -> graph coordinates, the inverse of the layer's transform.
+   * Anything reading pointer positions has to go through this now. */
+  function toGraph(clientX: number, clientY: number) {
     const r = graphEl.getBoundingClientRect()
-    layout?.dragTo(uri, clientX - r.left, clientY - r.top)
+    return { x: (clientX - r.left - view.x) / view.k, y: (clientY - r.top - view.y) / view.k }
+  }
+
+  function recentre() {
+    view.x = 0
+    view.y = 0
+    view.k = 1
+  }
+
+  function onWheel(e: WheelEvent) {
+    if (!graphEl) return
+    e.preventDefault()
+    const r = graphEl.getBoundingClientRect()
+    const px = e.clientX - r.left
+    const py = e.clientY - r.top
+    const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, view.k * Math.exp(-e.deltaY * 0.0015)))
+    // Keep the point under the cursor fixed, so zoom feels like it happens where
+    // you are looking rather than at the origin.
+    view.x = px - ((px - view.x) / view.k) * next
+    view.y = py - ((py - view.y) / view.k) * next
+    view.k = next
+  }
+
+  /** Drag the empty canvas to pan. Nodes, cards and chrome keep their own
+   * handlers -- starting a pan on top of them would fight the drag. */
+  function onCanvasPointerDown(e: PointerEvent) {
+    if (e.button !== 0) return
+    const t = e.target as HTMLElement
+    if (t.closest('.wrap, .card, .config-wrap, .hud, .panel, .digest-btn, .topic-node')) return
+    const startX = e.clientX
+    const startY = e.clientY
+    const baseX = view.x
+    const baseY = view.y
+    let panned = false
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX
+      const dy = ev.clientY - startY
+      if (!panned && Math.hypot(dx, dy) < 4) return
+      panned = true
+      view.x = baseX + dx
+      view.y = baseY + dy
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+
+  function onNodeDrag(uri: string, clientX: number, clientY: number) {
+    const p = toGraph(clientX, clientY)
+    layout?.dragTo(uri, p.x, p.y)
   }
   function onNodeDragEnd(uri: string) {
     layout?.dragEnd(uri, pinned.has(uri))
@@ -1426,12 +1490,23 @@
 
 <svelte:window onkeydown={onKey} />
 
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="graph"
+  role="application"
+  aria-label="Conversation graph"
   style="--bottom-chrome: {bottomChrome}px; --bottom-bar: {bottomBar}px"
   bind:this={graphEl}
   bind:clientWidth={w}
   bind:clientHeight={h}
+  onwheel={onWheel}
+  onpointerdown={onCanvasPointerDown}
+  ondblclick={(e) => {
+    // Double-click empty canvas to come home. On a node it means something else
+    // already (map replies), so only the background answers.
+    const t = e.target as HTMLElement
+    if (!t.closest('.wrap, .card, .config-wrap, .hud, .panel, .digest-btn, .topic-node')) recentre()
+  }}
   onclickcapture={(e) => {
     // A click on empty canvas (not a node, card, panel, or control) collapses
     // any open/pinned posts. Node/card handlers live on their own elements.
@@ -1451,6 +1526,9 @@
     <div class="axis legend"><span class="dot"></span> size = replies</div>
   {/if}
 
+  <!-- Everything that lives in graph coordinates. Pan/zoom transforms this
+       layer only, so the chrome (HUD, gear, digest) stays put. -->
+  <div class="viewport" style="transform: translate({view.x}px, {view.y}px) scale({view.k})">
   <svg class="edges" width={w} height={h}>
     <defs>
       <marker id="reply-arrow" viewBox="0 0 10 10" refX="8" refY="5"
@@ -1570,6 +1648,7 @@
       }}
     />
   {/each}
+  </div>
 
   {#if items.length === 0 && !loading}
     <div class="empty">{error ?? 'No posts.'}</div>
@@ -1729,6 +1808,21 @@
     {#if read.dismissed.size > 0}
       <span class="dismissed-count">{read.dismissed.size} dismissed</span>
     {/if}
+    {#if !atRest}
+      <!-- Only when there is somewhere to come back FROM: a permanent button
+           for a view that has not moved is a control that does nothing. -->
+      <button class="recentre-btn" onclick={recentre} title="Recentre the graph (or double-click the canvas)">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v3M12 19v3M2 12h3M19 12h3"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+          />
+        </svg>
+      </button>
+    {/if}
     <button class="digest-btn" onclick={() => (showDigest ? (showDigest = false) : summarize())} title="Summarize conversations">
       ✦ Digest
     </button>
@@ -1767,6 +1861,19 @@
 </div>
 
 <style>
+  .viewport {
+    position: absolute;
+    inset: 0;
+    /* Transform from the top-left, so graph coordinates map straight through
+       without an origin correction in toGraph(). */
+    transform-origin: 0 0;
+    /* The layer itself is not a target: pans and background clicks must reach
+       the canvas under it. Its children opt back in. */
+    pointer-events: none;
+  }
+  .viewport > * {
+    pointer-events: auto;
+  }
   .graph {
     position: relative;
     width: 100%;
@@ -2049,6 +2156,26 @@
   .dismissed-count {
     color: var(--text-dim);
     font-size: 0.78rem;
+  }
+  .recentre-btn {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    color: var(--text-dim);
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .recentre-btn svg {
+    width: 17px;
+    height: 17px;
+  }
+  .recentre-btn:hover {
+    color: var(--text);
+    border-color: var(--accent);
   }
   .digest-btn {
     background: color-mix(in srgb, var(--bg-elev) 88%, transparent);
