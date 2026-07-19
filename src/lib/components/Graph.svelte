@@ -93,7 +93,7 @@
   const PILL_H = 56
   /** Breathing room between pills. Used by the tidy-tree grid, the collision
    * force and the node budget alike — see ForceLayout.setCollision. */
-  const PILL_GAP = { x: 26, y: 20 }
+  const PILL_GAP = { x: 34, y: 32 }
   // Narrow canvases get a narrower pill, so a phone still fits one comfortably.
   // ?pills=1 turns it on without a settings control, so the idea can be looked
   // at on any build (and screenshotted) before deciding it deserves UI.
@@ -1369,13 +1369,19 @@
     />
   {/each}
 
-  <!-- One-off topic labels: a caption tucked just under the post, no pill/edge. -->
+  <!-- One-off topic labels: a caption tucked against the post, no pill/edge.
+       Above it in pill mode, where the label reads as a heading for the text
+       it sits over; below in avatar mode, where there is no text to head.
+       The offset uses the PILL's half-height, not p.size -- that is the avatar
+       diameter, which in pill mode is unrelated to how tall the node is. -->
   {#each placed as p (p.node.uri)}
     {@const cap = nodeCaptions.get(p.node.uri)}
+    {@const half = pill ? pill.h / 2 : p.size / 2}
     {#if cap}
       <div
         class="node-caption"
-        style="left: {p.px}px; top: {p.py + p.size / 2 + 3}px; --c: {cap.color}"
+        class:above={!!pill}
+        style="left: {p.px}px; top: {pill ? p.py - half - 3 : p.py + half + 3}px; --c: {cap.color}"
       >
         {cap.label}
       </div>
@@ -1667,6 +1673,11 @@
   .node-caption {
     position: absolute;
     transform: translate(-50%, 0);
+  }
+  /* Anchor the caption's BOTTOM to the pill's top, so a label that wraps to two
+     lines grows upward instead of sliding down over the post. */
+  .node-caption.above {
+    transform: translate(-50%, -100%);
     max-width: 8rem;
     font-size: 0.62rem;
     font-weight: 600;
