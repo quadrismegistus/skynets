@@ -141,6 +141,20 @@ export class ForceLayout {
   }
 
   /**
+   * Resolve a straddled frame edge: a post is either in the frame or out of it,
+   * never sliced by the boundary. Half a post is unreadable, and it doesn't read
+   * as "there is more over here" either -- it just looks broken.
+   *
+   * Which way it resolves is decided by the side its centre is already on, which
+   * gives the rule its own hysteresis: a node cannot oscillate across the edge,
+   * because crossing the centre line is what changes the answer.
+   */
+  #unstraddle(c: number, half: number, edge: number): number {
+    if (c - half < edge && c + half > edge) return c > edge ? edge + half : edge - half
+    return c
+  }
+
+  /**
    * Project a point out to the world's boundary, keeping its direction from the
    * frame's centre. A post bound for the top-right enters from the top-right,
    * so its arrival reads as coming from where it belongs rather than sliding in
@@ -190,6 +204,19 @@ export class ForceLayout {
         n.y = bleedY
           ? Math.max(top - bleedY, Math.min(h - bottom + bleedY, n.y))
           : Math.max(top + hh, Math.min(h - bottom - hh, n.y))
+      // With a reservoir there are real edges to straddle; without one every
+      // node is inside the frame already and there is nothing to resolve.
+      if (bleedX && n.x != null) {
+        n.x = this.#unstraddle(n.x, hw + e, 0)
+        n.x = this.#unstraddle(n.x, hw + e, w)
+      }
+      if (bleedY && n.y != null) {
+        // The VISIBLE edges are 0 and h. `top`/`bottom` are chrome keep-outs,
+        // and resolving against those pushed a node clear of the topbar and
+        // straight across y=0 instead -- still sliced, just by a different line.
+        n.y = this.#unstraddle(n.y, hh + e, 0)
+        n.y = this.#unstraddle(n.y, hh + e, h)
+      }
     }
   }
 
@@ -239,6 +266,17 @@ export class ForceLayout {
       }
       node.tx = t.tx
       node.ty = t.ty
+      if (this.#bounds.w) {
+        const bhw = (t.hw ?? t.r) + this.#edge
+        const bhh = (t.hh ?? t.r) + this.#edge
+        const { w: bw, h: bh, top: bt, bottom: bb, bleedX: bx, bleedY: by } = this.#bounds
+        if (bx) {
+          node.tx = this.#unstraddle(this.#unstraddle(node.tx, bhw, 0), bhw, bw)
+        }
+        if (by) {
+          node.ty = this.#unstraddle(this.#unstraddle(node.ty, bhh, 0), bhh, bh)
+        }
+      }
       node.r = t.r
       node.hw = t.hw
       node.hh = t.hh
