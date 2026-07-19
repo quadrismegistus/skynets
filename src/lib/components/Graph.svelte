@@ -341,7 +341,22 @@
     }
     return [...set.values()]
   })
-  const nodeLayout = $derived(layoutPositions(visibleNodes))
+  /**
+   * Rank across the whole corpus in reservoir mode, not just the posts on
+   * screen.
+   *
+   * Ranking the visible subset makes a post's position depend on which OTHER
+   * posts happen to be planned, so dismissing one re-normalises every rank and
+   * the layout re-deals instead of yielding a slot. That defeats the reservoir:
+   * reserved posts can't drift inward if inward keeps moving. Corpus-wide ranks
+   * are stable under dismissal, so a post keeps its place and the queue behaves
+   * like one.
+   *
+   * The subset-scoped version exists to make any subset fill the canvas, which
+   * the reservoir makes moot -- the world is deliberately larger than the frame
+   * now, so filling it is no longer the goal.
+   */
+  const nodeLayout = $derived(layoutPositions(bleed.x ? graph.nodes : visibleNodes))
 
   const visibleUris = $derived(new Set(visibleNodes.map((n) => n.uri)))
   // A post may be displayed by a node other than itself (run member → run
