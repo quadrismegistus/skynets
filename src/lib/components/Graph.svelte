@@ -1256,13 +1256,51 @@
   // Hover with a short close delay so the pointer can travel from a node to its
   // card (and interact with it) without the card vanishing.
   let clearTimer: ReturnType<typeof setTimeout> | undefined
+  /** Long enough to reach the card from the node without losing it, short
+   * enough that a card doesn't linger once you've moved on. */
+  const GRACE = 260
+  /** Last pointer position, so the clear timer can ask where the pointer IS
+   * rather than infer it from the last enter/leave event it happened to see.
+   * Plain state: only ever read inside a timer, never rendered. */
+  let ptr = { x: -1, y: -1 }
+  $effect(() => {
+    const onMove = (e: PointerEvent) => (ptr = { x: e.clientX, y: e.clientY })
+    window.addEventListener('pointermove', onMove, { passive: true })
+    return () => window.removeEventListener('pointermove', onMove)
+  })
+
   function setHovered(uri: string) {
     clearTimeout(clearTimer)
     hovered = uri
   }
+  /**
+   * Let go of a hovered post only once the pointer is clear of BOTH the node
+   * and its card.
+   *
+   * These two don't touch -- the card is offset from the node it belongs to --
+   * so reaching from one to the other crosses a gap where neither is hovered. A
+   * bare timer turned that into a race the reader could lose just by moving
+   * slowly: the card they were reaching for closed under them. This re-checks
+   * where the pointer actually is when the timer fires, and re-arms while it is
+   * still over either one, so only genuinely leaving both closes the card.
+   */
+  function pointerOverPostOrCard(): boolean {
+    if (ptr.x < 0) return false
+    return document
+      .elementsFromPoint(ptr.x, ptr.y)
+      .some((el) => el.closest('.wrap, .card, .profile-pop'))
+  }
   function scheduleClear() {
     clearTimeout(clearTimer)
-    clearTimer = setTimeout(() => (hovered = null), 140)
+    clearTimer = setTimeout(function tick() {
+      if (pointerOverPostOrCard()) {
+        // Still on one of them: keep it open and look again shortly, rather
+        // than waiting for another leave event that may never come.
+        clearTimer = setTimeout(tick, GRACE)
+        return
+      }
+      hovered = null
+    }, GRACE)
   }
 
   function onKey(e: KeyboardEvent) {
