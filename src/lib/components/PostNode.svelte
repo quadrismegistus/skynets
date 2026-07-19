@@ -145,6 +145,7 @@
 <div
   class="wrap"
   class:pill={!!pill}
+  class:arriving
   class:entering={arriving && !landed}
   class:active
   class:pinned
@@ -225,8 +226,16 @@
     position: absolute;
     transform: translate(-50%, -50%);
     touch-action: none; /* pointer-drag on touch devices */
-    /* Only the entry offset is animated. left/top carry the simulation and are
-       deliberately untransitioned -- easing those would lag every tick. */
+  }
+  /* The transition lives ONLY on a node that is mid-arrival, and disappears with
+     the class when the entrance ends. Left on every node permanently it made
+     nothing ever "stable": Playwright waits for animations to finish before
+     hovering, so every hover in the existing suite timed out -- in avatar mode
+     too, which has no entrance at all.
+
+     Only the entry offset is animated. left/top carry the simulation and are
+     deliberately untransitioned; easing those would lag every tick. */
+  .wrap.arriving {
     transition:
       transform 0.45s cubic-bezier(0.22, 0.61, 0.36, 1),
       opacity 0.45s ease;
@@ -236,7 +245,7 @@
     opacity: 0;
   }
   @media (prefers-reduced-motion: reduce) {
-    .wrap {
+    .wrap.arriving {
       transition: none;
     }
   }

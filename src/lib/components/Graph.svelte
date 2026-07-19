@@ -1867,12 +1867,11 @@
     /* Transform from the top-left, so graph coordinates map straight through
        without an origin correction in toGraph(). */
     transform-origin: 0 0;
-    /* The layer itself is not a target: pans and background clicks must reach
-       the canvas under it. Its children opt back in. */
-    pointer-events: none;
-  }
-  .viewport > * {
-    pointer-events: auto;
+    /* No pointer-events rules here. Forcing them onto the children made the
+       edges SVG -- which spans the whole canvas -- intercept everything and
+       obscure every node under it, so hovers timed out across the suite. The
+       children already declare what they want; the pan handler sits on .graph
+       and reads event.target, so background events reach it by bubbling. */
   }
   .graph {
     position: relative;
