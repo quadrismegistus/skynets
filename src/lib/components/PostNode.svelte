@@ -77,7 +77,23 @@
   // release must then not count as a click). Window-level listeners so the
   // drag survives the pointer leaving the node.
   let dragMoved = false
+  // A contextmenu event cannot tell you what produced it -- a long-press on
+  // touch fires the same event as a right-click -- so the pointer type is
+  // recorded here. Dismissing a post someone was only trying to drag would be a
+  // nasty surprise, and on touch the ✕ is already a single tap away.
+  let lastPointerType = 'mouse'
+
+  function onContextMenu(e: MouseEvent) {
+    if (lastPointerType !== 'mouse') return
+    e.preventDefault() // no browser menu over the graph
+    e.stopPropagation()
+    // Ghosts are ancestors resurrected for context and were already dismissed;
+    // they carry no ✕ either.
+    if (!ghost) ondismiss(node.uri)
+  }
+
   function onPointerDown(e: PointerEvent) {
+    lastPointerType = e.pointerType
     if (e.button !== 0) return
     dragMoved = false
     const startX = e.clientX
@@ -112,6 +128,7 @@
   onpointerenter={(e) => e.pointerType === 'mouse' && onhover(node.uri)}
   onpointerleave={(e) => e.pointerType === 'mouse' && onhover(null)}
   onpointerdown={onPointerDown}
+  oncontextmenu={onContextMenu}
 >
   {#if repost}
     <span class="reposter" title="Reposted by {repost.name}">
@@ -311,6 +328,22 @@
     height: 40px;
     border-radius: 50%;
   }
+  /* The reposter chip is sized as a fraction of the node, which on a 212x56
+     pill stretched it into an oval. Fixed px in pill mode. */
+  .wrap.pill .reposter {
+    width: 26px;
+    height: 26px;
+    left: -7px;
+    top: -7px;
+  }
+  /* No double ring in pill mode: at this scale the outer ring reads as a heavy
+     outline rather than a signal. Thread roots keep the accent border colour
+     and the collapsed-count badge. Pinned keeps its ring -- that one marks a
+     state the reader just created, and is worth the weight. */
+  .wrap.pill.thread .node {
+    box-shadow: none;
+  }
+
   .say {
     display: flex;
     flex-direction: column;
