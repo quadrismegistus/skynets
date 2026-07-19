@@ -46,6 +46,62 @@ describe('collision', () => {
     expect(gapX >= -1 || gapY >= -1).toBe(true)
   })
 
+  it('does not let the final clamp stack pills it just separated', () => {
+    // The pipeline once ran relax→clamp for a FIXED two rounds. The last
+    // clamp pulled every straddling pill onto the same resting line — six
+    // fully visible overlapping pairs at 25 nodes of ordinary density, up to
+    // 56px of interpenetration — and nothing ran after it. The solve now
+    // iterates relax↔clamp to a fixed point, benching groups the frame has
+    // no room for. The invariant is scoped to what the reader can see: no
+    // overlap involving a VISIBLE pill. Hidden pills compressed together at
+    // the reservoir's world floor are invisible, and re-solve on entry.
+    const l = pillLayout()
+    l.update(Array.from({ length: 25 }, (_, i) => node(`m${i}`, 400 + i * 30, 300 + i * 15)))
+    const ids = Array.from({ length: 25 }, (_, i) => `m${i}`)
+    const visible = (p: { x: number; y: number }) =>
+      p.x + PILL.hw > 0 && p.x - PILL.hw < W && p.y + PILL.hh > 0 && p.y - PILL.hh < H
+    expect(ids.map((id) => at(l, id)).filter(visible).length).toBeGreaterThan(10)
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const a = at(l, ids[i])
+        const b = at(l, ids[j])
+        if (!visible(a) && !visible(b)) continue
+        const gapX = Math.abs(a.x - b.x) - 2 * PILL.hw
+        const gapY = Math.abs(a.y - b.y) - 2 * PILL.hh
+        expect(gapX >= -1 || gapY >= -1).toBe(true)
+      }
+    }
+  })
+
+  it('escapes the trap between two pinned pills instead of ping-ponging', () => {
+    // A free pill ranked between two pinned ones oscillated for the whole
+    // relaxation budget: each neighbour pushed it fully back across the
+    // other, and the least-penetration rule kept choosing the one axis that
+    // cannot be satisfied. On a stall the solver now resolves along the other
+    // axis — the row-change escape — and the pill settles clear of both.
+    const l = pillLayout()
+    l.update([node('A', 400, 400), node('C', 850, 400)])
+    l.update([node('A', 400, 400), node('C', 850, 400), node('B', 625, 400)], new Set(['A', 'C']))
+    const b = at(l, 'B')
+    for (const id of ['A', 'C']) {
+      const p = at(l, id)
+      const gapX = Math.abs(p.x - b.x) - 2 * PILL.hw
+      const gapY = Math.abs(p.y - b.y) - 2 * PILL.hh
+      expect(gapX >= -1 || gapY >= -1).toBe(true)
+    }
+  })
+
+  it('contains a non-finite target instead of letting NaN spread to every node', () => {
+    // NaN defeats each comparison on its way to the y-push, so one bad
+    // coordinate poisoned the y of the entire graph.
+    const l = pillLayout()
+    l.update([node('bad', 620, Number.NaN), node('ok1', 600, 400), node('ok2', 700, 500)])
+    for (const id of ['bad', 'ok1', 'ok2']) {
+      expect(Number.isFinite(at(l, id).x)).toBe(true)
+      expect(Number.isFinite(at(l, id).y)).toBe(true)
+    }
+  })
+
   it('resolves a dense cluster within the iteration budget', () => {
     // Eight pills seeded almost on top of each other: the relaxation has to
     // propagate corrections through chains of neighbours, which is what the
@@ -254,14 +310,32 @@ describe('holding nodes in place', () => {
     expect(at(l, 'n').y).toBeCloseTo(held.y, 0)
   })
 
-  it('returns a released node to its semantic target', () => {
+  it('leaves a released node at its drop point until the next update moves on', () => {
+    // Releasing does NOT re-solve: the simulation's near-cold alpha left a
+    // dropped node in place, and re-solving on release sent it home in the
+    // ~200ms between a drop and the pin click that follows it.
     const l = pillLayout()
     l.update([node('n', 600, 400)])
     l.dragTo('n', 300, 200)
-    l.dragEnd('n', false)
-    const p = at(l, 'n')
-    expect(p.x).toBeCloseTo(600, 0)
-    expect(p.y).toBeCloseTo(400, 0)
+    l.dragEnd('n')
+    expect(at(l, 'n').x).toBeCloseTo(300, 0)
+    // The next data update returns an unpinned node to its semantic spot...
+    l.update([node('n', 600, 400)])
+    expect(at(l, 'n').x).toBeCloseTo(600, 0)
+    expect(at(l, 'n').y).toBeCloseTo(400, 0)
+  })
+
+  it('lets a pin arriving after the drop capture the DROP point', () => {
+    // The user drags a node somewhere, releases, and clicks to pin it there.
+    // The pin lands in a later update; it must freeze the drop position, not
+    // the semantic target the node would otherwise return to.
+    const l = pillLayout()
+    l.update([node('n', 600, 400)])
+    l.dragTo('n', 300, 200)
+    l.dragEnd('n')
+    l.update([node('n', 600, 400)], new Set(['n']))
+    expect(at(l, 'n').x).toBeCloseTo(300, 0)
+    expect(at(l, 'n').y).toBeCloseTo(200, 0)
   })
 
   it('arranges a conversation around its pinned member, not at its semantic spot', () => {
@@ -299,6 +373,40 @@ describe('holding nodes in place', () => {
     const gapX = Math.abs(n.x - m.x) - 2 * PILL.hw
     const gapY = Math.abs(n.y - m.y) - 2 * PILL.hh
     expect(gapX >= -1 || gapY >= -1).toBe(true)
+  })
+})
+
+describe('held conversations', () => {
+  const tree = (group: string, x: number, y: number): Target[] => [
+    node(`${group}-root`, x, y, group),
+    node(`${group}-a`, x - 130, y + 90, group),
+    node(`${group}-b`, x + 130, y + 90, group),
+  ]
+
+  it('never lets a neighbouring conversation displace a held one', () => {
+    // Mutation testing found nothing guarded #separateGroups' held-group
+    // routing: with the check deleted, a free tree landing on a pinned one
+    // shoved the node the user was holding. The held tree must not move; the
+    // free one resolves around it.
+    const l = pillLayout()
+    l.update(tree('g', 500, 400))
+    l.update([...tree('g', 500, 400), ...tree('f', 520, 410)], new Set(['g-root']))
+    expect(at(l, 'g-root').x).toBe(500)
+    expect(at(l, 'g-root').y).toBe(400)
+    const box = (g: string) => {
+      const ps = [`${g}-root`, `${g}-a`, `${g}-b`].map((id) => at(l, id))
+      return {
+        l: Math.min(...ps.map((p) => p.x)) - PILL.hw,
+        r: Math.max(...ps.map((p) => p.x)) + PILL.hw,
+        t: Math.min(...ps.map((p) => p.y)) - PILL.hh,
+        b: Math.max(...ps.map((p) => p.y)) + PILL.hh,
+      }
+    }
+    const G = box('g')
+    const F = box('f')
+    const overlapX = Math.min(G.r, F.r) - Math.max(G.l, F.l)
+    const overlapY = Math.min(G.b, F.b) - Math.max(G.t, F.t)
+    expect(overlapX <= 1 || overlapY <= 1).toBe(true)
   })
 })
 

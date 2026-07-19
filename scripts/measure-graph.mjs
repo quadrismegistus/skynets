@@ -106,11 +106,16 @@ function countBoundary(page) {
       else sliced++
     }
     // A reply edge with one end in view and the other out means a tree is split
-    // across the boundary.
+    // across the boundary. An edge ENTIRELY outside the window is not: two
+    // reservoir-parked posts connected below the frame are invisible, and an
+    // earlier version counted one as "crossing" because its horizontal extent
+    // happened to bracket the right edge while the whole element sat below the
+    // bottom one.
     let crossing = 0
     for (const el of document.querySelectorAll('svg line, svg path')) {
       const b = el.getBoundingClientRect()
       if (!b.width && !b.height) continue
+      if (b.right <= 0 || b.left >= W || b.bottom <= 0 || b.top >= H) continue
       if ((b.left < 0 && b.right > 0) || (b.left < W && b.right > W)) crossing++
       else if ((b.top < 0 && b.bottom > 0) || (b.top < H && b.bottom > H)) crossing++
     }

@@ -136,6 +136,8 @@ resume after a context compaction.
 - `src/lib/api/thread.ts` — `fetchThread` / `flattenThread`.
 - `src/lib/state/ancestors.svelte.ts` — connect-replies parent fetching.
 - `src/lib/components/Graph.svelte` — `toggleMapReplies`, `repliesMapped`, `unfollowed`,
-  primary/allItems ordering, force `update(..., cluster)`.
-- `src/lib/state/forceLayout.ts` — link strength / cluster.
+  primary/allItems ordering.
+- `src/lib/state/layout.ts` — the deterministic solver (was `forceLayout.ts`; the link
+  force discussed above no longer exists — mapped-thread members are tidy-tree-grouped,
+  and a pinned member anchors its conversation).
 - `src/lib/state/follows.svelte.ts` — follow state (viewer.following fallback).

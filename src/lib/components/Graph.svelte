@@ -748,9 +748,11 @@
     setHovered(uri)
   }
 
-  // Topic nodes are draggable sim nodes (dragging pulls their member posts via
-  // the links). A plain click pins the topic where it is (like a post); it does
-  // NOT open every member's card. Threshold + window listeners mirror PostNode.
+  // Topic nodes are draggable layout nodes. A revealed pill is pinned, so
+  // dragging it moves its whole conversation (the solver anchors a group to
+  // its pinned member); an unrevealed pill moves alone. A plain click pins
+  // the topic where it is (like a post); it does NOT open every member's
+  // card. Threshold + window listeners mirror PostNode.
   function togglePinUri(id: string) {
     if (pinned.has(id)) pinned.delete(id)
     else pinned.add(id)
@@ -1005,7 +1007,10 @@
   let draggingUri: string | null = null
   let tweenRaf = 0
   const TWEEN_MS = 400
-  const reducedMotion =
+  // Read per paint, not captured at mount: the CSS side (PostNode's entrance)
+  // honours a mid-session reduce-motion change via media query, and the two
+  // motion systems must not disagree. One matchMedia call per solve is free.
+  const reducedMotion = () =>
     typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches
 
   function paint(solved: Map<string, { x: number; y: number }>) {
@@ -1024,7 +1029,7 @@
         }
       }
     }
-    if (still || draggingUri || reducedMotion || positions.size === 0) {
+    if (still || draggingUri || positions.size === 0 || reducedMotion()) {
       positions = solved
       return
     }
@@ -1389,9 +1394,11 @@
     layout?.dragTo(uri, p.x, p.y)
   }
   function onNodeDragEnd(uri: string) {
-    // Cleared BEFORE the release-solve, so an unpinned node GLIDES home.
     draggingUri = null
-    layout?.dragEnd(uri, pinned.has(uri))
+    // No re-solve on release: the node rests at the drop point so a follow-up
+    // click can pin it THERE; the next data update returns an unpinned node
+    // to its semantic spot (see Layout.dragEnd).
+    layout?.dragEnd(uri)
   }
 
   // Expansion is keyed by the clicked post's own uri (stable as the group grows);

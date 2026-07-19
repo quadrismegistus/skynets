@@ -65,6 +65,8 @@ export class Layout {
   #pinned: ReadonlySet<string> = new Set()
   /** The node currently under the pointer, held where the drag put it. */
   #dragId: string | null = null
+  /** Per-solve count of band rescues per group+axis — see #clamp's bench rule. */
+  #bandTries = new Map<string, number>()
 
   constructor(onChange: () => void) {
     this.#onChange = onChange
@@ -110,12 +112,16 @@ export class Layout {
     this.#solve()
   }
 
-  /** End a drag. A pinned node stays where it was dropped (it is in the
-   * caller's pinned set, so the seed keeps its position); a free node's next
-   * solve returns it to its semantic spot, and the render tween glides it. */
-  dragEnd(id: string, keepFixed: boolean) {
+  /** End a drag — and deliberately do NOT re-solve. The node rests at its
+   * drop point until the next update() decides its fate: if the user pins it
+   * (a click follows the drop by ~200ms), the pin captures the DROP point; if
+   * data moves on, the node seeds at its semantic target and glides home.
+   * Re-solving here sent it home in that ~200ms gap, so pinning captured the
+   * semantic spot instead of where the user just put it — a regression from
+   * the simulation, whose near-cold alpha left dropped nodes in place until
+   * the next reheat. */
+  dragEnd(id: string) {
     if (this.#dragId === id) this.#dragId = null
-    if (!keepFixed) this.#solve()
   }
 
   positions(): Map<string, { x: number; y: number }> {
@@ -136,14 +142,24 @@ export class Layout {
       this.#separateGroups()
       this.#unstraddleGroups()
     }
-    // Collisions, then bounds — twice, because each can undo the other: the
-    // clamp shifts a boundary group inward onto a neighbour, and separating
-    // that overlap can push a node back over the edge. The second round
-    // resolves what the first created; anything still overlapping after that
-    // is left as-is rather than looped on.
-    for (let round = 0; round < 2; round++) {
-      this.#relax()
-      this.#clamp()
+    // Collisions, then bounds — to a JOINT fixed point, because each can undo
+    // the other: the clamp pulls straddling groups onto the same resting line
+    // (stacking pills relax had just separated — measured: six visible
+    // overlapping pairs at 25 nodes when this ran a fixed two rounds), and
+    // separating that overlap can push a node back over an edge. So iterate
+    // until the clamp stops moving anything, and always END on the clamp: the
+    // never-sliced invariant is its exit guarantee.
+    //
+    // If two rounds haven't converged, the pair is in a tug-of-war the axis
+    // rule cannot end — pills stacked along a resting line separate towards
+    // the edge (least penetration) and the clamp puts them straight back. An
+    // escape pass then resolves overlaps along the OTHER axis, spreading them
+    // along the line instead of against the immovable edge. On budget
+    // exhaustion the residual overlap is left, not looped on.
+    this.#bandTries.clear()
+    for (let round = 0; round < 12; round++) {
+      this.#relax(round >= 2)
+      if (this.#clamp() < 0.5) break
     }
     this.#onChange()
   }
@@ -163,6 +179,9 @@ export class Layout {
     for (const t of this.#targets) {
       const prev = this.#byId.get(t.id)
       const fixed = this.#pinned.has(t.id) || t.id === this.#dragId
+      // A non-finite coordinate would spread through the pairwise passes to
+      // every node (NaN defeats each comparison on its way to the y-push), so
+      // it is contained here rather than diagnosed downstream.
       // Resolve a lone target that straddles a frame edge before anything
       // else reads it: half a post is unreadable, and it doesn't read as
       // "there is more over here" either — it just looks broken. Grouped
@@ -170,8 +189,8 @@ export class Layout {
       // them to opposite sides of the edge, tearing the tree shape before the
       // group passes ever saw it. A tree resolves as one, in
       // #unstraddleGroups and #clamp.
-      let tx = t.tx
-      let ty = t.ty
+      let tx = Number.isFinite(t.tx) ? t.tx : 0
+      let ty = Number.isFinite(t.ty) ? t.ty : 0
       if (w && !t.group) {
         const bhw = (t.hw ?? t.r) + this.#edge
         const bhh = (t.hh ?? t.r) + this.#edge
@@ -293,6 +312,10 @@ export class Layout {
    * object, so it repels as one: overlapping bounding boxes are separated
    * along whichever axis they overlap least, and every member moves by the
    * same amount, leaving the tidy-tree shape untouched.
+   *
+   * Two HELD groups overlapping are left overlapping: the user asked for both
+   * spots, and honouring one pin by breaking the other is worse than the
+   * overlap.
    */
   #separateGroups() {
     const groups = [...this.#groups().values()].filter((g) => g.length > 1)
@@ -397,19 +420,32 @@ export class Layout {
    * O(n² · passes), which is fine: the graph caps at a few dozen nodes, and a
    * quadtree would cost more in complexity than it saves.
    */
-  #relax() {
+  #relax(escapeFirst = false) {
     const nodes = this.#nodes
+    let prevWorst = Infinity
+    let stalled = 0
     for (let pass = 0; pass < 50; pass++) {
+      // Deadlock escape: a free pill between two PINNED pills ping-ponged the
+      // whole budget — each neighbour pushed it fully back across the other,
+      // and the least-penetration rule kept choosing the axis that cannot be
+      // satisfied. When three passes make no progress, resolve the stuck
+      // pairs along the OTHER axis once (the row-change escape), then resume.
+      // `escapeFirst` is the same escape driven from #solve, for tugs-of-war
+      // against the clamp that a single relax call cannot see.
+      const escape = (escapeFirst && pass === 0) || stalled >= 3
       let worst = 0
       for (let i = 0; i < nodes.length; i++) {
         const a = nodes[i]
         for (let j = i + 1; j < nodes.length; j++) {
           const b = nodes[j]
           if (a.fixed && b.fixed) continue
-          worst = Math.max(worst, this.#gap ? this.#relaxRect(a, b) : this.#relaxCircle(a, b))
+          worst = Math.max(worst, this.#gap ? this.#relaxRect(a, b, escape) : this.#relaxCircle(a, b))
         }
       }
       if (worst < 0.5) break
+      if (escape || worst < prevWorst - 0.5) stalled = 0
+      else stalled++
+      prevWorst = worst
     }
   }
 
@@ -429,7 +465,7 @@ export class Layout {
     }
   }
 
-  #relaxRect(a: LayoutNode, b: LayoutNode): number {
+  #relaxRect(a: LayoutNode, b: LayoutNode, escape = false): number {
     const gap = this.#gap!
     const dx = b.x - a.x
     const ox = (a.hw ?? a.r) + (b.hw ?? b.r) + gap.x - Math.abs(dx)
@@ -437,7 +473,8 @@ export class Layout {
     const dy = b.y - a.y
     const oy = (a.hh ?? a.r) + (b.hh ?? b.r) + gap.y - Math.abs(dy)
     if (oy <= 0) return 0
-    if (ox < oy) {
+    // Least penetration normally; the LARGER axis on a deadlock-escape pass.
+    if (ox < oy !== escape) {
       this.#push(a, b, (dx < 0 ? -1 : 1) * ox, 0)
       return ox
     }
@@ -483,7 +520,14 @@ export class Layout {
    * needed to — measured, ten of twenty posts. A tree is pushed out only when
    * little enough of it would show that the sliver is noise, not content.
    */
-  #resolveBand(lo: number, hi: number, inEdge: number, outEdge: number, insidePositive: boolean): number {
+  #resolveBand(
+    lo: number,
+    hi: number,
+    inEdge: number,
+    outEdge: number,
+    insidePositive: boolean,
+    forceOut = false,
+  ): number {
     const span = hi - lo
     if (span <= 0) return 0
     const KEEP_VISIBLE = 0.3
@@ -491,12 +535,12 @@ export class Layout {
       if (lo >= inEdge || hi <= outEdge) return 0 // wholly in content, or wholly off-window
       if (lo >= outEdge && hi <= inEdge) return 0 // wholly within the margin band
       const fraction = Math.max(0, Math.min(1, (hi - Math.max(lo, inEdge)) / span))
-      return fraction >= KEEP_VISIBLE ? inEdge - lo : outEdge - hi
+      return fraction >= KEEP_VISIBLE && !forceOut ? inEdge - lo : outEdge - hi
     }
     if (hi <= inEdge || lo >= outEdge) return 0
     if (hi <= outEdge && lo >= inEdge) return 0
     const fraction = Math.max(0, Math.min(1, (Math.min(hi, inEdge) - lo) / span))
-    return fraction >= KEEP_VISIBLE ? inEdge - hi : outEdge - lo
+    return fraction >= KEEP_VISIBLE && !forceOut ? inEdge - hi : outEdge - lo
   }
 
   /** Can both edges of a span be satisfied at once? Below 2x the half-extent
@@ -515,11 +559,20 @@ export class Layout {
    * became [-60,-60,-60,-60], destroying the tidy-tree shape the group passes
    * exist to preserve. Bounds are inviolable, so this moves pinned and
    * dragged nodes too — a drag below the canvas comes to rest at the floor.
+   *
+   * Returns the largest displacement it applied, so #solve can iterate
+   * relax↔clamp to a joint fixed point instead of guessing a round count.
+   *
+   * Known limit, unchanged from the simulation era: with no bleed on an axis,
+   * a group larger than the content area is still squashed by the per-node
+   * clamp at the end — the unit shift cannot satisfy bounds a group doesn't
+   * fit inside.
    */
-  #clamp() {
+  #clamp(): number {
     const { w, h, top, bottom, bleedX, bleedY } = this.#bounds
-    if (!w || !h) return
+    if (!w || !h) return 0
     const e = this.#edge
+    let moved = 0
     // The VISIBLE content edges. `top`/`bottom` are the chrome keep-outs, and
     // a pill resolved against 0/h instead came to rest with its last 20px
     // behind the Digest bar.
@@ -558,16 +611,33 @@ export class Layout {
       // Never slice the visible edge: resolve the whole group to one side, but
       // only when it could fit — shoving an oversized conversation entirely
       // out of view hides something you can at best see part of.
+      //
+      // The bench rule: a group that needs rescuing from the same axis over
+      // and over within one solve is in a game of musical chairs — the frame
+      // has no room for it, relax keeps pushing it back over the edge, and
+      // the KEEP_VISIBLE bias keeps pulling it in again, a limit cycle the
+      // solve loop cannot exit (measured: clamp displacing a constant 43px
+      // per round, forever). After three rescues it is resolved OUT and the
+      // interior decrowds by one.
+      const key = members[0].group ?? members[0].id
       if (bleedX && this.#resolvable((r - l) / 2, w)) {
-        dx += this.#resolveBand(l + dx, r + dx, 0, 0, true)
-        dx += this.#resolveBand(l + dx, r + dx, w, w, false)
+        const force = (this.#bandTries.get(`x:${key}`) ?? 0) > 2
+        const d1 = this.#resolveBand(l + dx, r + dx, 0, 0, true, force)
+        const d2 = this.#resolveBand(l + dx + d1, r + dx + d1, w, w, false, force)
+        if (d1 || d2) this.#bandTries.set(`x:${key}`, (this.#bandTries.get(`x:${key}`) ?? 0) + 1)
+        dx += d1 + d2
       }
       if (bleedY && this.#resolvable((b - t) / 2, visB - visT)) {
-        dy += this.#resolveBand(t + dy, b + dy, visT, 0, true)
-        dy += this.#resolveBand(t + dy, b + dy, visB, h, false)
+        const force = (this.#bandTries.get(`y:${key}`) ?? 0) > 2
+        const d1 = this.#resolveBand(t + dy, b + dy, visT, 0, true, force)
+        const d2 = this.#resolveBand(t + dy + d1, b + dy + d1, visB, h, false, force)
+        if (d1 || d2) this.#bandTries.set(`y:${key}`, (this.#bandTries.get(`y:${key}`) ?? 0) + 1)
+        dy += d1 + d2
       }
 
       for (const n of members) {
+        const px = n.x
+        const py = n.y
         n.x += dx
         n.y += dy
         if (!bleedX) {
@@ -578,7 +648,9 @@ export class Layout {
           const hh = (n.hh ?? n.r) + e
           n.y = Math.max(visT + hh, Math.min(visB - hh, n.y))
         }
+        moved = Math.max(moved, Math.abs(n.x - px), Math.abs(n.y - py))
       }
     }
+    return moved
   }
 }
