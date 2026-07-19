@@ -469,6 +469,48 @@
 
   const placedByUri = $derived(new Map(placed.map((p) => [p.node.uri, p])))
 
+  /**
+   * Which posts are new on screen, so they can be animated IN.
+   *
+   * This is a RENDER concern, deliberately. Three attempts to make arrivals
+   * glide by seeding the simulation off-screen all failed the same way: the
+   * layout continuously reconciles positions AND targets to keep trees whole
+   * and clear of the frame, so a node held away from its target either gets
+   * dragged back (a pop) or has its target dragged out after it (parked in the
+   * reservoir for good). The sim now places an arrival at its final spot
+   * immediately -- nothing to fight -- and the component animates it in from
+   * off-canvas. The layout never knows the animation exists.
+   */
+  const ARRIVAL_MS = 450
+  const arriving = new SvelteSet<string>()
+  let everPlaced = new Set<string>()
+  let hasPainted = false
+  $effect(() => {
+    const now = new Set(placed.map((p) => p.node.uri))
+    for (const uri of now) {
+      if (everPlaced.has(uri)) continue
+      // The first population has nothing to arrive into; flying the whole graph
+      // in from the edges is the load flicker, not an entrance.
+      if (hasPainted) {
+        arriving.add(uri)
+        setTimeout(() => arriving.delete(uri), ARRIVAL_MS + 120)
+      }
+    }
+    everPlaced = now
+    hasPainted = true
+  })
+
+  /** Where an arrival comes FROM: outward along its own direction from the
+   * centre, far enough to start off-canvas, so it enters from the side it
+   * belongs to rather than sliding in from an arbitrary edge. */
+  function enterFrom(px: number, py: number) {
+    const vx = px - w / 2
+    const vy = py - h / 2
+    const len = Math.hypot(vx, vy) || 1
+    const reach = Math.hypot(w, h) * 0.55
+    return { x: Math.round((vx / len) * reach), y: Math.round((vy / len) * reach) }
+  }
+
   // Conversation annotations: each digest conversation, tinted over the centroid
   // of its member nodes that are currently on the canvas. A conversation with no
   // visible members simply isn't drawn (it still lives in the panel). The same
@@ -1429,6 +1471,8 @@
       py={p.py}
       size={p.size}
       {pill}
+      arriving={arriving.has(p.node.uri)}
+      enter={enterFrom(p.px, p.py)}
       hasReplies={(edgeCount.get(p.node.uri) ?? 0) > 0}
       active={hovered === p.node.uri}
       pinned={pinned.has(p.node.uri)}

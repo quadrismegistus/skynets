@@ -57,7 +57,14 @@ async function signedInPage(browser) {
   return page
 }
 
-/** Centre position of every pill, keyed by its opening words. */
+/**
+ * Centre of every pill, plus whether it is mid-entrance.
+ *
+ * Position alone cannot answer "did it glide in?" now that the entrance is a
+ * render-level transform: the node's left/top is its FINAL place from the first
+ * frame, so a post caught part-way through its glide reads as already in frame.
+ * The `entering` class is the direct answer.
+ */
 const centres = (page) =>
   page.evaluate(() =>
     Object.fromEntries(
@@ -65,7 +72,11 @@ const centres = (page) =>
         const r = el.getBoundingClientRect()
         return [
           el.querySelector('.say .text')?.textContent?.slice(0, 20) ?? '?',
-          [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)],
+          [
+            Math.round(r.x + r.width / 2),
+            Math.round(r.y + r.height / 2),
+            el.classList.contains('entering') || getComputedStyle(el).opacity !== '1',
+          ],
         ]
       }),
     ),
@@ -113,20 +124,41 @@ async function arrivals(page) {
   let outside = 0
   let popped = 0
   for (let dismissals = 0; dismissals < 3; dismissals++) {
-    await page.locator('.wrap.pill').first().click({ button: 'right' })
+    // Dispatched rather than clicked: nodes are never "stable" for Playwright
+    // (the sim moves them every tick, arrivals carry a transition), and the
+    // first pill in DOM order is often one parked OUTSIDE the viewport, which
+    // cannot be clicked at all. Pick one in frame and send the events.
+    await page.evaluate(() => {
+      const inFrame = [...document.querySelectorAll('.wrap.pill')].find((el) => {
+        const r = el.getBoundingClientRect()
+        const cx = r.x + r.width / 2
+        const cy = r.y + r.height / 2
+        return cx > 0 && cx < innerWidth && cy > 0 && cy < innerHeight
+      })
+      if (!inFrame) throw new Error('no pill in frame to dismiss')
+      const r = inFrame.getBoundingClientRect()
+      const at = { clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, bubbles: true }
+      // The handler only honours a right-click from a MOUSE (a touch long-press
+      // fires the same event), and reads the type from the preceding pointerdown.
+      inFrame.dispatchEvent(new PointerEvent('pointerdown', { ...at, pointerType: 'mouse', button: 2 }))
+      inFrame.dispatchEvent(new MouseEvent('contextmenu', { ...at, cancelable: true }))
+    })
     for (let i = 0; i < 22; i++) {
-      for (const [key, [x, y]] of Object.entries(await centres(page))) {
+      for (const [key, [x, y, animating]] of Object.entries(await centres(page))) {
         if (seen.has(key)) continue
         seen.add(key)
         const inFrame = x >= 0 && x <= VIEWPORT.width && y >= 0 && y <= VIEWPORT.height
-        if (inFrame) popped++
-        else outside++
-        console.log(`${inFrame ? 'POPPED IN FRAME ' : 'entered outside '} at (${x},${y})`)
+        // Glided if it was seeded outside OR caught mid-entrance.
+        if (animating || !inFrame) outside++
+        else popped++
+        console.log(
+          `${animating ? 'GLIDING IN      ' : inFrame ? 'POPPED IN FRAME ' : 'entered outside '} at (${x},${y})`,
+        )
       }
       await page.waitForTimeout(100) // fast enough to catch first appearance
     }
   }
-  console.log(`\nentered from outside: ${outside}   popped in frame: ${popped}`)
+  console.log(`\nglided in: ${outside}   popped in frame: ${popped}`)
 }
 
 async function settle(page) {

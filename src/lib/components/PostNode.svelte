@@ -13,6 +13,10 @@
     /** Pill mode: render avatar + the opening line of the post, at this fixed
      * w x h, instead of a bare avatar circle. */
     pill?: { w: number; h: number }
+    /** Newly on screen: animate it in from `enter` rather than appearing. */
+    arriving?: boolean
+    /** Offset to enter FROM, in container px. */
+    enter?: { x: number; y: number }
     hasReplies: boolean
     active: boolean
     pinned: boolean
@@ -36,6 +40,8 @@
     py,
     size,
     pill,
+    arriving = false,
+    enter,
     hasReplies,
     active,
     pinned,
@@ -50,6 +56,27 @@
     ondragmove,
     ondragend,
   }: Props = $props()
+
+  // Held at the entry offset for one frame, then released so CSS carries it
+  // home. Two rAFs: one to let the offset paint, one to change it -- a single
+  // frame is not reliably enough for the browser to register a transition.
+  // Starts false and stays false until `arriving` turns on, because the graph
+  // only learns a post is new AFTER the template has rendered it. Marking it
+  // landed at mount meant the entrance was already over before it was flagged,
+  // and nothing ever animated. The class needs `arriving` too, so a post that
+  // is never flagged simply never enters.
+  let landed = $state(false)
+  $effect(() => {
+    if (!arriving) return
+    let inner = 0
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => (landed = true))
+    })
+    return () => {
+      cancelAnimationFrame(outer)
+      cancelAnimationFrame(inner)
+    }
+  })
 
   const avatar = $derived(node.item.post.author.avatar)
   // The pill shows the opening of the post. CSS line-clamps to two lines, so
@@ -118,12 +145,13 @@
 <div
   class="wrap"
   class:pill={!!pill}
+  class:entering={arriving && !landed}
   class:active
   class:pinned
   class:ghost
   class:unfollowed
   class:thread={node.isThreadRoot}
-  style="left: {px}px; top: {py}px; width: {pill ? pill.w : size}px; height: {pill ? pill.h : size}px;{accent ? ` --accent-topic: ${accent};` : ''}"
+  style="left: {px}px; top: {py}px; width: {pill ? pill.w : size}px; height: {pill ? pill.h : size}px; --ex: {enter?.x ?? 0}px; --ey: {enter?.y ?? 0}px;{accent ? ` --accent-topic: ${accent};` : ''}"
   role="group"
   onpointerenter={(e) => e.pointerType === 'mouse' && onhover(node.uri)}
   onpointerleave={(e) => e.pointerType === 'mouse' && onhover(null)}
@@ -197,6 +225,20 @@
     position: absolute;
     transform: translate(-50%, -50%);
     touch-action: none; /* pointer-drag on touch devices */
+    /* Only the entry offset is animated. left/top carry the simulation and are
+       deliberately untransitioned -- easing those would lag every tick. */
+    transition:
+      transform 0.45s cubic-bezier(0.22, 0.61, 0.36, 1),
+      opacity 0.45s ease;
+  }
+  .wrap.entering {
+    transform: translate(-50%, -50%) translate(var(--ex), var(--ey));
+    opacity: 0;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .wrap {
+      transition: none;
+    }
   }
   .node {
     width: 100%;
