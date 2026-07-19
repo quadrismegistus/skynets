@@ -142,52 +142,6 @@ export class ForceLayout {
     )
   }
 
-  /**
-   * Bring a wholly new conversation in from outside, intact.
-   *
-   * Seeding an arrival at the edge on its own could not work while trees hold
-   * together: a new reply belongs to a tree that is usually in frame, so group
-   * cohesion resolved the straddle by hauling the newcomer instantly inward --
-   * the pop it was meant to remove. So the unit that arrives is the unit that
-   * coheres. The whole tree is offset outside by a single delta, which keeps its
-   * tidy shape exactly, and glides in together.
-   *
-   * A post joining a tree already on screen is left at its place in that tree.
-   * It is a reply appearing in a thread you are watching, which is where it
-   * belongs; making it fly in from the rim would be motion for its own sake.
-   */
-  #arriveFromOutside(fresh: SimNode[], knownGroups: Set<string>, populated: boolean) {
-    if (!populated || !fresh.length) return
-    if (!this.#bounds.bleedX && !this.#bounds.bleedY) return
-    const arrivals = new Map<string, SimNode[]>()
-    for (const n of fresh) {
-      const key = n.group ?? n.id
-      if (knownGroups.has(key)) continue // slots into a conversation already in view
-      const g = arrivals.get(key)
-      if (g) g.push(n)
-      else arrivals.set(key, [n])
-    }
-    for (const members of arrivals.values()) {
-      let cx = 0
-      let cy = 0
-      for (const n of members) {
-        cx += n.tx
-        cy += n.ty
-      }
-      cx /= members.length
-      cy /= members.length
-      const edge = this.#outsideAlong(cx, cy)
-      const dx = edge.x - cx
-      const dy = edge.y - cy
-      // One delta for the whole tree: relative offsets survive, so it arrives
-      // looking like itself rather than assembling in mid-air.
-      for (const n of members) {
-        n.x = n.tx + dx
-        n.y = n.ty + dy
-      }
-    }
-  }
-
   /** Bounding box of a set of nodes, including each one's collision padding. */
   #boxOf(members: SimNode[]) {
     let l = Infinity
@@ -444,15 +398,7 @@ export class ForceLayout {
       const back = links.find((l) => l.target === id && this.#byId.has(l.source))
       return back ? this.#byId.get(back.source) : undefined
     }
-    // Something is already on screen, so an arriving conversation is a change
-    // the reader should see coming from somewhere.
-    const populated = this.#nodes.length > 0
-    // Which conversations were already in view. A wholly new tree arrives from
-    // outside; a post joining a tree already on screen belongs where that tree
-    // is, and flying it in from the rim would be theatre.
-    const knownGroups = new Set(this.#nodes.map((n) => n.group ?? n.id))
     const next: SimNode[] = []
-    const fresh: SimNode[] = []
     const nextById = new Map<string, SimNode>()
     for (const t of targets) {
       const existing = this.#byId.get(t.id)
@@ -464,7 +410,6 @@ export class ForceLayout {
         const sx = near?.x != null ? near.x + (Math.random() - 0.5) * 24 : t.tx
         const sy = near?.y != null ? near.y + (Math.random() - 0.5) * 24 : t.ty
         node = { id: t.id, x: sx, y: sy, tx: t.tx, ty: t.ty, r: t.r, hw: t.hw, hh: t.hh, group: t.group }
-        fresh.push(node)
       }
       node.tx = t.tx
       node.ty = t.ty
@@ -496,7 +441,6 @@ export class ForceLayout {
     }
     this.#nodes = next
     this.#byId = nextById
-    this.#arriveFromOutside(fresh, knownGroups, populated)
     // Once per update, not once per tick. Run from #clamp it re-shifted targets
     // on every frame, so the forces were chasing a target that kept moving --
     // which is what the bouncing was.
