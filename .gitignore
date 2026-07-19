@@ -15,3 +15,11 @@ public/client-metadata.json
 
 # Fetched at build time by scripts/fetch-embed-model.sh (~23MB of weights)
 public/models/
+
+# Screenshots from scripts/measure-graph.mjs and other measurement runs. A
+# harness invoked with OUT unset writes to a literal `undefined/` directory,
+# which is how a 330KB png reached this repo.
+undefined/
+*.png
+!public/**/*.png
+!src/**/*.png
