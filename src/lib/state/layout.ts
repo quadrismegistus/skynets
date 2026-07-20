@@ -174,11 +174,22 @@ export class Layout {
    */
   #seed() {
     const { w, h, bleedX, bleedY } = this.#bounds
+    // During an active drag, free nodes WARM-START from their last solved
+    // position instead of snapping back to their semantic target. #solve runs
+    // per pointermove; reseeding every free node at its target each time made
+    // the whole network teleport-to-target and re-separate on every move —
+    // with large grouped pills (group + reservoir passes) that reads as the
+    // graph "going haywire". Held to their last position, only the nodes the
+    // dragged one actually collides with shift; the rest stay put. (Avatars
+    // survived the reset because circle separation barely moves them, so this
+    // changes nothing visible there.)
+    const dragging = this.#dragId !== null
     const next: LayoutNode[] = []
     const nextById = new Map<string, LayoutNode>()
     for (const t of this.#targets) {
       const prev = this.#byId.get(t.id)
       const fixed = this.#pinned.has(t.id) || t.id === this.#dragId
+      const warm = dragging && !fixed && prev !== undefined
       // A non-finite coordinate would spread through the pairwise passes to
       // every node (NaN defeats each comparison on its way to the y-push), so
       // it is contained here rather than diagnosed downstream.
@@ -205,8 +216,8 @@ export class Layout {
         hw: t.hw,
         hh: t.hh,
         group: t.group,
-        x: fixed && prev ? prev.x : tx,
-        y: fixed && prev ? prev.y : ty,
+        x: (fixed || warm) && prev ? prev.x : tx,
+        y: (fixed || warm) && prev ? prev.y : ty,
         fixed,
       }
       next.push(node)

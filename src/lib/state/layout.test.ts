@@ -338,6 +338,23 @@ describe('holding nodes in place', () => {
     expect(at(l, 'n').y).toBeCloseTo(200, 0)
   })
 
+  it('holds settled neighbours in place during a drag instead of re-seeding them', () => {
+    // The haywire bug: #solve runs per pointermove, and reseeding every free
+    // node at its target each time made the whole network snap-to-target and
+    // re-separate on every move. Here two pills overlap, so the solve pushes
+    // 'b' well OFF its own target; dragging 'a' away must leave 'b' where it
+    // settled — not send it back toward its (now un-contested) target.
+    const l = pillLayout()
+    l.update([node('a', 600, 400), node('b', 660, 400)]) // overlap → pushed apart
+    const bSettled = at(l, 'b')
+    expect(Math.abs(bSettled.y - 400)).toBeGreaterThan(30) // b shoved off its target (y=400)
+    l.dragTo('a', 150, 700) // drag 'a' far from 'b'
+    const bNow = at(l, 'b')
+    // Held where it settled — NOT re-seeded back toward its now-uncontested target.
+    expect(bNow.x).toBeCloseTo(bSettled.x, 0)
+    expect(bNow.y).toBeCloseTo(bSettled.y, 0)
+  })
+
   it('arranges a conversation around its pinned member, not at its semantic spot', () => {
     // Revealing a topic pill pins it where it was clicked, then hands the
     // solver tidy-tree targets at the conversation's SEMANTIC position —
