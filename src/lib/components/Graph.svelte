@@ -138,10 +138,12 @@
    *   NB w/h are the CANVAS (below the topbar), so at density 1 this lands ~1–2
    *   short of the old window-based default, not exactly on it.
    *
-   * Clamped [8, 60]: the floor keeps a phone usable, the ceiling caps label/DOM
-   * cost. Because density is a multiplier, a fixed ceiling means the top of the
-   * slider is inert on large/hi-DPI displays (comfortable already ≈ the cap) —
-   * raise or area-scale the ceiling if "fill the space" should mean literally fill.
+   * Clamped [8, 120]: the floor keeps a phone usable; the ceiling is only an
+   * absolute DOM/label backstop. It is area-SCALED in effect — `base` is
+   * screen-derived and density tops out at 2.5, so base*density fills the frame
+   * at every size and the slider keeps its full travel. (A fixed 60 cap left the
+   * slider's top half inert on large monitors, where comfortable already ≈ 60;
+   * 120 is only reachable by cranking density on a 5K-class display.)
    */
   const budget = $derived.by(() => {
     let base: number
@@ -154,7 +156,7 @@
     } else {
       base = ((w * h) / 1e6) * 14.5
     }
-    return Math.max(8, Math.min(60, Math.round(base * settings.density)))
+    return Math.max(8, Math.min(120, Math.round(base * settings.density)))
   })
   // Bottom UI chrome, measured so the sim keeps nodes out of the corners it
   // occupies (measured into bottomChrome; the canvas ends above the bar).
