@@ -1448,43 +1448,104 @@
     view.k = next
   }
 
-  /** Drag the empty canvas to pan. Nodes, cards and chrome keep their own
-   * handlers -- starting a pan on top of them would fight the drag. */
+  /**
+   * Canvas pan + pinch-zoom (#42). Pointers that start on the EMPTY canvas are
+   * tracked here (screen coords relative to graphEl): one finger pans, two
+   * pinch-zoom. Nodes, cards and chrome keep their own handlers — the target
+   * guard means a gesture never starts on top of them. Touch reaches this only
+   * because `.viewport` is `touch-action: none`, so the browser doesn't claim a
+   * two-finger gesture as page-zoom.
+   */
+  const canvasPointers = new Map<number, { x: number; y: number }>()
+  let pan: { sx: number; sy: number; vx: number; vy: number; moved: boolean } | null = null
+  let pinch: { dist: number; mx: number; my: number; vx: number; vy: number; vk: number } | null = null
+  let canvasRelease: (() => void) | null = null
+
+  function canvasXY(e: PointerEvent) {
+    const r = graphEl.getBoundingClientRect()
+    return { x: e.clientX - r.left, y: e.clientY - r.top }
+  }
+
+  function startPan() {
+    const [p] = [...canvasPointers.values()]
+    pan = { sx: p.x, sy: p.y, vx: view.x, vy: view.y, moved: false }
+    pinch = null
+  }
+  function startPinch() {
+    const [a, b] = [...canvasPointers.values()]
+    pinch = {
+      dist: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+      mx: (a.x + b.x) / 2,
+      my: (a.y + b.y) / 2,
+      vx: view.x,
+      vy: view.y,
+      vk: view.k,
+    }
+    pan = null
+  }
+
   function onCanvasPointerDown(e: PointerEvent) {
     if (e.button !== 0) return
     const t = e.target as HTMLElement
     if (t.closest('.wrap, .card, .config-wrap, .hud, .panel, .digest-btn, .topic-node')) return
-    const startX = e.clientX
-    const startY = e.clientY
-    const baseX = view.x
-    const baseY = view.y
-    let panned = false
-    const move = (ev: PointerEvent) => {
-      const dx = ev.clientX - startX
-      const dy = ev.clientY - startY
-      if (!panned && Math.hypot(dx, dy) < 4) return
-      panned = true
-      view.x = baseX + dx
-      view.y = baseY + dy
+    canvasPointers.set(e.pointerId, canvasXY(e))
+    if (canvasPointers.size === 1) startPan()
+    else if (canvasPointers.size === 2) startPinch()
+    if (!canvasRelease) {
+      window.addEventListener('pointermove', onCanvasMove)
+      window.addEventListener('pointerup', onCanvasUp)
+      window.addEventListener('pointercancel', onCanvasUp)
+      // pointercancel matters on touch: a cancelled gesture must release, or the
+      // listeners survive with stale pointers and every later touch mis-tracks.
+      canvasRelease = () => {
+        window.removeEventListener('pointermove', onCanvasMove)
+        window.removeEventListener('pointerup', onCanvasUp)
+        window.removeEventListener('pointercancel', onCanvasUp)
+        canvasPointers.clear()
+        pan = null
+        pinch = null
+        canvasRelease = null
+      }
     }
-    const up = () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-      window.removeEventListener('pointercancel', up)
-      panRelease = null
-    }
-    // pointercancel matters on touch: the browser can claim a background drag,
-    // and without this the listeners survive with stale start coordinates, so
-    // every later touch re-pans from wherever the abandoned gesture began.
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
-    window.addEventListener('pointercancel', up)
-    panRelease = up
   }
-  /** Set while a pan is in flight, so teardown can release a gesture that never
-   * ended -- an unmount mid-drag would otherwise leak the window listeners. */
-  let panRelease: (() => void) | null = null
-  $effect(() => () => panRelease?.())
+
+  function onCanvasMove(e: PointerEvent) {
+    if (!canvasPointers.has(e.pointerId)) return
+    canvasPointers.set(e.pointerId, canvasXY(e))
+    if (pinch && canvasPointers.size >= 2) {
+      const [a, b] = [...canvasPointers.values()]
+      const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1
+      const mx = (a.x + b.x) / 2
+      const my = (a.y + b.y) / 2
+      const k = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, pinch.vk * (dist / pinch.dist)))
+      // The graph point under the pinch's START midpoint stays under the CURRENT
+      // midpoint, so it zooms/pans about the fingers, not the origin (same
+      // fixed-point trick as the wheel zoom).
+      const gx = (pinch.mx - pinch.vx) / pinch.vk
+      const gy = (pinch.my - pinch.vy) / pinch.vk
+      view.x = mx - gx * k
+      view.y = my - gy * k
+      view.k = k
+    } else if (pan && canvasPointers.size === 1) {
+      const p = canvasPointers.get(e.pointerId)!
+      const dx = p.x - pan.sx
+      const dy = p.y - pan.sy
+      if (!pan.moved && Math.hypot(dx, dy) < 4) return
+      pan.moved = true
+      view.x = pan.vx + dx
+      view.y = pan.vy + dy
+    }
+  }
+
+  function onCanvasUp(e: PointerEvent) {
+    if (!canvasPointers.delete(e.pointerId)) return
+    // Pinch → single finger: re-anchor a pan to the finger still down, so the
+    // remaining finger keeps panning without the view jumping.
+    if (canvasPointers.size === 1) startPan()
+    else if (canvasPointers.size === 0) canvasRelease?.()
+  }
+
+  $effect(() => () => canvasRelease?.())
 
   function onNodeDrag(uri: string, clientX: number, clientY: number) {
     const p = toGraph(clientX, clientY)
@@ -2163,6 +2224,10 @@
   .viewport {
     position: absolute;
     inset: 0;
+    /* Own the touch gestures on the world layer so the browser doesn't claim a
+       two-finger pinch as page-zoom (#42). Cards/panels are SIBLINGS of the
+       viewport, not descendants, so their own scrolling is unaffected. */
+    touch-action: none;
     /* Transform from the top-left, so graph coordinates map straight through
        without an origin correction in toGraph(). */
     transform-origin: 0 0;
