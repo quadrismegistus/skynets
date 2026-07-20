@@ -142,6 +142,7 @@
     width: min(760px, 92vw);
     max-height: 86vh;
     overflow-y: auto;
+    touch-action: pan-y; /* scroll under the graph's touch-action: none (#42) */
     background: var(--bg-elev);
     border: 1px solid var(--border);
     border-radius: 12px;

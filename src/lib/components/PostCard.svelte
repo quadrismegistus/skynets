@@ -693,9 +693,10 @@
     max-height: 72vh;
     overflow-y: auto;
     overflow-x: hidden;
-    /* Vertical touch = scroll (browser); horizontal = our prev/next swipe. pan-y
-       hands the browser only vertical, so a sideways flick reaches onCardPointerDown
-       instead of being eaten by iOS edge-swipe/back. */
+    /* Vertical touch = scroll (browser); horizontal = our prev/next swipe (#72).
+       pan-y hands the browser only vertical, so a sideways flick reaches
+       onCardPointerDown instead of iOS edge-back — and it also re-enables this
+       card's scroll under the graph's touch-action: none (#42). */
     touch-action: pan-y;
     background: var(--bg-elev);
     border: 1px solid var(--border);

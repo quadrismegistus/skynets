@@ -1539,10 +1539,13 @@
 
   function onCanvasUp(e: PointerEvent) {
     if (!canvasPointers.delete(e.pointerId)) return
-    // Pinch → single finger: re-anchor a pan to the finger still down, so the
-    // remaining finger keeps panning without the view jumping.
-    if (canvasPointers.size === 1) startPan()
-    else if (canvasPointers.size === 0) canvasRelease?.()
+    // Re-anchor on every drop so the surviving fingers don't inherit a stale
+    // base: ≥2 left → re-seat the pinch on the current pair (a 3-finger lift
+    // would otherwise jump); exactly 1 left → hand off to a pan without the view
+    // jumping; 0 left → release the window listeners.
+    if (canvasPointers.size >= 2) startPinch()
+    else if (canvasPointers.size === 1) startPan()
+    else canvasRelease?.()
   }
 
   $effect(() => () => canvasRelease?.())
@@ -2224,10 +2227,6 @@
   .viewport {
     position: absolute;
     inset: 0;
-    /* Own the touch gestures on the world layer so the browser doesn't claim a
-       two-finger pinch as page-zoom (#42). Cards/panels are SIBLINGS of the
-       viewport, not descendants, so their own scrolling is unaffected. */
-    touch-action: none;
     /* Transform from the top-left, so graph coordinates map straight through
        without an origin correction in toGraph(). */
     transform-origin: 0 0;
@@ -2242,6 +2241,13 @@
     width: 100%;
     height: 100%;
     overflow: hidden;
+    /* Own the touch gestures on the whole canvas so the browser never claims a
+       two-finger pinch as page-zoom (#42). It must live on .graph, not the
+       .viewport — the viewport is TRANSFORMED (pan/zoom), so its hit-box stops
+       covering the canvas once you pan or zoom out, and the browser would
+       reclaim the exposed strip. Scrollable overlays below re-enable pan-y so
+       their content still scrolls under this none. */
+    touch-action: none;
   }
   .edges {
     position: absolute;
@@ -2413,6 +2419,7 @@
     max-height: calc(100vh - 120px); /* fallback */
     max-height: calc(100dvh - 120px);
     overflow-y: auto;
+    touch-action: pan-y; /* scroll under .graph's touch-action: none (#42) */
     padding: 0.9rem;
     background: var(--bg-elev);
     border: 1px solid var(--border);
