@@ -5,7 +5,12 @@ const KEY = 'skynets.settings' // legacy name from before the Mothtrap rename �
 interface Persisted {
   /** Persistence-format version. Absent = v1 (see migrateV1). */
   v?: number
+  /** Legacy fixed post count. Retired in favour of `density` (the count is now
+   * derived from viewport area); still typed so migrateV1 can strip old blobs. */
   nodeLimit?: number
+  /** How tightly the graph fills the frame — the padding preference that
+   * replaced the fixed count. 1 = comfortable default; <1 sparser, >1 denser. */
+  density?: number
   /** Speculative: render posts as readable pills instead of avatar circles. */
   postNodes?: boolean
   selectMode?: SelectMode
@@ -24,7 +29,7 @@ interface Persisted {
 /** Current defaults. A field is persisted ONLY while its value differs from
  * these, so changing a default here reaches every user who never touched that
  * control — the v1 format persisted everything on load, which silently froze
- * the defaults of first visit. (nodeLimit's default is computed per load.) */
+ * the defaults of first visit. */
 export const DEFAULTS = {
   selectMode: 'mix' as SelectMode,
   autoCycle: false,
@@ -38,6 +43,7 @@ export const DEFAULTS = {
   hideMutedReplies: false,
   debugMode: false,
   postNodes: false,
+  density: 1,
 }
 
 /** What the defaults were when the v1 (persist-everything) format was live.
@@ -82,18 +88,6 @@ function load(): Partial<Persisted> {
   }
 }
 
-/**
- * Default node count scales with viewport area: ~30 fits comfortably on a
- * 1920x1080 desktop, so smaller screens get proportionally fewer (a phone
- * lands near the floor). Recomputed every load until the user moves the Count
- * slider — only a value that differs from the load-time default is persisted.
- */
-function defaultNodeLimit(): number {
-  if (typeof window === 'undefined') return 20
-  const mpx = (window.innerWidth * window.innerHeight) / 1e6
-  return Math.max(8, Math.min(60, Math.round(mpx * 14.5)))
-}
-
 /** Debug tooling is a dev affordance: offered in any dev build and on
  * localhost (covers LAN-IP phone testing via `vite --host`); the hosted
  * instances hide the toggle and ignore any persisted value. */
@@ -103,11 +97,11 @@ export const debugAllowed =
 
 /**
  * User's view preferences, persisted to localStorage. Reactive via runes, so
- * components can bind directly (e.g. `bind:value={settings.nodeLimit}`) and the
+ * components can bind directly (e.g. `bind:value={settings.density}`) and the
  * change is saved automatically.
  */
 class Settings {
-  nodeLimit = $state(defaultNodeLimit())
+  density = $state(DEFAULTS.density)
   selectMode = $state<SelectMode>(DEFAULTS.selectMode)
   autoCycle = $state(DEFAULTS.autoCycle)
   cycleInterval = $state(DEFAULTS.cycleInterval)
@@ -123,8 +117,12 @@ class Settings {
 
   constructor() {
     const p = load()
-    const defaultLimit = this.nodeLimit
-    if (typeof p.nodeLimit === 'number') this.nodeLimit = p.nodeLimit
+    // Clamp to the slider's range on load: the derived budget already clamps its
+    // own output, but a hand-edited/corrupt blob shouldn't leave `density` itself
+    // out of [0.5, 2.5] for any future raw reader. Keep in sync with the slider.
+    if (typeof p.density === 'number' && Number.isFinite(p.density)) {
+      this.density = Math.min(2.5, Math.max(0.5, p.density))
+    }
     if (p.selectMode === 'top' || p.selectMode === 'recent' || p.selectMode === 'mix') {
       this.selectMode = p.selectMode
     }
@@ -137,6 +135,7 @@ class Settings {
     if (typeof p.showReposts === 'boolean') this.showReposts = p.showReposts
     if (typeof p.followsOnly === 'boolean') this.followsOnly = p.followsOnly
     if (typeof p.hideMutedReplies === 'boolean') this.hideMutedReplies = p.hideMutedReplies
+    if (typeof p.postNodes === 'boolean') this.postNodes = p.postNodes
     if (typeof p.debugMode === 'boolean' && debugAllowed) this.debugMode = p.debugMode
 
     if (typeof localStorage !== 'undefined') {
@@ -145,7 +144,7 @@ class Settings {
           // Persist only what differs from the defaults (v2): an untouched
           // control keeps following the default, even when we change it later.
           const data: Persisted = { v: 2 }
-          if (this.nodeLimit !== defaultLimit) data.nodeLimit = this.nodeLimit
+          if (this.density !== DEFAULTS.density) data.density = this.density
           if (this.selectMode !== DEFAULTS.selectMode) data.selectMode = this.selectMode
           if (this.autoCycle !== DEFAULTS.autoCycle) data.autoCycle = this.autoCycle
           if (this.cycleInterval !== DEFAULTS.cycleInterval) data.cycleInterval = this.cycleInterval
@@ -157,6 +156,7 @@ class Settings {
           if (this.followsOnly !== DEFAULTS.followsOnly) data.followsOnly = this.followsOnly
           if (this.hideMutedReplies !== DEFAULTS.hideMutedReplies)
             data.hideMutedReplies = this.hideMutedReplies
+          if (this.postNodes !== DEFAULTS.postNodes) data.postNodes = this.postNodes
           if (this.debugMode !== DEFAULTS.debugMode) data.debugMode = this.debugMode
           localStorage.setItem(KEY, JSON.stringify(data))
         })
