@@ -1,4 +1,4 @@
-import { get, set } from 'idb-keyval'
+import { del, get, set } from 'idb-keyval'
 import { SvelteSet } from 'svelte/reactivity'
 
 /**
@@ -62,6 +62,15 @@ class ReadState {
   reset() {
     this.#did = undefined
     this.dismissed.clear()
+  }
+
+  /** Delete this user's persisted read-state AND clear memory — for the local-
+   * data wipe, which promises "everything this device stored is gone." Unlike
+   * reset() (logout, memory-only), this actually removes the on-disk key. Runs
+   * before reset() nulls #did, so the key is still resolvable. */
+  async purge() {
+    if (this.#did) await del(this.#key(this.#did))
+    this.reset()
   }
 
   async #persist() {
