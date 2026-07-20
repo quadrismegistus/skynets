@@ -3,6 +3,7 @@
   import { feeds } from '../state/feeds.svelte'
   import { bskyUrl, reposter, reposterProfile } from '../api/post'
   import {
+    ancestryHeld,
     buildGraph,
     climbChain,
     contextNode,
@@ -275,6 +276,34 @@
   // dozens of small conversations), and allocates each a resolution: full
   // tree, collapsed representative (+N), or hidden (queued).
   const convos = $derived(buildConversations(visible, primaryUris))
+  // Admissibility gate (#46): hold a conversation OUT of the graph while its
+  // ancestry is still being fetched, so a reply paints WITH its chain instead of
+  // popping as parents arrive. Whole-conversation: a gap anywhere holds it all.
+  // A manually-mapped/revealed conversation is never held — the user asked for
+  // it. Releases when the fetch settles (ancestors.settledUris), so a
+  // deleted/blocked parent doesn't hold forever.
+  const presentUris = $derived(new Set(allItems.map((i) => i.post.uri)))
+  const heldConvoIds = $derived.by(() => {
+    if (!settings.connectReplies && !settings.replyChains) return new Set<string>()
+    const held = new Set<string>()
+    for (const c of convos) {
+      const forced = c.members.some((m) => expanded.has(m.post.uri) || revealedUris.has(m.post.uri))
+      if (!forced && ancestryHeld(c.members, presentUris, ancestors.settledUris, parentUriOf)) {
+        held.add(c.id)
+      }
+    }
+    return held
+  })
+  const heldMemberUris = $derived.by(() => {
+    if (!heldConvoIds.size) return new Set<string>()
+    const s = new Set<string>()
+    for (const c of convos) if (heldConvoIds.has(c.id)) for (const m of c.members) s.add(m.post.uri)
+    return s
+  })
+  // The graph is built from the admitted posts only; held members never become nodes.
+  const admittedVisible = $derived(
+    heldMemberUris.size ? visible.filter((i) => !heldMemberUris.has(i.post.uri)) : visible,
+  )
   const plan = $derived.by(() => {
     // Manual maps + revealed topic pills always draw whole.
     const forceFull = new Set<string>()
@@ -282,7 +311,7 @@
       if (c.members.some((m) => expanded.has(m.post.uri) || revealedUris.has(m.post.uri))) forceFull.add(c.id)
     }
     return planView(
-      convos.filter((c) => c.hasPrimary || forceFull.has(c.id)),
+      convos.filter((c) => !heldConvoIds.has(c.id) && (c.hasPrimary || forceFull.has(c.id))),
       {
         budget,
         // Reply chains OFF = conversations render collapsed unless mapped.
@@ -319,7 +348,7 @@
   // everything else collapses (collapseUnexpanded) so budget-demoted small
   // threads render as a proper rep — one node, primary face, +N badge — instead
   // of their bare root.
-  const graph = $derived(buildGraph(visible, plannedFullUris, primaryUris, expanded, true))
+  const graph = $derived(buildGraph(admittedVisible, plannedFullUris, primaryUris, expanded, true))
 
   const total = $derived(plan.length)
   const queued = $derived(plan.filter((p) => p.level === 'hidden').length)
@@ -376,9 +405,15 @@
       // account and everything above it drop out (at any depth — climbChain checks
       // each hop), instead of showing the muted node as the hub a followed reply
       // hangs off. Off by default, so ordinary chains keep their full ancestry.
-      const prune = settings.hideMutedReplies
-        ? (a: GraphNode) => moderation.isSilenced(a.item.post.author)
-        : undefined
+      // Also refuse to climb INTO a held conversation. A chain split by a
+      // DISMISSED middle post (dropped from `visible`, so buildConversations
+      // doesn't union across it) plus a divergent reply.root can put an admitted
+      // node and a held ancestor in separate conversations; the climb resolves
+      // parents from the unfiltered contextByUri, so without this it would seat
+      // that held member as a solid node, bypassing the gate. (#63 review)
+      const prune = (a: GraphNode) =>
+        heldMemberUris.has(a.uri) ||
+        (settings.hideMutedReplies && moderation.isSilenced(a.item.post.author))
       climbChain(starts, set, parentNodeOf, prune)
     }
     return [...set.values()]

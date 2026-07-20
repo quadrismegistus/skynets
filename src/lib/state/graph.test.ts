@@ -3,8 +3,10 @@ import { mkPost } from '../testing'
 import { postScoreRate } from './score'
 import { buildConversations, planView } from './conversations'
 import {
+  ancestryHeld,
   buildGraph,
   climbChain,
+  parentUriOf,
   layoutPositions,
   MAX_THREAD_REPLIES,
   selectVisible,
@@ -470,6 +472,75 @@ describe('climbChain', () => {
     const into = new Map([['c', nodes.c]])
     climbChain([nodes.c], into, parentOf, (n) => n.uri === 'b') // b is c's immediate parent
     expect([...into.keys()].sort()).toEqual(['c']) // b, a, root all gone
+  })
+})
+
+describe('ancestryHeld (admissibility gate, #46)', () => {
+  const m = (uri: string, parent?: string) => ({ post: { uri }, _parent: parent })
+  const parentOf = (x: { _parent?: string }) => x._parent
+  const S = (...u: string[]) => new Set(u)
+
+  it('holds a conversation whose member has a missing, not-yet-fetched parent', () => {
+    const members = [m('reply', 'parent')] // parent not present, not settled
+    expect(ancestryHeld(members, S('reply'), S(), parentOf)).toBe(true)
+  })
+
+  it('admits once the parent is present (fetch landed)', () => {
+    const members = [m('reply', 'parent')]
+    expect(ancestryHeld(members, S('reply', 'parent'), S(), parentOf)).toBe(false)
+  })
+
+  it('admits a still-missing parent once the fetch has SETTLED (deleted/blocked never arrives)', () => {
+    const members = [m('reply', 'gone')]
+    expect(ancestryHeld(members, S('reply'), S('reply'), parentOf)).toBe(false)
+  })
+
+  it('a root member (no parent) never holds', () => {
+    expect(ancestryHeld([m('root')], S('root'), S(), parentOf)).toBe(false)
+  })
+
+  it('one member with a mid-chain gap holds the WHOLE conversation', () => {
+    // root present; a present, all resolved except `mid` whose parent isn't loaded.
+    const members = [m('root'), m('mid', 'above'), m('leaf', 'mid')]
+    expect(ancestryHeld(members, S('root', 'mid', 'leaf'), S(), parentOf)).toBe(true)
+  })
+
+  it('the climb does NOT seat a held member reached past a dismissed split (#63 leak)', () => {
+    // A → P1(dismissed) → H → gone(missing). A.root=P1 but H.root diverges, so a
+    // dismissed P1 (out of `visible`) leaves buildConversations unable to union
+    // A and H — they land in SEPARATE conversations, A admitted, H held. The
+    // climb resolves parents from ALL items (contextByUri), so it can reach H;
+    // the held-aware prune must stop it seating H (as a solid node).
+    const A = 'at://x/a'
+    const P1 = 'at://x/p1'
+    const H = 'at://x/h'
+    const items = [
+      mkPost({ uri: A, parent: P1, root: P1, author: 'a.test' }),
+      mkPost({ uri: P1, parent: H, root: H, author: 'p.test' }), // the dismissed middle
+      mkPost({ uri: H, parent: 'at://x/gone', root: 'at://x/rooth', author: 'h.test' }),
+    ]
+    const present = new Set(items.map((i) => i.post.uri)) // all loaded (P1 dismissed ≠ absent)
+    const visible = items.filter((i) => i.post.uri !== P1) // dismissed drops from visible
+    const convos = buildConversations(visible, new Set([A]))
+    const held = new Set<string>()
+    for (const c of convos) {
+      if (ancestryHeld(c.members, present, new Set(), (mm) => parentUriOf(mm))) {
+        for (const mm of c.members) held.add(mm.post.uri)
+      }
+    }
+    expect(held.has(H)).toBe(true) // H held (its parent `gone` is missing)
+    expect(held.has(A)).toBe(false) // A admitted (separate convo; its parent P1 is present)
+
+    // Replicate the climb: parents resolve from ALL items; prune held members.
+    const byUri = new Map(items.map((i) => [i.post.uri, { uri: i.post.uri, item: i }]))
+    const parentNodeOf = (n: { uri: string }) => {
+      const raw = parentUriOf(byUri.get(n.uri)!.item)
+      return raw ? byUri.get(raw) : undefined
+    }
+    const set = new Map([[A, byUri.get(A)!]])
+    climbChain([byUri.get(A)!], set, parentNodeOf, (a) => held.has(a.uri))
+    expect(set.has(H)).toBe(false) // the fix: held member NOT seated
+    expect(set.has(P1)).toBe(true) // the dismissed middle still shows (as a ghost)
   })
 })
 

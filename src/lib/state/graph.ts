@@ -177,6 +177,29 @@ export function climbChain<T extends { uri: string }>(
 }
 
 /**
+ * Admissibility gate (#46): is a conversation's ancestry still resolving?
+ *
+ * A member whose immediate parent isn't loaded yet (`!present`) reads as a reply
+ * with no visible chain, and it pops as the fetched parent lands. Hold the
+ * conversation while any such member's fetch is still in flight (`!settled`).
+ * Once the fetch settles — the parent arrived (now `present`) or it never will
+ * (deleted/blocked) — the member no longer holds the gate, so this never waits
+ * forever. Applies per member, so a gap anywhere in the chain holds the whole
+ * conversation. Pure (takes plain sets) so it unit-tests directly.
+ */
+export function ancestryHeld<T extends { post: { uri: string } }>(
+  members: T[],
+  present: ReadonlySet<string>,
+  settled: ReadonlySet<string>,
+  parentOf: (m: T) => string | undefined,
+): boolean {
+  return members.some((m) => {
+    const p = parentOf(m)
+    return p !== undefined && !present.has(p) && !settled.has(m.post.uri)
+  })
+}
+
+/**
  * The conversation model (PLAN §8): the graph as a first-class data structure.
  *
  * Every display decision this app makes — what to show, what to collapse, what

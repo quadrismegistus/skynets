@@ -11,6 +11,16 @@ import type { FeedItem } from '../api/timeline'
 class Ancestors {
   posts = $state<FeedItem[]>([])
   #requested = new SvelteSet<string>()
+  /** Reply uris whose chain fetch has COMPLETED (resolved or rejected). The
+   * admissibility gate holds a conversation whose ancestry is still missing
+   * ONLY until its fetch settles here — a deleted/blocked parent never arrives,
+   * so a settled-but-still-missing reply is admitted rather than held forever. */
+  #settled = new SvelteSet<string>()
+
+  /** Reactive view of which replies' ancestry fetches have finished. */
+  get settledUris(): ReadonlySet<string> {
+    return this.#settled
+  }
 
   /** For each reply uri (skipping ones already requested), fetch its full
    * ancestor chain and merge the results. */
@@ -18,21 +28,27 @@ class Ancestors {
     const fresh = replyUris.filter((u) => !this.#requested.has(u))
     if (!fresh.length) return
     for (const u of fresh) this.#requested.add(u)
-    const chains = await Promise.all(fresh.map((u) => fetchAncestors(u)))
-    const have = new Set(this.posts.map((p) => p.post.uri))
-    const add: FeedItem[] = []
-    for (const item of chains.flat()) {
-      if (!have.has(item.post.uri)) {
-        have.add(item.post.uri)
-        add.push(item)
+    try {
+      const chains = await Promise.all(fresh.map((u) => fetchAncestors(u)))
+      const have = new Set(this.posts.map((p) => p.post.uri))
+      const add: FeedItem[] = []
+      for (const item of chains.flat()) {
+        if (!have.has(item.post.uri)) {
+          have.add(item.post.uri)
+          add.push(item)
+        }
       }
+      if (add.length) this.posts = [...this.posts, ...add]
+    } finally {
+      // Settled either way: a failed fetch must still release the gate.
+      for (const u of fresh) this.#settled.add(u)
     }
-    if (add.length) this.posts = [...this.posts, ...add]
   }
 
   reset() {
     this.posts = []
     this.#requested.clear()
+    this.#settled.clear()
   }
 }
 
