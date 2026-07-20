@@ -1623,14 +1623,19 @@
     if (total > budget) turnoverOffset = (turnoverOffset + budget) % total
   }
 
-  // Keyboard navigation along the time axis (x): ← older, → newer, matching the
-  // "older · newer →" axis. Steps the selection through the placed nodes ordered
-  // by x. With nothing selected an arrow jumps to the extreme it points at — →
-  // to the newest (rightmost), ← to the oldest (leftmost).
-  function navigate(dir: 1 | -1) {
-    const order = [...placed].sort((a, b) => a.px - b.px)
+  // Placed nodes left→right along the time axis (older → newer).
+  function timeOrder() {
+    return [...placed].sort((a, b) => a.px - b.px)
+  }
+
+  // Move the selection along the time axis (x): dir -1 = older/left, +1 =
+  // newer/right, matching the "older · newer →" axis. `from` is the origin uri
+  // (keyboard uses the current `hovered`; a swipe passes the swiped node). With
+  // no origin an arrow jumps to the extreme it points at — → newest, ← oldest.
+  function navigate(dir: 1 | -1, from: string | null = hovered) {
+    const order = timeOrder()
     if (!order.length) return
-    const cur = hovered ? order.findIndex((p) => p.node.uri === hovered) : -1
+    const cur = from ? order.findIndex((p) => p.node.uri === from) : -1
     const next =
       cur === -1
         ? dir === 1
@@ -1638,6 +1643,31 @@
           : 0
         : Math.max(0, Math.min(order.length - 1, cur + dir))
     setHovered(order[next].node.uri)
+  }
+
+  // Rate the post, then advance to the NEXT post (#72 swipe up/down = "like/
+  // dislike and next post"). The next uri is captured BEFORE react() dismisses
+  // this one, then re-selected. react() dismisses the whole reply SUBTREE, so a
+  // px-adjacent reply of this post is about to vanish too — skip the doomed set
+  // and land on the nearest survivor (prefer newer/right, fall back to older).
+  function rateAndAdvance(uri: string, kind: ReactionKind) {
+    const order = timeOrder()
+    const i = order.findIndex((p) => p.node.uri === uri)
+    const gone = new Set([uri, ...threadDescendants(allItems, uri)])
+    const survivor = (list: typeof order) => list.find((p) => !gone.has(p.node.uri))?.node.uri ?? null
+    const nextUri =
+      i === -1 ? null : (survivor(order.slice(i + 1)) ?? survivor(order.slice(0, i).reverse()))
+    react(uri, kind)
+    if (nextUri) setHovered(nextUri)
+  }
+
+  // Touch swipe on a post node (#72): ←/→ page to prev/next post, ↑/↓ rate and
+  // advance. Mirrors the #71 arrow keys; mouse keeps drag (PostNode splits on
+  // pointer type), so this never fights node dragging.
+  function onSwipe(uri: string, dir: 'left' | 'right' | 'up' | 'down') {
+    if (dir === 'left') navigate(-1, uri)
+    else if (dir === 'right') navigate(1, uri)
+    else rateAndAdvance(uri, dir === 'up' ? 'up' : 'down')
   }
 
   // Hover with a short close delay so the pointer can travel from a node to its
@@ -1852,6 +1882,7 @@
       ondismiss={dismiss}
       ondragmove={onNodeDrag}
       ondragend={onNodeDragEnd}
+      onswipe={onSwipe}
     />
   {/each}
 

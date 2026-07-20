@@ -35,6 +35,8 @@
     ondismiss: (uri: string) => void
     ondragmove: (uri: string, clientX: number, clientY: number) => void
     ondragend: (uri: string) => void
+    /** Touch swipe on the node (#72): ←/→ prev/next post, ↑/↓ rate + advance. */
+    onswipe: (uri: string, dir: 'left' | 'right' | 'up' | 'down') => void
   }
   let {
     node,
@@ -58,6 +60,7 @@
     ondismiss,
     ondragmove,
     ondragend,
+    onswipe,
   }: Props = $props()
 
   // Held at the entry offset for one frame, then released so CSS carries it
@@ -122,10 +125,22 @@
     if (!ghost) ondismiss(node.uri)
   }
 
+  // Touch swipe thresholds (#72): a flick shorter than SWIPE_MIN is a tap; one
+  // slower than SWIPE_MAX_MS isn't a flick (it's a slow drag/hold — ignored).
+  const SWIPE_MIN = 32
+  const SWIPE_MAX_MS = 700
+
   function onPointerDown(e: PointerEvent) {
     lastPointerType = e.pointerType
     if (e.button !== 0) return
     dragMoved = false
+    // Split by input: MOUSE drags (reposition), TOUCH swipes (#72). Keeping them
+    // apart means a swipe never fights the drag disambiguation, and the node
+    // doesn't jump under the finger mid-swipe.
+    if (e.pointerType !== 'mouse') {
+      onSwipeStart(e)
+      return
+    }
     const startX = e.clientX
     const startY = e.clientY
     const move = (ev: PointerEvent) => {
@@ -140,6 +155,35 @@
       if (dragMoved) ondragend(node.uri)
     }
     window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+  }
+
+  // A touch flick on the node: measured on release. A decisive directional flick
+  // fires onswipe and consumes the gesture (dragMoved suppresses the tap that
+  // would otherwise open the card); anything smaller/slower stays a tap.
+  function onSwipeStart(e: PointerEvent) {
+    const id = e.pointerId
+    const startX = e.clientX
+    const startY = e.clientY
+    const t0 = e.timeStamp
+    const up = (ev: PointerEvent) => {
+      // Window listeners fire for EVERY pointer; ignore a second finger's
+      // release (else its coords, measured from this node's start, read as a
+      // bogus long swipe and could rate/dismiss a post nobody swiped). Mirrors
+      // the pointerId guard in DigestPanel's drag.
+      if (ev.pointerId !== id) return
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+      if (ev.type === 'pointercancel') return
+      const dx = ev.clientX - startX
+      const dy = ev.clientY - startY
+      const absX = Math.abs(dx)
+      const absY = Math.abs(dy)
+      if (Math.max(absX, absY) < SWIPE_MIN || ev.timeStamp - t0 > SWIPE_MAX_MS) return
+      dragMoved = true // consume: no tap/expand/dblclick fires after a swipe
+      onswipe(node.uri, absX > absY ? (dx < 0 ? 'left' : 'right') : dy < 0 ? 'up' : 'down')
+    }
     window.addEventListener('pointerup', up)
     window.addEventListener('pointercancel', up)
   }
