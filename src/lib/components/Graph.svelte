@@ -122,16 +122,33 @@
   const bleed = $derived(
     pill ? { x: Math.round(pill.w * 0.8), y: Math.round(pill.h * 1.1) } : { x: 0, y: 0 },
   )
-  /** Half of what geometrically fits: the rest is room for the force layout to
-   * spread a conversation rather than tile it. */
-  const pillBudget = $derived.by(() => {
-    if (!pill) return settings.nodeLimit
-    // By area, not whole columns: on a narrow canvas the column count rounds
-    // down to 1 and throws away most of the height.
-    const cell = (pill.w + pill.gap.x) * (pill.h + pill.gap.y)
-    const area = Math.max(0, w - 24) * Math.max(0, h - PAD_TOP - 60)
-    const fits = Math.round((area / cell) * 0.5)
-    return Math.max(8, Math.round(Math.min(settings.nodeLimit, fits) * (1 + OVERFLOW)))
+  /**
+   * How many posts comfortably fill the frame — the target that replaced the
+   * old fixed Count. Area-derived for both modes and scaled by the user's
+   * density preference (settings.density, 0.5–2.5, 1 = comfortable — a
+   * MULTIPLIER of what fits, which is why it travels across screen sizes where
+   * the old fixed 0–60 count could not):
+   *
+   * - Pills tile, so this is a real packing estimate: half of what geometrically
+   *   fits (the rest is spread room for the solver) plus the reservoir ring.
+   * - Avatars don't tile — a conversation spreads out — so it's a UX target, the
+   *   megapixel heuristic the Count default used (~30 on a 1080p screen).
+   *
+   * Clamped [8, 60]: the floor keeps a phone usable, the ceiling caps label/DOM
+   * cost on a 4K display (raise if "fill the space" should mean literally fill).
+   */
+  const budget = $derived.by(() => {
+    let base: number
+    if (pill) {
+      // By area, not whole columns: on a narrow canvas the column count rounds
+      // down to 1 and throws away most of the height.
+      const cell = (pill.w + pill.gap.x) * (pill.h + pill.gap.y)
+      const area = Math.max(0, w - 24) * Math.max(0, h - PAD_TOP - 60)
+      base = (area / cell) * 0.5 * (1 + OVERFLOW) // + reservoir supply
+    } else {
+      base = ((w * h) / 1e6) * 14.5
+    }
+    return Math.max(8, Math.min(60, Math.round(base * settings.density)))
   })
   // Bottom UI chrome, measured so the sim keeps nodes out of the corners it
   // occupies (measured into bottomChrome; the canvas ends above the bar).
@@ -241,7 +258,7 @@
     return planView(
       convos.filter((c) => c.hasPrimary || forceFull.has(c.id)),
       {
-        budget: pillBudget,
+        budget,
         // Reply chains OFF = conversations render collapsed unless mapped.
         autoUnrollMax: settings.replyChains ? 10 : 0,
         perAuthorMax: 3,
@@ -1143,10 +1160,10 @@
   })
 
   // Keep the graph full: when the queue runs dry (fewer posts loaded than the
-  // node limit) and more can be fetched, pull the next page. This is what makes
+  // budget) and more can be fetched, pull the next page. This is what makes
   // dismissing a post backfill the next one so the visible count holds steady.
   $effect(() => {
-    if (!loading && cursor && total < settings.nodeLimit) load(true)
+    if (!loading && cursor && total < budget) load(true)
   })
 
   // Feed switch: when the user picks a different feed tab, clear the loaded feed
@@ -1166,7 +1183,7 @@
   // Auto-cycle timer: while on, rotate the queue one step per interval.
   // (Mix mode has no meaningful rotation, so it only applies to top/recent.)
   $effect(() => {
-    if (!settings.autoCycle || settings.selectMode === 'mix' || total <= settings.nodeLimit) return
+    if (!settings.autoCycle || settings.selectMode === 'mix' || total <= budget) return
     const n = total
     const id = setInterval(
       () => {
@@ -1501,7 +1518,7 @@
   }
 
   function nextBatch() {
-    if (total > settings.nodeLimit) turnoverOffset = (turnoverOffset + settings.nodeLimit) % total
+    if (total > budget) turnoverOffset = (turnoverOffset + budget) % total
   }
 
   // Hover with a short close delay so the pointer can travel from a node to its
@@ -1780,10 +1797,14 @@
         </p>
 
         <div class="row">
-          <span class="label">Count</span>
-          <input type="range" min="5" max="60" bind:value={settings.nodeLimit} />
-          <span class="val">{settings.nodeLimit}</span>
+          <span class="label">Density</span>
+          <input type="range" min="0.5" max="2.5" step="0.05" bind:value={settings.density} />
+          <span class="val">~{budget}</span>
         </div>
+        <p class="hint">
+          Fills the space at the spacing you pick — left is sparser (more room per post), right is
+          denser (more posts). No fixed count.
+        </p>
 
         <div class="row">
           <span class="label">Post pills</span>
@@ -1800,7 +1821,7 @@
           <input
             type="checkbox"
             bind:checked={settings.autoCycle}
-            disabled={settings.selectMode === 'mix' || total <= settings.nodeLimit}
+            disabled={settings.selectMode === 'mix' || total <= budget}
           />
           <input
             type="range"

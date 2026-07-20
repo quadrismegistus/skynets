@@ -69,15 +69,17 @@ test('hover card like toggles the count', async ({ page }) => {
 })
 
 test('dismiss backfills to keep the visible count', async ({ page }) => {
-  // Pin count AND reply-chains (both defaults moved) — the invariant under
-  // test is that a dismissal backfills to hold the limit, so no chain-context
-  // nodes should ride along beyond it.
-  await page.addInitScript(() => localStorage.setItem('skynets.settings', JSON.stringify({ v: 2, nodeLimit: 20, replyChains: false })))
+  // The count is viewport-derived now (density, not a fixed limit); the
+  // invariant under test is that a dismissal BACKFILLS to hold whatever that
+  // count is, with no reply-chain context riding along beyond it.
+  await page.addInitScript(() => localStorage.setItem('skynets.settings', JSON.stringify({ v: 2, replyChains: false })))
   await graphReady(page)
+  const before = await page.locator('button.node').count()
+  expect(before).toBeGreaterThan(0)
   await page.locator('.wrap').first().hover()
   await page.keyboard.press('d')
   await page.waitForTimeout(800)
-  expect(await page.locator('button.node').count()).toBe(20)
+  expect(await page.locator('button.node').count()).toBe(before)
 })
 
 test('composing a post closes the modal', async ({ page }) => {
@@ -132,7 +134,7 @@ test('connect-replies draws edges for small threads by default', async ({ page }
 
 test('a reposted node shows the reposter avatar', async ({ page }) => {
   // The demo's one repost can fall outside the viewport-scaled default window.
-  await page.addInitScript(() => localStorage.setItem('skynets.settings', JSON.stringify({ v: 2, nodeLimit: 27 })))
+  await page.addInitScript(() => localStorage.setItem('skynets.settings', JSON.stringify({ v: 2, density: 2.5 })))
   await graphReady(page)
   expect(await page.locator('.reposter').count()).toBeGreaterThan(0)
 })
@@ -277,7 +279,7 @@ test('dragging moves a node without pinning; a click pins it', async ({ page }) 
 
 test('Reply chains is on by default; turning it off collapses the chain', async ({ page }) => {
   // Room for the demo thread's whole chain under the viewport-scaled default.
-  await page.addInitScript(() => localStorage.setItem('skynets.settings', JSON.stringify({ v: 2, nodeLimit: 27 })))
+  await page.addInitScript(() => localStorage.setItem('skynets.settings', JSON.stringify({ v: 2, density: 2.5 })))
   await graphReady(page)
   const edgesBefore = await page.locator('.edges path').count()
   await page.locator('.gear').click()
@@ -296,7 +298,7 @@ test('a previously-dismissed ancestor returns as a dimmed ghost for its chain', 
   // Every visible reply must still get its chain: the root comes back dimmed.
   // Room for the whole thread under the viewport-scaled default, so the
   // dismissed root's replies are definitely on screen.
-  await page.addInitScript(() => localStorage.setItem('skynets.settings', JSON.stringify({ v: 2, nodeLimit: 27 })))
+  await page.addInitScript(() => localStorage.setItem('skynets.settings', JSON.stringify({ v: 2, density: 2.5 })))
   // Seeded from a static same-origin page so the write COMPLETES before the
   // app boots (an addInitScript put races the app's read.load()).
   await page.goto('/client-metadata.json')
@@ -442,8 +444,8 @@ test('hovering a card avatar opens a profile preview', async ({ page }) => {
 
 test('hovering the reposter name opens a profile preview', async ({ page }) => {
   // The viewport-scaled default count can leave the demo's one repost outside
-  // the window; pre-tune the persisted Count as a user would.
-  await page.addInitScript(() => localStorage.setItem('skynets.settings', JSON.stringify({ v: 2, nodeLimit: 27 })))
+  // the window; pre-tune density high, as a user would, so it's in range.
+  await page.addInitScript(() => localStorage.setItem('skynets.settings', JSON.stringify({ v: 2, density: 2.5 })))
   await graphReady(page)
   const rep = page.locator('.wrap:has(.reposter)').first()
   await rep.hover()
@@ -590,12 +592,15 @@ test('help dialog opens and closes', async ({ page }) => {
 test('settings persist across reload', async ({ page }) => {
   await graphReady(page)
   await page.locator('.gear').click()
-  await page.locator('.config input[type=range]').first().fill('8')
+  // The first slider is Density now; its readout is the derived count, so assert
+  // the slider VALUE round-trips (not the ~N readout, which is viewport-derived).
+  const density = page.locator('.config input[type=range]').first()
+  await density.fill('0.6')
   await page.locator('.seg button', { hasText: 'top' }).click()
   await page.reload()
   await page.locator('.gear').waitFor()
   await page.locator('.gear').click()
-  await expect(page.locator('.config .val').first()).toHaveText('8')
+  await expect(page.locator('.config input[type=range]').first()).toHaveValue('0.6')
   await expect(page.locator('.seg button.on')).toHaveText('top')
 })
 
