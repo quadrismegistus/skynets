@@ -2,7 +2,7 @@
   import { untrack } from 'svelte'
   import { reactions } from '../state/reactions.svelte'
   import { profiles } from '../state/profiles.svelte'
-  import { follows } from '../state/follows.svelte'
+  import { follows, relationshipOf } from '../state/follows.svelte'
 
   interface Props {
     onclose: () => void
@@ -38,9 +38,16 @@
     }),
   )
 
+  // True until this open's follow-state verify lands. The graph pre-verifies
+  // only accounts you DON'T follow, so followed authors (every mutual + one-way
+  // follow) aren't in follows' map at open — their buckets read 0 until verify
+  // resolves. Gate the counts + empty message on this so we don't flash a false
+  // "no mutuals". Starts true so the very first paint shows the resolving state.
+  let resolving = $state(true)
+
   // Resolve profiles + authoritative follow state for EVERY ranked author (all
   // tabs, so switching tabs never refetches). `follows.verify` gives the real
-  // follow bit; `profiles.ensure` the avatar/handle.
+  // follow bits; `profiles.ensure` the avatar/handle.
   //
   // untrack() is load-bearing: this effect must depend ONLY on the did *set*
   // (via `ranked`, which reads the reactions map alone), never on the profile
@@ -52,8 +59,9 @@
   $effect(() => {
     const dids = ranked.map((t) => t.did)
     untrack(() => {
-      follows.verify(dids.map((did) => ({ did })))
       for (const did of dids) profiles.ensure(did)
+      resolving = true
+      follows.verify(dids.map((did) => ({ did }))).finally(() => (resolving = false))
     })
   })
 
@@ -64,20 +72,13 @@
   const counts = $derived.by(() => {
     const c = { following: 0, follower: 0, mutual: 0 }
     for (const r of rows) {
-      if (r.following && r.followsYou) c.mutual++
-      else if (r.following) c.following++
-      else if (r.followsYou) c.follower++
+      const kind = relationshipOf(r.following, r.followsYou)
+      if (kind !== 'neither') c[kind]++
     }
     return c
   })
   const shown = $derived(
-    rel === 'mutual'
-      ? rows.filter((r) => r.following && r.followsYou)
-      : rel === 'following'
-        ? rows.filter((r) => r.following && !r.followsYou)
-        : rel === 'follower'
-          ? rows.filter((r) => !r.following && r.followsYou)
-          : rows,
+    rel === 'all' ? rows : rows.filter((r) => relationshipOf(r.following, r.followsYou) === rel),
   )
 
   function profileUrl(did: string) {
@@ -126,7 +127,7 @@
           title="You follow them; they don't follow you back"
           onclick={() => (rel = 'following')}
         >
-          Following <span class="count">{counts.following}</span>
+          Following {#if !resolving}<span class="count">{counts.following}</span>{/if}
         </button>
         <button
           role="tab"
@@ -135,7 +136,7 @@
           title="They follow you; you don't follow them back"
           onclick={() => (rel = 'follower')}
         >
-          Follower <span class="count">{counts.follower}</span>
+          Follower {#if !resolving}<span class="count">{counts.follower}</span>{/if}
         </button>
         <button
           role="tab"
@@ -144,12 +145,16 @@
           title="You follow each other"
           onclick={() => (rel = 'mutual')}
         >
-          Mutual <span class="count">{counts.mutual}</span>
+          Mutual {#if !resolving}<span class="count">{counts.mutual}</span>{/if}
         </button>
       </div>
 
       {#if shown.length === 0}
-        <p class="empty">No one in this group yet — react to more posts, or try another filter.</p>
+        {#if resolving}
+          <p class="empty">Resolving follow relationships…</p>
+        {:else}
+          <p class="empty">No one in this group yet — try another filter.</p>
+        {/if}
       {:else}
         <ul class="rows">
           {#each shown as r (r.t.did)}

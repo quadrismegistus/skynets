@@ -102,3 +102,17 @@ class Follows {
 }
 
 export const follows = new Follows()
+
+export type Relationship = 'mutual' | 'following' | 'follower' | 'neither'
+
+/** Classify the two follow directions into one MECE relationship bucket.
+ * `following` = you follow them; `followsYou` = they follow you. "following"
+ * means one-way outbound (you follow, no follow-back); "follower" one-way
+ * inbound; "mutual" both; "neither" a stranger (e.g. a reacted reply author).
+ * Pure so the reactions panel's tally and filter share one definition. */
+export function relationshipOf(following: boolean, followsYou: boolean): Relationship {
+  if (following && followsYou) return 'mutual'
+  if (following) return 'following'
+  if (followsYou) return 'follower'
+  return 'neither'
+}
