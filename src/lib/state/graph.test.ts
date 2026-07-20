@@ -502,6 +502,109 @@ describe('treeTargets', () => {
     expect(byId.get('r1')!.tx).toBeLessThan(byId.get('r2')!.tx) // r1 (older) on the left
   })
 
+  it('wraps a sibling fan wider than the frame into multiple rows', () => {
+    // A topic cluster of nine leaf members laid out as ONE row spans ~2200px in
+    // pill mode — wider than any frame — so the solver's "too large to fit,
+    // leave it" branch fired and the row sat sliced at both window edges from
+    // first paint. Wide fans wrap instead: rows of at most
+    // floor(innerW / X_UNIT) columns, and the whole tree fits the frame.
+    // Mimics pill mode at a 1280 window: innerW is the WORLD (frame + bleed),
+    // frameW the window. maxCols = floor(1280 * 0.6 / 246) = 3.
+    const pillBox: TreeLayoutBox = {
+      padX: 0,
+      padTop: 0,
+      innerW: 1620,
+      frameW: 1280,
+      innerH: 1000,
+      minSize: 34,
+      maxSize: 66,
+      pill: { w: 212, h: 56, gap: { x: 34, y: 32 } },
+    }
+    const fan = [
+      mk('op', { timestamp: 1 }),
+      ...Array.from({ length: 9 }, (_, i) => mk(`r${i}`, { timestamp: 2 + i, parent: 'op' })),
+    ]
+    const t = treeTargets(fan, pillBox)
+    for (const x of t) {
+      // Every pill wholly inside the world box, half-width included.
+      expect(x.tx - 106).toBeGreaterThanOrEqual(-1)
+      expect(x.tx + 106).toBeLessThanOrEqual(1621)
+    }
+    // The block itself is narrow enough to place freely in the 1280 frame.
+    const xs = t.map((x) => x.tx)
+    expect(Math.max(...xs) - Math.min(...xs) + 212).toBeLessThanOrEqual(1280 * 0.6 + 1)
+    // 9 children at 3 columns → three rows (3 / 3 / 3), one Y_UNIT (88) apart.
+    const rowYs = [...new Set(t.filter((x) => x.id !== 'op').map((x) => Math.round(x.ty)))].sort((a, b) => a - b)
+    expect(rowYs.length).toBe(3)
+    expect(rowYs[1] - rowYs[0]).toBe(88)
+    // Reading order survives: the oldest reply is in the first row, leftmost.
+    const byId = new Map(t.map((x) => [x.id, x]))
+    expect(byId.get('r0')!.ty).toBe(Math.min(...rowYs) + 0) // first row
+    expect(byId.get('r0')!.tx).toBeLessThanOrEqual(byId.get('r3')!.tx)
+  })
+
+  it('goes wide, not tall, when a fan exceeds the height budget too', () => {
+    // Width capped alone turned a 21-member fan into a 7-row tower: taller
+    // than the frame, its topic-pill root pinned up behind the topbar and —
+    // on a narrow frame — the whole conversation benched into the reservoir.
+    // The row count is budgeted like the width is; a fan too big for both
+    // budgets widens past the width cap instead, ending partially visible in
+    // the solver's "too large to fit" branch rather than hidden.
+    const pillBox: TreeLayoutBox = {
+      padX: 0,
+      padTop: 0,
+      innerW: 1620,
+      frameW: 1280, // width budget: floor(1280 * 0.6 / 246) = 3 columns
+      innerH: 900,
+      frameH: 690, // height budget: floor(690 * 0.6 / 88) = 4 rows
+      minSize: 34,
+      maxSize: 66,
+      pill: { w: 212, h: 56, gap: { x: 34, y: 32 } },
+    }
+    const fan = [
+      mk('op', { timestamp: 1 }),
+      ...Array.from({ length: 21 }, (_, i) => mk(`r${i}`, { timestamp: 2 + i, parent: 'op' })),
+    ]
+    const t = treeTargets(fan, pillBox)
+    const members = t.filter((x) => x.id !== 'op')
+    const rowYs = [...new Set(members.map((x) => Math.round(x.ty)))].sort((a, b) => a - b)
+    expect(rowYs.length).toBe(4) // 6+6+6+3, not 3+3+…seven rows deep
+    // The block is deliberately WIDER than the width budget now — that is the
+    // trade — but no taller than the height budget.
+    expect(rowYs[rowYs.length - 1] - rowYs[0]).toBeLessThanOrEqual(3 * 88 + 1)
+  })
+
+  it('starts a wrapped row below the DEEPEST subtree of the row above', () => {
+    // If row two began one unit down regardless, a first-row child with its own
+    // replies would have the next row laid out on top of its subtree.
+    const pillBox: TreeLayoutBox = {
+      padX: 0,
+      padTop: 0,
+      innerW: 1000,
+      frameW: 850, // floor(850 * 0.6 / 246) = 2 columns
+      innerH: 2000,
+      minSize: 34,
+      maxSize: 66,
+      pill: { w: 212, h: 56, gap: { x: 34, y: 32 } },
+    }
+    const t = treeTargets(
+      [
+        mk('op', { timestamp: 1 }),
+        mk('a', { timestamp: 2, parent: 'op' }),
+        mk('a1', { timestamp: 3, parent: 'a' }), // a's reply: row 1 is 2 deep
+        mk('b', { timestamp: 4, parent: 'op' }),
+        mk('c', { timestamp: 5, parent: 'op' }), // wraps to row 2
+      ],
+      pillBox,
+    )
+    const byId = new Map(t.map((x) => [x.id, x]))
+    const Y = 88 // pill.h + gap.y
+    expect(byId.get('a')!.ty).toBeCloseTo(byId.get('op')!.ty + Y)
+    expect(byId.get('a1')!.ty).toBeCloseTo(byId.get('a')!.ty + Y)
+    // c starts BELOW a's subtree (two units down), not on top of a1.
+    expect(byId.get('c')!.ty).toBeCloseTo(byId.get('op')!.ty + 3 * Y)
+  })
+
   it('centres a lone conversation rather than stranding it at its root', () => {
     // There is nothing to rank a single conversation against, so it goes to the
     // middle. It used to keep its root's own coordinates — which is by

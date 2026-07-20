@@ -206,6 +206,15 @@ export interface TreeLayoutBox {
   padTop: number
   innerW: number
   innerH: number
+  /** VISIBLE frame width, when it differs from innerW. In pill mode innerW is
+   * the WORLD — frame plus the reservoir bleed on both sides — which is the
+   * right span to rank across but the wrong budget for row wrapping: a row
+   * sized to the world overhangs the window and lands in the solver's
+   * "too large to fit" branch, the exact failure wrapping exists to prevent.
+   * Defaults to innerW (avatar mode, where the two coincide). */
+  frameW?: number
+  /** VISIBLE frame height, same story vertically. Defaults to innerH. */
+  frameH?: number
   minSize: number
   maxSize: number
   /** Pill mode: nodes are w x h rectangles rather than circles up to maxSize.
@@ -257,16 +266,103 @@ export function treeTargets(nodes: TreeNode[], box: TreeLayoutBox): TreeTarget[]
     }
   }
 
+  // How many columns a sibling fan may span before wrapping. A fan of nine
+  // laid out as ONE row spans ~2200px in pill mode — wider than any frame —
+  // so the solver's "too large to fit, leave it" branch fired and the row sat
+  // sliced at both window edges. Budgeted against the VISIBLE frame, and only
+  // a FRACTION of it: a block sized to exactly the frame has no legal
+  // position the moment anything else is on canvas — one nudge from a
+  // neighbour pushes it over an edge, and the solver's rescue/bench loop ends
+  // up hiding it entirely (measured: 19 of 20 pills benched into the
+  // reservoir). 0.6 leaves a block room to be SHOVED and still fit.
+  const WRAP_FRACTION = 0.6
+  const maxCols = Math.max(1, Math.floor(((box.frameW ?? innerW) * WRAP_FRACTION) / X_UNIT))
+  // The same budget VERTICALLY, in rows. Width capped alone turned a big fan
+  // into a tower taller than the frame: its root (a topic pill) got pinned up
+  // behind the topbar, and on a narrow frame the solver benched the whole
+  // now-narrow conversation into the reservoir — hidden entirely, where the
+  // unwrapped row had at least been partially visible.
+  const maxRows = Math.max(1, Math.floor(((box.frameH ?? innerH) * WRAP_FRACTION) / Y_UNIT))
+
+  const kidsOf = (uri: string) =>
+    (childrenOf.get(uri) ?? []).slice().sort((a, b) => a.timestamp - b.timestamp)
+
+  /** Chunk children into rows of at most `cap` columns. Every row keeps at
+   * least one child, so a single over-wide subtree still lays out (its own
+   * children wrap in turn). Oldest first, reading order. */
+  const chunk = (kids: TreeNode[], ws: number[], cap: number): TreeNode[][] => {
+    const rows: TreeNode[][] = []
+    let row: TreeNode[] = []
+    let used = 0
+    kids.forEach((k, i) => {
+      if (row.length && used + ws[i] > cap) {
+        rows.push(row)
+        row = []
+        used = 0
+      }
+      row.push(k)
+      used += ws[i]
+    })
+    if (row.length) rows.push(row)
+    return rows
+  }
+
+  /** A node's children in rows: wrapped to the width budget, then widened —
+   * per fan — while the ROW COUNT overflows the height budget. A fan too big
+   * for both budgets goes wide rather than tall: it ends in the solver's
+   * "too large to fit, leave it" branch, partially visible, which beats a
+   * tower that hides its root behind the topbar or benches whole. (Row count
+   * approximates height — deep subtrees add more — but the pathological case
+   * is a broad fan of leaves, which it captures exactly.) */
+  const rowsOf = (uri: string, guard: Set<string>): TreeNode[][] => {
+    const kids = kidsOf(uri)
+    if (!kids.length) return []
+    const ws = kids.map((k) => widthOf(k.uri, guard))
+    const total = ws.reduce((a, b) => a + b, 0)
+    let cap = maxCols
+    let rows = chunk(kids, ws, cap)
+    while (rows.length > maxRows && cap < total) {
+      cap++
+      rows = chunk(kids, ws, cap)
+    }
+    return rows
+  }
+
+  // A subtree's width is its WIDEST row (not the sum of its children), so
+  // wrapping propagates upward: a wrapped fan takes less horizontal room, and
+  // its grandparent spreads its own children accordingly.
   const widths = new Map<string, number>()
   const widthOf = (uri: string, guard: Set<string>): number => {
     const memo = widths.get(uri)
     if (memo !== undefined) return memo
     if (guard.has(uri)) return 1
     guard.add(uri)
-    const kids = childrenOf.get(uri) ?? []
-    const w = kids.length ? kids.reduce((sum, k) => sum + widthOf(k.uri, guard), 0) : 1
-    widths.set(uri, Math.max(1, w))
-    return Math.max(1, w)
+    let w = 1
+    for (const row of rowsOf(uri, guard)) {
+      w = Math.max(
+        w,
+        row.reduce((sum, k) => sum + widthOf(k.uri, guard), 0),
+      )
+    }
+    widths.set(uri, w)
+    return w
+  }
+
+  // Subtree height in rows, for stacking wrapped rows without overlap: the
+  // next row starts below the DEEPEST subtree of the row above it, not one
+  // unit down.
+  const heights = new Map<string, number>()
+  const heightOf = (uri: string, guard: Set<string>): number => {
+    const memo = heights.get(uri)
+    if (memo !== undefined) return memo
+    if (guard.has(uri)) return 1
+    guard.add(uri)
+    let h = 1
+    for (const row of rowsOf(uri, guard)) {
+      h += Math.max(...row.map((k) => heightOf(k.uri, guard)))
+    }
+    heights.set(uri, h)
+    return h
   }
 
   const off = new Map<string, { dx: number; dy: number }>()
@@ -281,13 +377,18 @@ export function treeTargets(nodes: TreeNode[], box: TreeLayoutBox): TreeTarget[]
     e.minDx = Math.min(e.minDx, dx)
     e.maxDx = Math.max(e.maxDx, dx)
     e.maxDy = Math.max(e.maxDy, dy)
-    const kids = (childrenOf.get(uri) ?? []).slice().sort((a, b) => a.timestamp - b.timestamp)
-    const total = kids.reduce((sum, k) => sum + widthOf(k.uri, new Set()), 0)
-    let cursor = -total / 2
-    for (const k of kids) {
-      const w = widthOf(k.uri, new Set())
-      assign(k.uri, dx + (cursor + w / 2) * X_UNIT, dy + Y_UNIT, guard, rootUri)
-      cursor += w
+    // Each row centres on its parent; when everything fits maxCols this is one
+    // row one unit down — byte-identical to the unwrapped layout.
+    let rowDy = dy + Y_UNIT
+    for (const row of rowsOf(uri, new Set())) {
+      const total = row.reduce((sum, k) => sum + widthOf(k.uri, new Set()), 0)
+      let cursor = -total / 2
+      for (const k of row) {
+        const w = widthOf(k.uri, new Set())
+        assign(k.uri, dx + (cursor + w / 2) * X_UNIT, rowDy, guard, rootUri)
+        cursor += w
+      }
+      rowDy += Math.max(...row.map((k) => heightOf(k.uri, new Set()))) * Y_UNIT
     }
   }
   const assigned = new Set<string>()
