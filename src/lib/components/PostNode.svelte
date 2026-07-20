@@ -22,6 +22,8 @@
     pinned: boolean
     /** A dismissed ancestor resurrected for chain context — dimmed, no ✕. */
     ghost: boolean
+    /** Private thumbs mark (#66), shown as a small corner badge when set. */
+    reaction?: 'up' | 'down'
     /** Digest topic color — tints the border so neighbouring threads read apart. */
     accent?: string
     unfollowed: boolean
@@ -46,6 +48,7 @@
     active,
     pinned,
     ghost,
+    reaction,
     accent,
     unfollowed,
     onhover,
@@ -198,6 +201,14 @@
 
   {#if isReply}
     <span class="reply-badge" title="This post is a reply">↩</span>
+  {/if}
+
+  {#if reaction}
+    <span
+      class="reaction-badge {reaction}"
+      title={reaction === 'up' ? 'You thumbed this up (private)' : 'You thumbed this down (private)'}
+      aria-hidden="true">{reaction === 'up' ? '👍' : '👎'}</span
+    >
   {/if}
 
   {#if node.collapsedCount > 0}
@@ -482,6 +493,31 @@
     font-size: 0.62rem;
     line-height: 1;
     pointer-events: none;
+  }
+  /* Bottom-left corner: private thumbs mark. Clear of the reposter (top-left),
+     dismiss ✕ (top-right) and reply badge (bottom-right). Mainly seen on a
+     resurfaced ghost, since reacting also dismisses. */
+  .reaction-badge {
+    position: absolute;
+    bottom: -4px;
+    left: -4px;
+    width: 17px;
+    height: 17px;
+    display: grid;
+    place-items: center;
+    background: var(--bg-elev);
+    border: 1.5px solid var(--border);
+    border-radius: 50%;
+    font-size: 0.6rem;
+    line-height: 1;
+    pointer-events: none;
+    z-index: 3;
+  }
+  .reaction-badge.up {
+    border-color: #3fb950;
+  }
+  .reaction-badge.down {
+    border-color: var(--danger);
   }
   .dismiss {
     position: absolute;

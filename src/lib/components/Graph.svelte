@@ -25,6 +25,7 @@
   import { Layout, type Target } from '../state/layout'
   import { buildConversations, planView } from '../state/conversations'
   import { read } from '../state/read.svelte'
+  import { reactions, type ReactionKind } from '../state/reactions.svelte'
   import { moderation } from '../state/moderation.svelte'
   import { settings, debugAllowed } from '../state/settings.svelte'
   import { compose } from '../state/compose.svelte'
@@ -1559,6 +1560,17 @@
     if (hovered && all.includes(hovered)) hovered = null
   }
 
+  // Private thumbs up/down (#66). Local-only — never sent to Bluesky. Attributed
+  // to the DISPLAYED post's author (Q1: a per-author signal, so a mixed rep node
+  // tags the rep's author, not the whole chain), then dismissed (Q2: you've made
+  // your call, move on). The reaction persists in the reactions store even after
+  // dismissal, so a resurfaced ghost keeps its mark.
+  function react(uri: string, kind: ReactionKind) {
+    const did = contextByUri.get(uri)?.post.author.did
+    if (did) reactions.react(uri, did, kind)
+    dismiss(uri)
+  }
+
   // Dismiss a whole conversation from its topic node: every member post (plus
   // reply subtrees) is marked read at once.
   function dismissTopic(convoId: string) {
@@ -1678,6 +1690,10 @@
       showConfig = false
     } else if (k === 'd' && hoveredTopic) dismissTopic(hoveredTopic)
     else if (k === 'd' && hovered) dismiss(hovered)
+    // Thumbs on the hovered post: y = up, n = down. `n` keeps its no-hover
+    // meaning (nextBatch) — same hover-scoped overload the `d` key already uses.
+    else if (k === 'y' && hovered) react(hovered, 'up')
+    else if (k === 'n' && hovered) react(hovered, 'down')
     else if (k === 'r') load(true)
     else if (k === 'n') nextBatch()
     else if (k === 'l') turnoverOffset = 0
@@ -1775,6 +1791,7 @@
       active={hovered === p.node.uri}
       pinned={pinned.has(p.node.uri)}
       ghost={p.node.ghost ?? false}
+      reaction={reactions.reactionOf(p.node.uri)}
       accent={topicColorByNode.get(p.node.uri)}
       unfollowed={p.node.item.post.author.did !== session.did &&
         !follows.following(p.node.item.post.author)}

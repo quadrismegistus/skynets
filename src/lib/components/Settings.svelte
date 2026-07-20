@@ -3,6 +3,7 @@
   import { digest } from '../state/digest.svelte'
   import { digestConsent, destinationOf } from '../state/digestConsent.svelte'
   import { read } from '../state/read.svelte'
+  import { reactions } from '../state/reactions.svelte'
   import { session } from '../state/session.svelte'
   import { terms } from '../state/terms.svelte'
   import { isNative } from '../api/platform'
@@ -48,6 +49,7 @@
     try {
       await archive.wipe()
       await read.reset()
+      reactions.reset()
       digest.clear()
       stats = null
       wiped = true

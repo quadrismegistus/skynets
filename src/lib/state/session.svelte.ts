@@ -9,6 +9,7 @@ import {
 import { initOAuth, revokeOAuth, signInOAuth } from '../api/oauth'
 import { isDemo } from '../api/demo'
 import { read } from './read.svelte'
+import { reactions } from './reactions.svelte'
 import { moderation } from './moderation.svelte'
 import { disposeLocalEmbed } from '../api/localEmbed'
 
@@ -54,6 +55,7 @@ class SessionState {
       // running Bluesky's defaults, so nothing is ever unmoderated.
       moderation.setUser(this.did)
       await read.load(this.did)
+      await reactions.load(this.did)
     }
   }
 
@@ -77,6 +79,7 @@ class SessionState {
       this.did = 'did:plc:demo'
       moderation.setUser(this.did)
       await read.load(this.did)
+      await reactions.load(this.did)
       return
     }
     try {
@@ -128,6 +131,7 @@ class SessionState {
     }
     setActiveAgent(null)
     read.reset()
+    reactions.reset()
     moderation.reset()
     // The embedding worker holds ~100MB of loaded weights; signing out should
     // not leave another account's session sharing them.
