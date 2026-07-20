@@ -18,6 +18,7 @@
   import { interactions } from '../state/interactions.svelte'
   import { follows } from '../state/follows.svelte'
   import { profiles } from '../state/profiles.svelte'
+  import { reactions } from '../state/reactions.svelte'
   import { session } from '../state/session.svelte'
   import { settings } from '../state/settings.svelte'
   import { moderation } from '../state/moderation.svelte'
@@ -38,6 +39,10 @@
     onreply: (item: FeedItem) => void
     onquote: (item: FeedItem) => void
     onmapreplies: (item: FeedItem) => void
+    /** Touch horizontal swipe on the card: -1 = previous post, +1 = next. */
+    onswipe: (uri: string, dir: -1 | 1) => void
+    /** Private thumbs (local-only) on the shown post. */
+    onrate: (item: FeedItem, kind: 'up' | 'down') => void
     onkeep: () => void
     onleave: () => void
     /** Touch: explicit close (hover-out doesn't exist there). */
@@ -65,6 +70,8 @@
     onreply,
     onquote,
     onmapreplies,
+    onswipe,
+    onrate,
     onkeep,
     onleave,
     onclose,
@@ -152,7 +159,37 @@
     clearTimeout(rtHoverTimer)
     clearTimeout(profileOpenTimer)
     clearTimeout(rtOpenTimer)
+    window.removeEventListener('pointerup', onCardPointerUp)
+    window.removeEventListener('pointercancel', onCardPointerUp)
   })
+
+  // Horizontal card swipe → prev/next post (touch only). Vertical is left to the
+  // card's own scroll (touch-action: pan-y), so reading a long post is never
+  // hijacked. Only a decisive, quick, clearly-sideways flick navigates; taps and
+  // vertical scrolls fall through. pointerId-guarded so a stray finger can't spoof it.
+  const SWIPE_MIN = 56
+  const SWIPE_MAX_MS = 600
+  let swipeStart: { id: number; x: number; y: number; t: number } | null = null
+  function onCardPointerDown(e: PointerEvent) {
+    if (e.pointerType === 'mouse') return
+    swipeStart = { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp }
+    window.addEventListener('pointerup', onCardPointerUp)
+    window.addEventListener('pointercancel', onCardPointerUp)
+  }
+  function onCardPointerUp(e: PointerEvent) {
+    if (!swipeStart || e.pointerId !== swipeStart.id) return
+    window.removeEventListener('pointerup', onCardPointerUp)
+    window.removeEventListener('pointercancel', onCardPointerUp)
+    const s = swipeStart
+    swipeStart = null
+    if (e.type === 'pointercancel') return
+    const dx = e.clientX - s.x
+    const dy = e.clientY - s.y
+    if (Math.abs(dx) < SWIPE_MIN || Math.abs(dx) < Math.abs(dy) * 1.8 || e.timeStamp - s.t > SWIPE_MAX_MS)
+      return
+    onswipe(item.post.uri, dx < 0 ? -1 : 1) // swipe left → previous, right → next
+  }
+
   function toggleReposter() {
     if (!rt || !rt.did) return
     follows.toggle(rt)
@@ -285,6 +322,7 @@
   bind:clientHeight={cardH}
   onmouseenter={onkeep}
   onmouseleave={onleave}
+  onpointerdown={onCardPointerDown}
 >
   {#if showClose && (ondismiss || onclose)}
     <!-- Dismiss, not close: tapping outside the card closes it and leaves the
@@ -533,6 +571,7 @@
 {#snippet actionRow(p: FeedItem, compact: boolean)}
   {@const pLiked = interactions.liked(p)}
   {@const pReposted = interactions.reposted(p)}
+  {@const pReaction = reactions.reactionOf(p.post.uri)}
   <div class="actions" class:compact>
     <button class="act" title="Reply" onclick={() => onreply(p)}>
       <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d={REPLY} fill="currentColor" /></svg>
@@ -583,6 +622,23 @@
       </svg>
       <span>{interactions.likeCount(p)}</span>
     </button>
+
+    <!-- Private thumbs (#66): local-only, never sent to Bluesky. Separate from
+         the public Like above; feeds the "who to unfollow" tally. -->
+    <button
+      class="act thumb"
+      class:on={pReaction === 'up'}
+      title="Privately like — on-device only, for the unfollow tally"
+      aria-label="Privately like"
+      onclick={() => onrate(p, 'up')}>👍</button
+    >
+    <button
+      class="act thumb"
+      class:on={pReaction === 'down'}
+      title="Privately dislike — on-device only, for the unfollow tally"
+      aria-label="Privately dislike"
+      onclick={() => onrate(p, 'down')}>👎</button
+    >
 
     <div class="more-wrap">
       <button
@@ -637,6 +693,10 @@
     max-height: 72vh;
     overflow-y: auto;
     overflow-x: hidden;
+    /* Vertical touch = scroll (browser); horizontal = our prev/next swipe. pan-y
+       hands the browser only vertical, so a sideways flick reaches onCardPointerDown
+       instead of being eaten by iOS edge-swipe/back. */
+    touch-action: pan-y;
     background: var(--bg-elev);
     border: 1px solid var(--border);
     border-radius: 12px;
@@ -1046,6 +1106,20 @@
   }
   .act.like.on {
     color: var(--danger);
+  }
+  /* Private thumbs are emoji (which ignore `color`), so the active state reads
+     through opacity + a filled background instead. */
+  .act.thumb {
+    font-size: 0.9rem;
+    line-height: 1;
+    opacity: 0.5;
+  }
+  .act.thumb:hover,
+  .act.thumb.on {
+    opacity: 1;
+  }
+  .act.thumb.on {
+    background: var(--bg);
   }
   .repost-wrap:has(.on) .act,
   .act.on {
