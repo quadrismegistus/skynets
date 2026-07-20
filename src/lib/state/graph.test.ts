@@ -543,6 +543,37 @@ describe('treeTargets', () => {
     expect(byId.get('r0')!.tx).toBeLessThanOrEqual(byId.get('r3')!.tx)
   })
 
+  it('goes wide, not tall, when a fan exceeds the height budget too', () => {
+    // Width capped alone turned a 21-member fan into a 7-row tower: taller
+    // than the frame, its topic-pill root pinned up behind the topbar and —
+    // on a narrow frame — the whole conversation benched into the reservoir.
+    // The row count is budgeted like the width is; a fan too big for both
+    // budgets widens past the width cap instead, ending partially visible in
+    // the solver's "too large to fit" branch rather than hidden.
+    const pillBox: TreeLayoutBox = {
+      padX: 0,
+      padTop: 0,
+      innerW: 1620,
+      frameW: 1280, // width budget: floor(1280 * 0.6 / 246) = 3 columns
+      innerH: 900,
+      frameH: 690, // height budget: floor(690 * 0.6 / 88) = 4 rows
+      minSize: 34,
+      maxSize: 66,
+      pill: { w: 212, h: 56, gap: { x: 34, y: 32 } },
+    }
+    const fan = [
+      mk('op', { timestamp: 1 }),
+      ...Array.from({ length: 21 }, (_, i) => mk(`r${i}`, { timestamp: 2 + i, parent: 'op' })),
+    ]
+    const t = treeTargets(fan, pillBox)
+    const members = t.filter((x) => x.id !== 'op')
+    const rowYs = [...new Set(members.map((x) => Math.round(x.ty)))].sort((a, b) => a - b)
+    expect(rowYs.length).toBe(4) // 6+6+6+3, not 3+3+…seven rows deep
+    // The block is deliberately WIDER than the width budget now — that is the
+    // trade — but no taller than the height budget.
+    expect(rowYs[rowYs.length - 1] - rowYs[0]).toBeLessThanOrEqual(3 * 88 + 1)
+  })
+
   it('starts a wrapped row below the DEEPEST subtree of the row above', () => {
     // If row two began one unit down regardless, a first-row child with its own
     // replies would have the next row laid out on top of its subtree.

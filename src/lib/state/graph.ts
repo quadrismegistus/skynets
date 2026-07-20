@@ -213,6 +213,8 @@ export interface TreeLayoutBox {
    * "too large to fit" branch, the exact failure wrapping exists to prevent.
    * Defaults to innerW (avatar mode, where the two coincide). */
   frameW?: number
+  /** VISIBLE frame height, same story vertically. Defaults to innerH. */
+  frameH?: number
   minSize: number
   maxSize: number
   /** Pill mode: nodes are w x h rectangles rather than circles up to maxSize.
@@ -275,28 +277,54 @@ export function treeTargets(nodes: TreeNode[], box: TreeLayoutBox): TreeTarget[]
   // reservoir). 0.6 leaves a block room to be SHOVED and still fit.
   const WRAP_FRACTION = 0.6
   const maxCols = Math.max(1, Math.floor(((box.frameW ?? innerW) * WRAP_FRACTION) / X_UNIT))
+  // The same budget VERTICALLY, in rows. Width capped alone turned a big fan
+  // into a tower taller than the frame: its root (a topic pill) got pinned up
+  // behind the topbar, and on a narrow frame the solver benched the whole
+  // now-narrow conversation into the reservoir — hidden entirely, where the
+  // unwrapped row had at least been partially visible.
+  const maxRows = Math.max(1, Math.floor(((box.frameH ?? innerH) * WRAP_FRACTION) / Y_UNIT))
 
   const kidsOf = (uri: string) =>
     (childrenOf.get(uri) ?? []).slice().sort((a, b) => a.timestamp - b.timestamp)
 
-  /** Chunk a node's children into rows whose summed width fits maxCols. Every
-   * row keeps at least one child, so a single over-wide subtree still lays out
-   * (its own children wrap in turn). Oldest first, reading order. */
-  const rowsOf = (uri: string, guard: Set<string>): TreeNode[][] => {
+  /** Chunk children into rows of at most `cap` columns. Every row keeps at
+   * least one child, so a single over-wide subtree still lays out (its own
+   * children wrap in turn). Oldest first, reading order. */
+  const chunk = (kids: TreeNode[], ws: number[], cap: number): TreeNode[][] => {
     const rows: TreeNode[][] = []
     let row: TreeNode[] = []
     let used = 0
-    for (const k of kidsOf(uri)) {
-      const w = widthOf(k.uri, guard)
-      if (row.length && used + w > maxCols) {
+    kids.forEach((k, i) => {
+      if (row.length && used + ws[i] > cap) {
         rows.push(row)
         row = []
         used = 0
       }
       row.push(k)
-      used += w
-    }
+      used += ws[i]
+    })
     if (row.length) rows.push(row)
+    return rows
+  }
+
+  /** A node's children in rows: wrapped to the width budget, then widened —
+   * per fan — while the ROW COUNT overflows the height budget. A fan too big
+   * for both budgets goes wide rather than tall: it ends in the solver's
+   * "too large to fit, leave it" branch, partially visible, which beats a
+   * tower that hides its root behind the topbar or benches whole. (Row count
+   * approximates height — deep subtrees add more — but the pathological case
+   * is a broad fan of leaves, which it captures exactly.) */
+  const rowsOf = (uri: string, guard: Set<string>): TreeNode[][] => {
+    const kids = kidsOf(uri)
+    if (!kids.length) return []
+    const ws = kids.map((k) => widthOf(k.uri, guard))
+    const total = ws.reduce((a, b) => a + b, 0)
+    let cap = maxCols
+    let rows = chunk(kids, ws, cap)
+    while (rows.length > maxRows && cap < total) {
+      cap++
+      rows = chunk(kids, ws, cap)
+    }
     return rows
   }
 
