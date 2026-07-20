@@ -117,24 +117,29 @@ export function segmentRuns(members: FeedItem[]): FeedItem[][] {
       else children.set(p, [m])
     }
   }
-  const continuesRun = (parent: FeedItem, child: FeedItem) =>
-    child.post.author.did === parent.post.author.did && (children.get(parent.post.uri)?.length ?? 0) === 1
+  // The self-reply SPINE: the unique same-author child that continues a
+  // monologue. External replies to a middle post (other authors) branch OFF the
+  // spine — they become their own nodes and edge back to the run head — but they
+  // no longer BREAK the run, which a bare "parent has exactly one child" test did
+  // (an interloper replying to post 2/N split the thread's tail into a stray
+  // node, #55). Two+ same-author children IS a genuine self-fork: ambiguous which
+  // continues the monologue, so the run stops there (unchanged).
+  const spineChildOf = (parent: FeedItem): FeedItem | undefined => {
+    const own = (children.get(parent.post.uri) ?? []).filter(
+      (k) => k.post.author.did === parent.post.author.did,
+    )
+    return own.length === 1 ? own[0] : undefined
+  }
   const startsRun = (m: FeedItem) => {
     const p = parentUriOf(m)
     const pm = p ? byUri.get(p) : undefined
-    return !pm || !continuesRun(pm, m)
+    return !pm || spineChildOf(pm) !== m
   }
   const runs: FeedItem[][] = []
   for (const m of members) {
     if (!startsRun(m)) continue
     const run: FeedItem[] = [m]
-    let cur = m
-    for (;;) {
-      const kids = children.get(cur.post.uri) ?? []
-      if (kids.length !== 1 || !continuesRun(cur, kids[0])) break
-      run.push(kids[0])
-      cur = kids[0]
-    }
+    for (let next = spineChildOf(m); next; next = spineChildOf(next)) run.push(next)
     runs.push(run)
   }
   return runs
