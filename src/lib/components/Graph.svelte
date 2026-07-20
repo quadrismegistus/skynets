@@ -1786,6 +1786,16 @@
         </div>
 
         <div class="row">
+          <span class="label">Post pills</span>
+          <input type="checkbox" bind:checked={settings.postNodes} />
+          <span class="val"></span>
+        </div>
+        <p class="hint">
+          Render posts as readable pills (avatar + opening line) instead of bare avatars. Each pill
+          takes ~4× the room, so fewer fit.
+        </p>
+
+        <div class="row">
           <span class="label">Auto-cycle</span>
           <input
             type="checkbox"

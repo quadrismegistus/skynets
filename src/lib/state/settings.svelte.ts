@@ -137,6 +137,7 @@ class Settings {
     if (typeof p.showReposts === 'boolean') this.showReposts = p.showReposts
     if (typeof p.followsOnly === 'boolean') this.followsOnly = p.followsOnly
     if (typeof p.hideMutedReplies === 'boolean') this.hideMutedReplies = p.hideMutedReplies
+    if (typeof p.postNodes === 'boolean') this.postNodes = p.postNodes
     if (typeof p.debugMode === 'boolean' && debugAllowed) this.debugMode = p.debugMode
 
     if (typeof localStorage !== 'undefined') {
@@ -157,6 +158,7 @@ class Settings {
           if (this.followsOnly !== DEFAULTS.followsOnly) data.followsOnly = this.followsOnly
           if (this.hideMutedReplies !== DEFAULTS.hideMutedReplies)
             data.hideMutedReplies = this.hideMutedReplies
+          if (this.postNodes !== DEFAULTS.postNodes) data.postNodes = this.postNodes
           if (this.debugMode !== DEFAULTS.debugMode) data.debugMode = this.debugMode
           localStorage.setItem(KEY, JSON.stringify(data))
         })
