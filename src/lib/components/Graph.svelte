@@ -1508,8 +1508,15 @@
     const uri = item.post.uri
     if (expanded.has(uri)) {
       expanded.delete(uri)
+      pinned.delete(uri) // release the anchor on un-map
     } else {
       expanded.add(uri)
+      // Anchor the newly-full conversation at the clicked post's CURRENT spot,
+      // exactly as revealing a topic pill does (pinned → #anchorHeldGroups shifts
+      // the whole tree's targets around it). Without this, the conversation lays
+      // its tidy-tree at its SEMANTIC position and flings the chain away from the
+      // click (#65). Un-map releases the pin.
+      pinned.add(uri)
       threads.ensure(uri) // pull replies not already in the timeline
     }
   }
