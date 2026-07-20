@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte'
   import { reactions } from '../state/reactions.svelte'
   import { profiles } from '../state/profiles.svelte'
   import { follows } from '../state/follows.svelte'
@@ -13,12 +14,21 @@
 
   // Two independent resolves for the dids on screen, both batched/deduped/cached:
   // `follows.verify` for authoritative follow state (so the Unfollow button is
-  // right), `profiles.ensure` for the avatar/handle to show. Re-runs when the
-  // set of ranked dids changes.
+  // right), `profiles.ensure` for the avatar/handle to show.
+  //
+  // untrack() is load-bearing: this effect must depend ONLY on the did *set*
+  // (`ranked`), never on the stores' internal maps. profiles.ensure() reads
+  // `#map.has(did)` on a SvelteMap — tracked — so without untrack the effect
+  // would subscribe to the profile cache, and its LRU eviction (>500 profiles
+  // across the whole session) would retrigger the effect → re-fetch the evicted
+  // did → evict another → a rolling fetch loop that never settles while open.
+  // Rows still update as profiles land: the TEMPLATE reads profiles.get().
   $effect(() => {
     const dids = ranked.map((t) => t.did)
-    follows.verify(dids.map((did) => ({ did })))
-    for (const did of dids) profiles.ensure(did)
+    untrack(() => {
+      follows.verify(dids.map((did) => ({ did })))
+      for (const did of dids) profiles.ensure(did)
+    })
   })
 
   // Pair a did with its resolved viewer so follows.following/toggle respect both
@@ -30,6 +40,8 @@
     return `https://bsky.app/profile/${profiles.get(did)?.handle ?? did}`
   }
 </script>
+
+<svelte:window onkeydown={(e) => e.key === 'Escape' && onclose()} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -90,8 +102,13 @@
                 <button class="unfollow" onclick={() => follows.toggle(author)}>Unfollow</button>
               {:else if follows.knownUnfollowed(t.did)}
                 <button class="refollow" onclick={() => follows.toggle(author)}>Follow</button>
-              {:else}
+              {:else if p}
+                <!-- Only assert "not following" once the profile is resolved.
+                     Otherwise a followed author (the common case — this is your
+                     following feed) flashes "Not following" on first paint. -->
                 <span class="muted">Not following</span>
+              {:else}
+                <span class="muted">…</span>
               {/if}
             </span>
           </li>
@@ -124,7 +141,13 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 0.4rem;
+    /* Stick to the top so the ✕ stays reachable when the list is long enough to
+       scroll. Opaque bg covers rows sliding underneath. */
+    position: sticky;
+    top: 0;
+    background: var(--bg-elev);
+    padding: 0.2rem 0 0.4rem;
+    z-index: 1;
   }
   h2 {
     margin: 0;
