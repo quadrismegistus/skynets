@@ -29,7 +29,15 @@ class Ancestors {
     if (!fresh.length) return
     for (const u of fresh) this.#requested.add(u)
     try {
-      const chains = await Promise.all(fresh.map((u) => fetchAncestors(u)))
+      // Catch PER fetch, not over the whole batch. A reply's parent that's been
+      // deleted/blocked makes getPostThread 400 ("Post not found") — routine as a
+      // feed ages. A bare Promise.all rejected on the first such 400, which threw
+      // away every GOOD chain in the batch AND surfaced as an uncaught rejection
+      // in the effect that called ensure(). Now one bad ancestor yields [] and
+      // the rest still merge; #requested keeps us from re-requesting the dead one.
+      const chains = await Promise.all(
+        fresh.map((u) => fetchAncestors(u).catch(() => [] as FeedItem[])),
+      )
       const have = new Set(this.posts.map((p) => p.post.uri))
       const add: FeedItem[] = []
       for (const item of chains.flat()) {
