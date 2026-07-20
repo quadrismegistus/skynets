@@ -219,7 +219,16 @@ test('Map replies expands a thread with edges', async ({ page }) => {
   await thread.hover()
   await page.locator('.card').waitFor()
   await page.locator('.card').hover()
-  await page.locator('.map-replies').click()
+  const btn = page.locator('.map-replies')
+  // Before mapping, the button must offer to MAP — its label has to match what
+  // clicking does, even for planner-selected 'full' posts, which used to read
+  // "Hide replies" while a click SHOWED them (#52).
+  await expect(btn).toHaveText(/Map replies/)
+  await btn.click()
+  // Round-trip: the click added this post to the user's expand set, so the
+  // label flips to offer the reverse action — the label now tracks that set in
+  // both directions, which is the substance of #52.
+  await expect(btn).toHaveText('Hide replies')
   await page.waitForTimeout(800)
   expect(await page.locator('.edges path').count()).toBeGreaterThan(0)
 })
@@ -445,6 +454,20 @@ test('hovering a card avatar opens a profile preview', async ({ page }) => {
   await expect(page.locator('.profile-hover')).toBeVisible()
   // The preview carries the fetched profile (compact follower count).
   await expect(page.locator('.profile-hover .ph-stats')).toContainText('followers')
+})
+
+test('the profile preview waits for a deliberate hover, not an incidental pass', async ({ page }) => {
+  await graphReady(page)
+  await page.locator('.wrap').first().hover()
+  await page.locator('.card').waitFor()
+  await page.locator('.card').hover()
+  await page.locator('.card .avatar-wrap').hover() // arms the ~500ms open delay
+  // Still closed shortly after entering — the old instant-open would already be
+  // showing here. This is the suppression #54 adds.
+  await page.waitForTimeout(250)
+  await expect(page.locator('.profile-hover')).toHaveCount(0)
+  // Parked on the avatar, it does still open once the delay elapses.
+  await expect(page.locator('.profile-hover')).toBeVisible({ timeout: 2000 })
 })
 
 test('hovering the reposter name opens a profile preview', async ({ page }) => {

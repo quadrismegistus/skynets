@@ -88,6 +88,12 @@
   )
   let showRtProfile = $state(false)
   let rtHoverTimer: ReturnType<typeof setTimeout> | undefined
+  let rtOpenTimer: ReturnType<typeof setTimeout> | undefined
+  /** Open delay for the profile popovers. The avatar is itself only revealed on
+   * hover, so an immediate popover fired while the pointer merely passed over a
+   * post — this waits for a deliberate hover before opening (and before the
+   * profile fetch). Cancelled by mouseleave. */
+  const HOVER_OPEN_MS = 500
   /**
    * The profile popover is positioned FIXED, for the same reason the ⋯ menu
    * below is: the card is `overflow: hidden auto`, so an absolutely-positioned
@@ -120,13 +126,22 @@
   function enterRt(e: MouseEvent) {
     if (!rtAuthor) return
     clearTimeout(rtHoverTimer)
-    profiles.ensure(rtAuthor.did)
-    // Anchor to the name, not to the popover — this same handler runs when the
-    // pointer crosses onto the popover itself.
-    if (!showRtProfile) rtAnchor = anchorOf(e)
-    showRtProfile = true
+    // Already open (the pointer crossed onto the popover, which runs this same
+    // handler) — hold it; don't re-delay or re-anchor.
+    if (showRtProfile) return
+    clearTimeout(rtOpenTimer)
+    // Capture the anchor + did synchronously; e.currentTarget is gone by the
+    // time the timer fires.
+    const anchor = anchorOf(e)
+    const did = rtAuthor.did
+    rtOpenTimer = setTimeout(() => {
+      profiles.ensure(did)
+      rtAnchor = anchor
+      showRtProfile = true
+    }, HOVER_OPEN_MS)
   }
   function leaveRt() {
+    clearTimeout(rtOpenTimer)
     clearTimeout(rtHoverTimer)
     rtHoverTimer = setTimeout(() => (showRtProfile = false), 160)
   }
@@ -135,6 +150,8 @@
   onDestroy(() => {
     clearTimeout(hoverTimer)
     clearTimeout(rtHoverTimer)
+    clearTimeout(profileOpenTimer)
+    clearTimeout(rtOpenTimer)
   })
   function toggleReposter() {
     if (!rt || !rt.did) return
@@ -225,21 +242,30 @@
   const following = $derived(follows.following(item.post.author))
   const followsYou = $derived(follows.followsYou(item.post.author))
 
-  // Avatar hover → profile preview. A tiny open/close delay keeps the popover
-  // from flickering as the pointer crosses the small gap to it.
+  // Avatar hover → profile preview. Opens on a deliberate-hover delay
+  // (HOVER_OPEN_MS); the close keeps a tiny delay so the popover doesn't flicker
+  // as the pointer crosses the small gap to it.
   let showProfile = $state(false)
   let hoverTimer: ReturnType<typeof setTimeout> | undefined
+  let profileOpenTimer: ReturnType<typeof setTimeout> | undefined
   let profileAnchor = $state<Anchor | null>(null)
   let profilePopH = $state(0)
   const profilePop = $derived(popPos(profileAnchor, profilePopH))
 
   function enterAvatar(e: MouseEvent) {
     clearTimeout(hoverTimer)
-    profiles.ensure(item.post.author.did)
-    if (!showProfile) profileAnchor = anchorOf(e)
-    showProfile = true
+    if (showProfile) return // already open (pointer moved onto the popover) — hold it
+    clearTimeout(profileOpenTimer)
+    const anchor = anchorOf(e)
+    const did = item.post.author.did
+    profileOpenTimer = setTimeout(() => {
+      profiles.ensure(did)
+      profileAnchor = anchor
+      showProfile = true
+    }, HOVER_OPEN_MS)
   }
   function leaveAvatar() {
+    clearTimeout(profileOpenTimer)
     clearTimeout(hoverTimer)
     hoverTimer = setTimeout(() => (showProfile = false), 160)
   }

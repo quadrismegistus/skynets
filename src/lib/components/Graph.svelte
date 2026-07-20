@@ -1444,7 +1444,12 @@
     }
   }
   function repliesMapped(item: FeedItem): boolean {
-    return nodeByUri.get(item.post.uri)?.expanded ?? expanded.has(item.post.uri)
+    // Must mirror toggleMapReplies' own condition (expanded.has), or the button
+    // LABEL and its ACTION disagree. Reading the graph node's `expanded` flag was
+    // the bug: buildGraph sets it true for planner-selected 'full' posts the user
+    // never mapped, so the button read "Hide replies" while clicking it SHOWED
+    // them (the click hit the `else`/add branch). (#52)
+    return expanded.has(item.post.uri)
   }
 
   // Why a post is in the graph, shown on its card. Pulled-in context always
