@@ -1571,6 +1571,15 @@
     dismiss(uri)
   }
 
+  // Card thumb buttons: record the private reaction but DON'T dismiss (unlike the
+  // y/n keyboard fast-sweep above). A tap sitting next to the public Like button
+  // shouldn't make the post — and its whole reply subtree — vanish; the mark just
+  // toggles and still feeds the unfollow tally. Dismiss stays an explicit ✕/tap-out.
+  function rateOnly(uri: string, kind: ReactionKind) {
+    const did = contextByUri.get(uri)?.post.author.did
+    if (did) reactions.react(uri, did, kind)
+  }
+
   // Dismiss a whole conversation from its topic node: every member post (plus
   // reply subtrees) is marked read at once.
   function dismissTopic(convoId: string) {
@@ -1924,7 +1933,7 @@
       onquote={(it) => compose.openQuote(it)}
       onmapreplies={toggleMapReplies}
       onswipe={onCardSwipe}
-      onrate={(it, kind) => react(it.post.uri, kind)}
+      onrate={(it, kind) => rateOnly(it.post.uri, kind)}
       showClose={coarsePointer}
       ondismiss={() => dismiss(c.node.uri)}
       onkeep={() => setHovered(c.node.uri)}
