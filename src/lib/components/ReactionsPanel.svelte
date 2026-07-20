@@ -9,20 +9,34 @@
   }
   let { onclose }: Props = $props()
 
-  // Ranked most-disliked first (reactive: recomputes as thumbs change).
+  type Tab = 'all' | 'following' | 'notFollowing'
+  let tab = $state<Tab>('all')
+
+  // Pure reaction ranking (depends on the reactions map ONLY) — this is what the
+  // resolver effect keys off, so it can't get entangled with the profile cache.
   const ranked = $derived(reactions.byAuthor)
 
-  // Two independent resolves for the dids on screen, both batched/deduped/cached:
-  // `follows.verify` for authoritative follow state (so the Unfollow button is
-  // right), `profiles.ensure` for the avatar/handle to show.
+  // Ranked authors joined with their resolved profile + live follow state, for
+  // rendering. Recomputes when reactions/profiles/follows change.
+  const rows = $derived.by(() =>
+    ranked.map((t) => {
+      const p = profiles.get(t.did)
+      const author = { did: t.did, viewer: p?.viewer }
+      return { t, author, p, following: follows.following(author), resolved: !!p }
+    }),
+  )
+
+  // Resolve profiles + authoritative follow state for EVERY ranked author (all
+  // tabs, so switching tabs never refetches). `follows.verify` gives the real
+  // follow bit; `profiles.ensure` the avatar/handle.
   //
   // untrack() is load-bearing: this effect must depend ONLY on the did *set*
-  // (`ranked`), never on the stores' internal maps. profiles.ensure() reads
-  // `#map.has(did)` on a SvelteMap — tracked — so without untrack the effect
-  // would subscribe to the profile cache, and its LRU eviction (>500 profiles
-  // across the whole session) would retrigger the effect → re-fetch the evicted
-  // did → evict another → a rolling fetch loop that never settles while open.
-  // Rows still update as profiles land: the TEMPLATE reads profiles.get().
+  // (via `ranked`, which reads the reactions map alone), never on the profile
+  // cache. It reads `ranked` — not `rows` — precisely so it takes no dependency
+  // on profiles.get; and ensure()'s tracked `#map.has()` read is untracked here.
+  // Otherwise the cache's LRU eviction (>500 profiles in a session) would
+  // retrigger the effect → re-fetch the evicted did → evict another → a rolling
+  // fetch loop. Rows still fill in as profiles land: the TEMPLATE reads them.
   $effect(() => {
     const dids = ranked.map((t) => t.did)
     untrack(() => {
@@ -31,11 +45,16 @@
     })
   })
 
-  // Pair a did with its resolved viewer so follows.following/toggle respect both
-  // the optimistic overlay and the authoritative profile record.
-  function authorOf(did: string) {
-    return { did, viewer: profiles.get(did)?.viewer }
-  }
+  // Follow state resolves a beat after open, so an author is only placed in
+  // Following / Not-following once known — until then it sits in All alone,
+  // rather than being mis-bucketed (the same reason the row shows "…" not
+  // "Not following").
+  const followingRows = $derived(rows.filter((r) => r.following))
+  const notFollowingRows = $derived(rows.filter((r) => !r.following && r.resolved))
+  const shown = $derived(
+    tab === 'following' ? followingRows : tab === 'notFollowing' ? notFollowingRows : rows,
+  )
+
   function profileUrl(did: string) {
     return `https://bsky.app/profile/${profiles.get(did)?.handle ?? did}`
   }
@@ -71,49 +90,77 @@
         <kbd>n</kbd> to dislike — the tally shows up here.
       </p>
     {:else}
-      <ul class="rows">
-        {#each ranked as t (t.did)}
-          {@const p = profiles.get(t.did)}
-          {@const author = authorOf(t.did)}
-          {@const following = follows.following(author)}
-          <li class:disliked={t.net < 0} class:liked={t.net > 0}>
-            <a class="who" href={profileUrl(t.did)} target="_blank" rel="noreferrer">
-              <span class="avatar">
-                {#if p?.avatar}
-                  <img src={p.avatar} alt="" />
+      <div class="tabs" role="tablist" aria-label="Filter by follow state">
+        <button role="tab" aria-selected={tab === 'all'} class:on={tab === 'all'} onclick={() => (tab = 'all')}>
+          All <span class="count">{rows.length}</span>
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'following'}
+          class:on={tab === 'following'}
+          onclick={() => (tab = 'following')}
+        >
+          Following <span class="count">{followingRows.length}</span>
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'notFollowing'}
+          class:on={tab === 'notFollowing'}
+          onclick={() => (tab = 'notFollowing')}
+        >
+          Not following <span class="count">{notFollowingRows.length}</span>
+        </button>
+      </div>
+
+      {#if shown.length === 0}
+        <p class="empty">
+          {#if tab === 'following'}
+            None of the people you've reacted to are ones you follow.
+          {:else}
+            You follow everyone you've reacted to.
+          {/if}
+        </p>
+      {:else}
+        <ul class="rows">
+          {#each shown as r (r.t.did)}
+            <li class:disliked={r.t.net < 0} class:liked={r.t.net > 0}>
+              <a class="who" href={profileUrl(r.t.did)} target="_blank" rel="noreferrer">
+                <span class="avatar">
+                  {#if r.p?.avatar}
+                    <img src={r.p.avatar} alt="" />
+                  {:else}
+                    <span class="ini">{(r.p?.displayName ?? r.p?.handle ?? '?').charAt(0).toUpperCase()}</span>
+                  {/if}
+                </span>
+                <span class="names">
+                  <span class="name">{r.p?.displayName ?? r.p?.handle ?? r.t.did}</span>
+                  <span class="handle">{r.p ? '@' + r.p.handle : 'resolving…'}</span>
+                </span>
+              </a>
+
+              <span class="tally">
+                <span class="up" title="{r.t.up} liked">👍 {r.t.up}</span>
+                <span class="down" title="{r.t.down} disliked">👎 {r.t.down}</span>
+                <span class="net" title="net score">{r.t.net > 0 ? '+' + r.t.net : r.t.net}</span>
+              </span>
+
+              <span class="act">
+                {#if r.following}
+                  <button class="unfollow" onclick={() => follows.toggle(r.author)}>Unfollow</button>
+                {:else if follows.knownUnfollowed(r.t.did)}
+                  <button class="refollow" onclick={() => follows.toggle(r.author)}>Follow</button>
+                {:else if r.p}
+                  <!-- Only assert "not following" once resolved, so a followed
+                       author (the common case) doesn't flash "Not following". -->
+                  <span class="muted">Not following</span>
                 {:else}
-                  <span class="ini">{(p?.displayName ?? p?.handle ?? '?').charAt(0).toUpperCase()}</span>
+                  <span class="muted">…</span>
                 {/if}
               </span>
-              <span class="names">
-                <span class="name">{p?.displayName ?? p?.handle ?? t.did}</span>
-                <span class="handle">{p ? '@' + p.handle : 'resolving…'}</span>
-              </span>
-            </a>
-
-            <span class="tally">
-              <span class="up" title="{t.up} liked">👍 {t.up}</span>
-              <span class="down" title="{t.down} disliked">👎 {t.down}</span>
-              <span class="net" title="net score">{t.net > 0 ? '+' + t.net : t.net}</span>
-            </span>
-
-            <span class="act">
-              {#if following}
-                <button class="unfollow" onclick={() => follows.toggle(author)}>Unfollow</button>
-              {:else if follows.knownUnfollowed(t.did)}
-                <button class="refollow" onclick={() => follows.toggle(author)}>Follow</button>
-              {:else if p}
-                <!-- Only assert "not following" once the profile is resolved.
-                     Otherwise a followed author (the common case — this is your
-                     following feed) flashes "Not following" on first paint. -->
-                <span class="muted">Not following</span>
-              {:else}
-                <span class="muted">…</span>
-              {/if}
-            </span>
-          </li>
-        {/each}
-      </ul>
+            </li>
+          {/each}
+        </ul>
+      {/if}
     {/if}
   </div>
 </div>
@@ -166,6 +213,32 @@
     font-size: 0.85rem;
     line-height: 1.4;
     margin: 0.2rem 0 0.8rem;
+  }
+  .tabs {
+    display: flex;
+    gap: 0.3rem;
+    margin: 0 0 0.7rem;
+  }
+  .tabs button {
+    flex: 1;
+    font-size: 0.78rem;
+    padding: 0.35rem 0.4rem;
+    background: var(--bg);
+    color: var(--text-dim);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    white-space: nowrap;
+  }
+  .tabs button.on {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+  .tabs .count {
+    font-variant-numeric: tabular-nums;
+    font-size: 0.7rem;
+    opacity: 0.65;
   }
   .empty {
     color: var(--text-dim);

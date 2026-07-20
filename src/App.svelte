@@ -57,8 +57,14 @@
           class="reactions-btn"
           title="Your reactions — who to unfollow"
           aria-label="Your reactions"
-          onclick={() => (showReactions = true)}>👍</button
+          onclick={() => (showReactions = true)}
         >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <rect x="1" y="9" width="3.2" height="6" rx="0.6" />
+            <rect x="6.4" y="5" width="3.2" height="10" rx="0.6" />
+            <rect x="11.8" y="2" width="3.2" height="13" rx="0.6" />
+          </svg>
+        </button>
         <button class="settings-btn" title="Settings" aria-label="Settings" onclick={() => (showSettings = true)}>⚙</button>
         <button class="compose-btn" onclick={() => compose.openNew()}
           ><span class="wide-only">New post</span><span class="narrow-only">Post</span></button
@@ -176,9 +182,8 @@
     display: grid;
     place-items: center;
   }
-  .who .reactions-btn {
-    font-size: 0.8rem;
-    line-height: 1;
+  .who .reactions-btn svg {
+    display: block;
   }
   .who button {
     padding: 0.35rem 0.7rem;
