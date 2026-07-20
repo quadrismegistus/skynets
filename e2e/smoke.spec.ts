@@ -219,7 +219,12 @@ test('Map replies expands a thread with edges', async ({ page }) => {
   await thread.hover()
   await page.locator('.card').waitFor()
   await page.locator('.card').hover()
-  await page.locator('.map-replies').click()
+  const btn = page.locator('.map-replies')
+  // Before mapping, the button must offer to MAP — its label has to match what
+  // clicking does, even for planner-selected 'full' posts, which used to read
+  // "Hide replies" while a click SHOWED them (#52).
+  await expect(btn).toHaveText(/Map replies/)
+  await btn.click()
   await page.waitForTimeout(800)
   expect(await page.locator('.edges path').count()).toBeGreaterThan(0)
 })
