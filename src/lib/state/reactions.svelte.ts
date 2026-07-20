@@ -14,6 +14,37 @@ export interface Reaction {
   t: number
 }
 
+/** A per-author roll-up of reactions, for the "who to unfollow" view. */
+export interface AuthorTally {
+  did: string
+  up: number
+  down: number
+  /** up − down. Negative = a net-disliked account (an unfollow candidate). */
+  net: number
+  total: number
+}
+
+/**
+ * Group reactions by author DID and rank them. Sorted **most-negative net
+ * first** — the top of the list is the strongest unfollow candidate; the
+ * valued accounts are the same list read from the bottom. Ties (equal net) go
+ * to the higher-volume author, so a −3 from six thumbs outranks a −3 from
+ * three. Pure over a snapshot of rows so it's trivially testable; the author
+ * `did` on every row makes this a direct group-by with no post-load join.
+ */
+export function tallyByAuthor(rows: Iterable<Reaction>): AuthorTally[] {
+  const by = new Map<string, AuthorTally>()
+  for (const r of rows) {
+    const t = by.get(r.did) ?? { did: r.did, up: 0, down: 0, net: 0, total: 0 }
+    if (r.reaction === 'up') t.up++
+    else t.down++
+    t.net = t.up - t.down
+    t.total = t.up + t.down
+    by.set(r.did, t)
+  }
+  return [...by.values()].sort((a, b) => a.net - b.net || b.total - a.total)
+}
+
 /**
  * Locally-persisted private thumbs-up / thumbs-down. Unlike a Bluesky like, a
  * reaction is NEVER sent to the network — it lives on-device in IndexedDB
@@ -44,6 +75,12 @@ class Reactions {
   /** Reactive lookup for a node/card affordance. */
   reactionOf(uri: string): ReactionKind | undefined {
     return this.byUri.get(uri)?.reaction
+  }
+
+  /** Reactive per-author ranking for the aggregation view (#69). Iterating the
+   * SvelteMap subscribes, so this recomputes as reactions change. */
+  get byAuthor(): AuthorTally[] {
+    return tallyByAuthor(this.byUri.values())
   }
 
   /**

@@ -1,7 +1,14 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { clear } from 'idb-keyval'
-import { Reactions } from './reactions.svelte'
+import { Reactions, tallyByAuthor, type Reaction } from './reactions.svelte'
+
+const row = (did: string, reaction: 'up' | 'down'): Reaction => ({
+  uri: `at://${did}/${reaction}/${Math.random()}`,
+  did,
+  reaction,
+  t: 0,
+})
 
 beforeEach(async () => {
   await clear() // idb-keyval's default store is shared across instances
@@ -82,5 +89,50 @@ describe('reactions store (#66 private thumbs)', () => {
     const reopened = new Reactions()
     await reopened.load('did:plc:me')
     expect(reopened.reactionOf('at://p/1')).toBeUndefined()
+  })
+})
+
+describe('tallyByAuthor (#69 aggregation view)', () => {
+  it('groups by author and computes up/down/net/total', () => {
+    const out = tallyByAuthor([
+      row('did:a', 'down'),
+      row('did:a', 'down'),
+      row('did:a', 'up'),
+      row('did:b', 'up'),
+    ])
+    const a = out.find((t) => t.did === 'did:a')!
+    expect(a).toMatchObject({ up: 1, down: 2, net: -1, total: 3 })
+    const b = out.find((t) => t.did === 'did:b')!
+    expect(b).toMatchObject({ up: 1, down: 0, net: 1, total: 1 })
+  })
+
+  it('ranks most-negative net first (top of list = unfollow candidate)', () => {
+    const out = tallyByAuthor([
+      row('did:liked', 'up'),
+      row('did:liked', 'up'),
+      row('did:hated', 'down'),
+      row('did:hated', 'down'),
+      row('did:hated', 'down'),
+      row('did:mixed', 'up'),
+      row('did:mixed', 'down'),
+    ])
+    expect(out.map((t) => t.did)).toEqual(['did:hated', 'did:mixed', 'did:liked'])
+  })
+
+  it('breaks net ties by higher volume — a -3 from six outranks a -3 from three', () => {
+    const out = tallyByAuthor([
+      // did:quiet: 0 up, 3 down → net -3, total 3
+      row('did:quiet', 'down'),
+      row('did:quiet', 'down'),
+      row('did:quiet', 'down'),
+      // did:loud: 3 up, 6 down → net -3, total 9
+      ...Array.from({ length: 3 }, () => row('did:loud', 'up')),
+      ...Array.from({ length: 6 }, () => row('did:loud', 'down')),
+    ])
+    expect(out.map((t) => t.did)).toEqual(['did:loud', 'did:quiet'])
+  })
+
+  it('is empty for no reactions', () => {
+    expect(tallyByAuthor([])).toEqual([])
   })
 })
