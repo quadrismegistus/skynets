@@ -163,10 +163,16 @@
   // fires onswipe and consumes the gesture (dragMoved suppresses the tap that
   // would otherwise open the card); anything smaller/slower stays a tap.
   function onSwipeStart(e: PointerEvent) {
+    const id = e.pointerId
     const startX = e.clientX
     const startY = e.clientY
     const t0 = e.timeStamp
     const up = (ev: PointerEvent) => {
+      // Window listeners fire for EVERY pointer; ignore a second finger's
+      // release (else its coords, measured from this node's start, read as a
+      // bogus long swipe and could rate/dismiss a post nobody swiped). Mirrors
+      // the pointerId guard in DigestPanel's drag.
+      if (ev.pointerId !== id) return
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', up)
       if (ev.type === 'pointercancel') return

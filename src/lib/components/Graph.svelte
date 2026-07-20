@@ -1647,12 +1647,16 @@
 
   // Rate the post, then advance to the NEXT post (#72 swipe up/down = "like/
   // dislike and next post"). The next uri is captured BEFORE react() dismisses
-  // this one (which also clears the selection), then re-selected; prefer the
-  // newer neighbour, falling back to the older one at the end of the row.
+  // this one, then re-selected. react() dismisses the whole reply SUBTREE, so a
+  // px-adjacent reply of this post is about to vanish too — skip the doomed set
+  // and land on the nearest survivor (prefer newer/right, fall back to older).
   function rateAndAdvance(uri: string, kind: ReactionKind) {
     const order = timeOrder()
     const i = order.findIndex((p) => p.node.uri === uri)
-    const nextUri = i === -1 ? null : (order[i + 1]?.node.uri ?? order[i - 1]?.node.uri ?? null)
+    const gone = new Set([uri, ...threadDescendants(allItems, uri)])
+    const survivor = (list: typeof order) => list.find((p) => !gone.has(p.node.uri))?.node.uri ?? null
+    const nextUri =
+      i === -1 ? null : (survivor(order.slice(i + 1)) ?? survivor(order.slice(0, i).reverse()))
     react(uri, kind)
     if (nextUri) setHovered(nextUri)
   }
