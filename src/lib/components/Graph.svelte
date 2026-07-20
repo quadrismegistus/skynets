@@ -451,6 +451,9 @@
       padTop: bleed.y ? PAD_TOP - bleed.y : PAD_TOP,
       innerW,
       innerH,
+      // Row wrapping budgets against the window, not the world — innerW
+      // includes the reservoir bleed in pill mode (see TreeLayoutBox.frameW).
+      frameW: bleed.x ? Math.max(0, w - panelW) : innerW,
       minSize: MIN_SIZE,
       maxSize: MAX_SIZE,
       pill,
