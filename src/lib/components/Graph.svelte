@@ -405,9 +405,15 @@
       // account and everything above it drop out (at any depth — climbChain checks
       // each hop), instead of showing the muted node as the hub a followed reply
       // hangs off. Off by default, so ordinary chains keep their full ancestry.
-      const prune = settings.hideMutedReplies
-        ? (a: GraphNode) => moderation.isSilenced(a.item.post.author)
-        : undefined
+      // Also refuse to climb INTO a held conversation. A chain split by a
+      // DISMISSED middle post (dropped from `visible`, so buildConversations
+      // doesn't union across it) plus a divergent reply.root can put an admitted
+      // node and a held ancestor in separate conversations; the climb resolves
+      // parents from the unfiltered contextByUri, so without this it would seat
+      // that held member as a solid node, bypassing the gate. (#63 review)
+      const prune = (a: GraphNode) =>
+        heldMemberUris.has(a.uri) ||
+        (settings.hideMutedReplies && moderation.isSilenced(a.item.post.author))
       climbChain(starts, set, parentNodeOf, prune)
     }
     return [...set.values()]
