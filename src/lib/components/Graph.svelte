@@ -1645,29 +1645,10 @@
     setHovered(order[next].node.uri)
   }
 
-  // Rate the post, then advance to the NEXT post (#72 swipe up/down = "like/
-  // dislike and next post"). The next uri is captured BEFORE react() dismisses
-  // this one, then re-selected. react() dismisses the whole reply SUBTREE, so a
-  // px-adjacent reply of this post is about to vanish too — skip the doomed set
-  // and land on the nearest survivor (prefer newer/right, fall back to older).
-  function rateAndAdvance(uri: string, kind: ReactionKind) {
-    const order = timeOrder()
-    const i = order.findIndex((p) => p.node.uri === uri)
-    const gone = new Set([uri, ...threadDescendants(allItems, uri)])
-    const survivor = (list: typeof order) => list.find((p) => !gone.has(p.node.uri))?.node.uri ?? null
-    const nextUri =
-      i === -1 ? null : (survivor(order.slice(i + 1)) ?? survivor(order.slice(0, i).reverse()))
-    react(uri, kind)
-    if (nextUri) setHovered(nextUri)
-  }
-
-  // Touch swipe on a post node (#72): ←/→ page to prev/next post, ↑/↓ rate and
-  // advance. Mirrors the #71 arrow keys; mouse keeps drag (PostNode splits on
-  // pointer type), so this never fights node dragging.
-  function onSwipe(uri: string, dir: 'left' | 'right' | 'up' | 'down') {
-    if (dir === 'left') navigate(-1, uri)
-    else if (dir === 'right') navigate(1, uri)
-    else rateAndAdvance(uri, dir === 'up' ? 'up' : 'down')
+  // Card horizontal swipe (#72, reworked): ← previous post, → next. Navigates
+  // FROM the swiped card's post. Vertical is left to the card's own scroll.
+  function onCardSwipe(uri: string, dir: -1 | 1) {
+    navigate(dir, uri)
   }
 
   // Hover with a short close delay so the pointer can travel from a node to its
@@ -1882,7 +1863,6 @@
       ondismiss={dismiss}
       ondragmove={onNodeDrag}
       ondragend={onNodeDragEnd}
-      onswipe={onSwipe}
     />
   {/each}
 
@@ -1943,6 +1923,8 @@
       onreply={(it) => compose.openReply(it)}
       onquote={(it) => compose.openQuote(it)}
       onmapreplies={toggleMapReplies}
+      onswipe={onCardSwipe}
+      onrate={(it, kind) => react(it.post.uri, kind)}
       showClose={coarsePointer}
       ondismiss={() => dismiss(c.node.uri)}
       onkeep={() => setHovered(c.node.uri)}
