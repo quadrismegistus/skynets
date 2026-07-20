@@ -1453,7 +1453,7 @@
    * tracked here (screen coords relative to graphEl): one finger pans, two
    * pinch-zoom. Nodes, cards and chrome keep their own handlers — the target
    * guard means a gesture never starts on top of them. Touch reaches this only
-   * because `.viewport` is `touch-action: none`, so the browser doesn't claim a
+   * because `.graph` is `touch-action: none`, so the browser doesn't claim a
    * two-finger gesture as page-zoom.
    */
   const canvasPointers = new Map<number, { x: number; y: number }>()
