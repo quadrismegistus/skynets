@@ -9,6 +9,7 @@
   import ReportDialog from './lib/components/ReportDialog.svelte'
   import Settings from './lib/components/Settings.svelte'
   import ReactionsPanel from './lib/components/ReactionsPanel.svelte'
+  import RecentlyDismissed from './lib/components/RecentlyDismissed.svelte'
   import Terms from './lib/components/Terms.svelte'
   import { terms } from './lib/state/terms.svelte'
   import DigestConsent from './lib/components/DigestConsent.svelte'
@@ -16,6 +17,7 @@
   let showHelp = $state(false)
   let showSettings = $state(false)
   let showReactions = $state(false)
+  let showDismissed = $state(false)
 
   session.init()
 
@@ -65,6 +67,18 @@
             <rect x="11.8" y="2" width="3.2" height="13" rx="0.6" />
           </svg>
         </button>
+        <button
+          class="dismissed-btn"
+          title="Recently dismissed posts"
+          aria-label="Recently dismissed"
+          onclick={() => (showDismissed = true)}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <path d="M8 2a6 6 0 1 1-5.2 3" stroke-linecap="round" />
+            <path d="M2.4 2v2.6H5" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M8 5v3.2l2 1.2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
         <button class="settings-btn" title="Settings" aria-label="Settings" onclick={() => (showSettings = true)}>⚙</button>
         <button class="compose-btn" onclick={() => compose.openNew()}
           ><span class="wide-only">New post</span><span class="narrow-only">Post</span></button
@@ -94,6 +108,9 @@
   {/if}
   {#if showReactions}
     <ReactionsPanel onclose={() => (showReactions = false)} />
+  {/if}
+  {#if showDismissed}
+    <RecentlyDismissed onclose={() => (showDismissed = false)} />
   {/if}
 {/if}
 
@@ -179,6 +196,7 @@
   }
   .who .help,
   .who .reactions-btn,
+  .who .dismissed-btn,
   .who .settings-btn {
     width: 30px;
     height: 30px;
@@ -188,7 +206,8 @@
     display: grid;
     place-items: center;
   }
-  .who .reactions-btn svg {
+  .who .reactions-btn svg,
+  .who .dismissed-btn svg {
     display: block;
   }
   .who button {

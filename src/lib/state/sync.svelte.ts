@@ -40,7 +40,7 @@ export function buildDoc(): SyncDoc {
     account: session.did ?? '',
     exportedAt: Date.now(),
     reactions: [...reactions.byUri.values()],
-    dismissed: [...read.dismissed],
+    dismissed: [...read.dismissed.keys()], // doc carries the uri union; local #82 timestamps stay on-device
   }
 }
 
