@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getFeedPage, type FeedItem } from '../api/timeline'
+  import { fetchThread } from '../api/thread'
   import { feeds } from '../state/feeds.svelte'
   import { bskyUrl, reposter, reposterProfile } from '../api/post'
   import {
@@ -601,29 +602,85 @@
     const s = new Set(c.members.map((m) => displayNodeOf(m.post.uri)))
     return s.size >= 2 ? s : null
   })
-  // Focus lens: chain members take tidy-tree positions — treeTargets ranks a
-  // lone conversation's anchor to 0.5, so the tree assembles centre-frame and
-  // its root is clamped to keep every descendant in bounds. Everyone else keeps
-  // their scatter target and is simply pushed aside by collision; the tree is a
-  // TEMPORARY arrangement of the same nodes, not a different world.
-  const focusTargets = $derived.by<Target[]>(() => {
-    if (!focusMembers) return targets
+
+  // LENS GUESTS: the parts of the conversation your feed never surfaced —
+  // siblings, branches — fetched on focus and shown ONLY inside the lens. They
+  // are lens citizens, not scatter citizens: never in the batch, the ranking
+  // baseline, or the plan. Release the lens and they're gone. Cached per thread
+  // root so refocusing is instant; a failed fetch stays uncached and retries.
+  let lensGuests = $state<FeedItem[]>([])
+  const lensCache = new Map<string, FeedItem[]>()
+  $effect(() => {
+    const fid = focusedThread
+    if (!fid) {
+      lensGuests = []
+      return
+    }
+    const m = convos.find((c) => c.id === fid)?.members[0]
+    if (!m) return
+    const root = rootUriOf(m)
+    const cached = lensCache.get(root)
+    if (cached) {
+      lensGuests = cached
+      return
+    }
+    let stale = false
+    fetchThread(root)
+      .then((items) => {
+        lensCache.set(root, items)
+        if (!stale && focusedThread === fid) lensGuests = items
+      })
+      .catch(() => {}) // transient; a refocus retries
+    return () => {
+      stale = true
+    }
+  })
+  // Guests = fetched posts not already on the map (as a node, or covered by a
+  // collapsed rep) and not dismissed — so dismissing a guest removes it live.
+  const guestNodes = $derived.by(() => {
+    if (!focusMembers || lensGuests.length === 0) return [] as GraphNode[]
+    const out: GraphNode[] = []
+    for (const it of lensGuests) {
+      const u = it.post.uri
+      if (read.isDismissed(u)) continue
+      if (visibleUris.has(u) || graph.memberNode.has(u)) continue
+      out.push(contextNode(it, false))
+    }
+    return out
+  })
+  // Everything inside the lens (members + guests) — drives edge lighting,
+  // member rings, and keeps clicks inside the lens from releasing it.
+  const lensUris = $derived.by(() => {
+    if (!focusMembers) return null
+    const s = new Set(focusMembers)
+    for (const g of guestNodes) s.add(g.uri)
+    return s
+  })
+
+  // Focus lens: chain members AND guests take tidy-tree positions — treeTargets
+  // ranks a lone conversation's anchor to 0.5, so the tree assembles
+  // centre-frame and its root is clamped to keep every descendant in bounds.
+  // Everyone else keeps their scatter target and is simply pushed aside by
+  // collision; the tree is a TEMPORARY arrangement, not a different world.
+  const lensTree = $derived.by<Map<string, Target> | null>(() => {
+    if (!focusMembers || !lensUris) return null
     const chainNodes: TreeNode[] = []
-    for (const n of visibleNodes) {
-      if (!focusMembers.has(n.uri)) continue
+    const push = (n: GraphNode) => {
       const raw = parentUriOf(n.item)
       const p = raw ? displayNodeOf(raw) : undefined
-      const a = nodeLayout.get(n.uri) ?? { x: 0.5, y: 0.5, sizeRank: 0.5 }
       chainNodes.push({
         uri: n.uri,
         timestamp: n.timestamp,
-        parent: p && p !== n.uri && focusMembers.has(p) ? p : undefined,
+        parent: p && p !== n.uri && lensUris.has(p) ? p : undefined,
         x: 0.5,
         y: 0.5,
-        sizeRank: a.sizeRank,
+        // Guests aren't in the batch baseline; a modest fixed rank sizes them.
+        sizeRank: nodeLayout.get(n.uri)?.sizeRank ?? 0.35,
       })
     }
-    if (chainNodes.length < 2) return targets
+    for (const n of visibleNodes) if (focusMembers.has(n.uri)) push(n)
+    for (const g of guestNodes) push(g)
+    if (chainNodes.length < 2) return null
     const panelW = showDigest ? Math.min(PANEL_W, w * 0.88) : 0
     const tree = treeTargets(chainNodes, {
       padX: PAD_X,
@@ -634,15 +691,23 @@
       maxSize: MAX_SIZE,
       pill,
     })
-    const byId = new Map(tree.map((t) => [t.id, t]))
-    return targets.map((t) => byId.get(t.id) ?? t)
+    return new Map(tree.map((t) => [t.id, t]))
+  })
+  const focusTargets = $derived.by<Target[]>(() => {
+    if (!lensTree) return targets
+    const out = targets.map((t) => lensTree.get(t.id) ?? t)
+    for (const g of guestNodes) {
+      const t = lensTree.get(g.uri)
+      if (t) out.push(t)
+    }
+    return out
   })
 
   const nodeByUri = $derived(new Map(visibleNodes.map((n) => [n.uri, n])))
 
   // Placed = target metadata + live simulation position (fallback to target).
-  const placed = $derived.by(() =>
-    targets.map((t) => {
+  const placed = $derived.by(() => {
+    const out = targets.map((t) => {
       const p = positions.get(t.id)
       return {
         node: nodeByUri.get(t.id) as GraphNode,
@@ -650,8 +715,19 @@
         py: p?.y ?? t.ty,
         size: t.r * 2,
       }
-    }),
-  )
+    })
+    // Lens guests render like any node while the lens is open, positioned by
+    // the lens tree (and solved with everyone else).
+    if (lensTree) {
+      for (const g of guestNodes) {
+        const t = lensTree.get(g.uri)
+        if (!t) continue
+        const p = positions.get(g.uri)
+        out.push({ node: g, px: p?.x ?? t.tx, py: p?.y ?? t.ty, size: t.r * 2 })
+      }
+    }
+    return out
+  })
 
   const placedByUri = $derived(new Map(placed.map((p) => [p.node.uri, p])))
 
@@ -1005,12 +1081,39 @@
     }
     return new Set<string>()
   })
+  // Reply links involving lens guests: guest → its displayed parent, guest →
+  // guest, and lens member → guest (a gap in the loaded chain that the fetched
+  // thread fills). Only exist while the lens is open.
+  const lensEdges = $derived.by(() => {
+    if (!lensTree || guestNodes.length === 0) return []
+    const present = new Set(visibleUris)
+    const guestUris = new Set<string>()
+    for (const g of guestNodes) {
+      present.add(g.uri)
+      guestUris.add(g.uri)
+    }
+    const out: { id: string; from: string; to: string }[] = []
+    const link = (n: GraphNode) => {
+      const raw = parentUriOf(n.item)
+      const p = raw ? displayNodeOf(raw) : undefined
+      if (p && p !== n.uri && present.has(p)) out.push({ id: `${n.uri}->${p}`, from: n.uri, to: p })
+    }
+    for (const g of guestNodes) link(g)
+    // Members whose parent is a guest (visibleEdges only links visible parents).
+    for (const n of visibleNodes) {
+      const raw = parentUriOf(n.item)
+      const p = raw ? displayNodeOf(raw) : undefined
+      if (p && guestUris.has(p)) out.push({ id: `${n.uri}->${p}`, from: n.uri, to: p })
+    }
+    return out
+  })
+
   // Edges are pure ANNOTATION now — position is decided by the axes alone, so a
   // connector can't drag the layout around (the old objection to always-on
   // edges). Always drawn; a long one is just a true fact about the thread. The
   // hovered chain still gets its member rings on top (hoveredChain above).
   const edgeLines = $derived.by(() =>
-    visibleEdges
+    [...visibleEdges, ...lensEdges]
       .map((e) => {
         const a = placedByUri.get(e.from) // reply
         const b = placedByUri.get(e.to) // parent
@@ -1028,7 +1131,7 @@
           // stays a whisper (see .edges CSS).
           lit:
             (hoveredChain.size > 1 && (hoveredChain.has(e.from) || hoveredChain.has(e.to))) ||
-            (focusMembers !== null && (focusMembers.has(e.from) || focusMembers.has(e.to))),
+            (lensUris !== null && (lensUris.has(e.from) || lensUris.has(e.to))),
           color: topicColorByNode.get(e.from) ?? '',
           d: curvePath(
             a.px + ux * (a.size / 2),
@@ -1247,10 +1350,11 @@
     // POINTS SPIKE: no reservoir bleed — the solver keeps everything inside the
     // frame (targets are already frame-mapped), so nothing lands off-screen.
     layout?.setBounds(w, h, 18, Math.max(24, bottomChrome), 0, 0)
-    // focusedThread is part of the signature: entering/leaving the focus lens
-    // re-solves everything (the gather / the glide home) even though no ids
-    // change — the freeze below would otherwise ignore the retargeting.
-    const sig = `${w}|${h}|${bottomChrome}|${showDigest ? 1 : 0}|${pill ? pill.w : 0}|${focusedThread ?? ''}`
+    // focusedThread and the guest count are part of the signature: entering/
+    // leaving the lens — and guests arriving after the fetch, or leaving when
+    // dismissed — re-solve everything (the whole tree re-lays around them) even
+    // though the freeze would otherwise ignore retargeting/newcomers.
+    const sig = `${w}|${h}|${bottomChrome}|${showDigest ? 1 : 0}|${pill ? pill.w : 0}|${focusedThread ?? ''}|g${guestNodes.length}`
     const ids = new Set(t.map((x) => x.id))
     if (batch !== null && batch === solvedBatch && sig === solvedSig) {
       const hasNew = t.some((x) => !solvedFor.has(x.id))
@@ -1859,8 +1963,11 @@
   }
 
   // Click a chain member → focus its conversation (the tidy-tree lens); click a
-  // chainless post → release any focus.
+  // chainless post → release any focus. Clicking anything already inside the
+  // lens (a member OR a fetched guest — guests belong to no batch conversation,
+  // so the lookup below would wrongly release) keeps it open.
   function focusChain(uri: string) {
+    if (lensUris?.has(uri)) return
     const c = convos.find((c) => c.members.some((m) => m.post.uri === uri))
     focusedThread = c && c.members.length > 1 ? c.id : null
   }
@@ -2190,7 +2297,7 @@
       hasReplies={(edgeCount.get(p.node.uri) ?? 0) > 0}
       active={hovered === p.node.uri}
       related={hovered !== p.node.uri &&
-        ((hoveredChain.size > 1 && hoveredChain.has(p.node.uri)) || (focusMembers?.has(p.node.uri) ?? false))}
+        ((hoveredChain.size > 1 && hoveredChain.has(p.node.uri)) || (lensUris?.has(p.node.uri) ?? false))}
       pinned={pinned.has(p.node.uri)}
       ghost={p.node.ghost ?? false}
       reaction={reactions.reactionOf(p.node.uri)}
