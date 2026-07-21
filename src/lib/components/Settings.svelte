@@ -254,12 +254,12 @@
           <button class="primary" onclick={syncNow} disabled={sync.busy}
             >{sync.busy ? 'Syncing…' : 'Sync now'}</button
           >
-          <button onclick={turnOffSync} disabled={sync.busy}>Turn off on this device</button>
+          <button onclick={turnOffSync} disabled={sync.busy}>Stop sync here</button>
         </div>
       {:else}
         <div class="actions">
           <button class="primary" onclick={enableSync} disabled={sync.busy || !syncPass}>
-            {sync.busy ? 'Turning on…' : 'Turn on sync'}
+            {sync.busy ? 'Enabling…' : 'Enable sync'}
           </button>
         </div>
       {/if}
