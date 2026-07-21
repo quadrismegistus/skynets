@@ -25,7 +25,7 @@
   import { Layout, pillBudgetBase, type Target } from '../state/layout'
   import { buildConversations, planView } from '../state/conversations'
   import { read } from '../state/read.svelte'
-  import { reactions, type ReactionKind } from '../state/reactions.svelte'
+  import { reactions, type Reaction, type ReactionKind } from '../state/reactions.svelte'
   import { moderation } from '../state/moderation.svelte'
   import { settings, debugAllowed, MOTION_MIN, MOTION_MAX } from '../state/settings.svelte'
   import { compose } from '../state/compose.svelte'
@@ -1624,15 +1624,68 @@
     return 'context — a post upstream of your timeline'
   }
 
-  function dismiss(uri: string) {
+  // ─── Undo-last (#84) ──────────────────────────────────────────────────────
+  // A single reversible action — the LAST dismiss or react — recoverable for a
+  // short window, then gone. This is misfire recovery, deliberately NOT
+  // un-dismiss or a reaction editor: it reverses a *mistake*, it does not reopen
+  // a *decision*. Dismiss-is-forever and react-is-final stay intact as
+  // contracts; there's no history, no redo (both non-goals). Only the most
+  // recent action is undoable — each new one overwrites the single slot below.
+  type UndoRecord =
+    | { kind: 'dismiss'; uris: string[] }
+    | { kind: 'react'; uris: string[]; target: string; reaction: ReactionKind; prevReaction?: Reaction }
+  // null = nothing to undo (never acted, already undone, or the TTL lapsed).
+  let undoLast = $state<UndoRecord | null>(null)
+  let undoTimer: ReturnType<typeof setTimeout> | undefined
+  // The undo window. It MUST stay strictly under the sync push debounce (10s,
+  // #83): an undone reaction is reversed BEFORE its debounced push ever fires,
+  // so the blip never leaves the device and no reaction tombstone is needed to
+  // propagate the clear cross-device (see reactions.restore). Do not raise this
+  // to — let alone past — the debounce, or an already-pushed reaction could need
+  // a tombstone the sync layer no longer carries.
+  const UNDO_TTL = 5_000
+
+  // Arm (or re-arm) the undo affordance for `rec`, resetting its TTL. Any prior
+  // record is simply dropped — last-action-only, by construction of the one slot.
+  function armUndo(rec: UndoRecord) {
+    undoLast = rec
+    clearTimeout(undoTimer)
+    undoTimer = setTimeout(() => (undoLast = null), UNDO_TTL)
+  }
+
+  // Reverse the captured action: bring the dismissed set back, and for a react
+  // also revert the reaction row to its prior state (usually cleared). One-shot
+  // — consumed, and the toast dismissed with it.
+  function undo() {
+    const rec = undoLast
+    if (!rec) return
+    if (rec.uris.length) read.restoreMany(rec.uris)
+    if (rec.kind === 'react') reactions.restore(rec.target, rec.prevReaction)
+    clearTimeout(undoTimer)
+    undoLast = null
+  }
+
+  // Returns the URIs this call actually newly-dismissed (for undo capture).
+  function dismiss(uri: string): string[] {
     // Dismiss the post and every reply hanging off it — "I'm done with this
     // thread". (With chains always drawn, single-post dismissal would just
     // ghost the node in place, since its own replies keep it needed — d would
     // appear to do nothing.) Ghosts serve the other direction: an ancestor
     // dismissed EARLIER resurfaces dimmed when new replies arrive needing it.
     const all = [uri, ...threadDescendants(allItems, uri)]
+    // Only the posts THIS call newly dismisses are ours to undo — anything a
+    // prior action already dismissed must STAY dismissed if this one is undone,
+    // so undo restores just the fresh set, not the whole subtree (dismissMany
+    // itself skips the dupes). Captured before the write, while isDismissed
+    // still says no.
+    const added = all.filter((u) => !read.isDismissed(u))
     read.dismissMany(all)
     if (hovered && all.includes(hovered)) hovered = null
+    // Arm the undo, unless nothing changed — no affordance for a pure no-op.
+    // react() calls through here first and then overrides this with its own
+    // richer record, so a plain dismiss lands as 'dismiss' and a rate as 'react'.
+    if (added.length) armUndo({ kind: 'dismiss', uris: added })
+    return added
   }
 
   // Private thumbs up/down (#66). Local-only — never sent to Bluesky. Attributed
@@ -1642,8 +1695,19 @@
   // dismissal, so a resurfaced ghost keeps its mark.
   function react(uri: string, kind: ReactionKind) {
     const did = contextByUri.get(uri)?.post.author.did
+    // Snapshot the reaction row as it stands BEFORE we touch it, so undo can
+    // restore the EXACT prior state: usually there was none (undo deletes the
+    // row — most reacted posts are first-time), but a flip (up→down) restores
+    // the old row verbatim. A shallow copy detaches it from the live map entry.
+    const before = reactions.byUri.get(uri)
+    const prevReaction = before ? { ...before } : undefined
     if (did) reactions.react(uri, did, kind)
-    dismiss(uri)
+    const added = dismiss(uri) // also arms a 'dismiss' undo — we override it next
+    // React is the true origin: its undo reverses BOTH effects (the dismissal
+    // AND the reaction), so re-arm over dismiss's record. `target` is the reacted
+    // post itself — kept apart from `uris` because a react on an already-dismissed
+    // ghost leaves `added` empty yet its reaction row still needs reverting.
+    armUndo({ kind: 'react', uris: added, target: uri, reaction: kind, prevReaction })
   }
 
   // Dismiss a whole conversation from its topic node: every member post (plus
@@ -2331,6 +2395,20 @@
   {#if error && items.length > 0}
     <div class="err-toast">{error}</div>
   {/if}
+  {#if undoLast}
+    <!-- Transient misfire-recovery toast (#84): names what just happened and
+         offers a single Undo, auto-clearing after UNDO_TTL and replaced by the
+         next action. role=status announces it politely without stealing focus
+         mid-sweep. -->
+    <div class="undo-toast" role="status">
+      <span class="undo-label"
+        >{undoLast.kind === 'react'
+          ? `Rated ${undoLast.reaction === 'up' ? '↑' : '↓'}`
+          : 'Dismissed'}</span
+      >
+      <button type="button" class="undo-btn" onclick={undo}>Undo</button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -2711,6 +2789,51 @@
     bottom: max(16px, env(safe-area-inset-bottom, 0px));
     color: var(--danger);
     font-size: 0.8rem;
+  }
+
+  /* Undo-last toast (#84): a transient pill, bottom-CENTRE so it clears the
+     err-toast (bottom-left) and the HUD/config (bottom-right). It fades up on
+     arm; it's swapped or cleared by the component, never by CSS. */
+  .undo-toast {
+    position: absolute;
+    left: 50%;
+    bottom: max(16px, env(safe-area-inset-bottom, 0px));
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.3rem 0.3rem 0.3rem 0.85rem;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+    color: var(--text);
+    font-size: 0.8rem;
+    animation: undo-in 140ms ease-out;
+    z-index: 20;
+  }
+  @keyframes undo-in {
+    from {
+      opacity: 0;
+      transform: translate(-50%, 6px);
+    }
+    to {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+  }
+  .undo-btn {
+    border: none;
+    border-radius: 999px;
+    padding: 0.25rem 0.75rem;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .undo-btn:hover {
+    background: var(--accent-hover);
   }
 
   /* Narrow screens: axis hints are teaching aids, not controls — hide them so

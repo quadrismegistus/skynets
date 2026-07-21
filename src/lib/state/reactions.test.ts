@@ -40,6 +40,46 @@ describe('reactions store (#66 private thumbs)', () => {
     expect(r.reactionOf('at://p/1')).toBe('down')
   })
 
+  it('restore(uri, undefined) clears the row — the react-undo of a first-time rate (#84)', async () => {
+    const r = new Reactions()
+    await r.load('did:plc:me')
+    // The common case: the post had no prior reaction, so undo deletes the row.
+    await r.react('at://p/1', 'did:plc:alice', 'up')
+    await r.restore('at://p/1', undefined)
+    expect(r.reactionOf('at://p/1')).toBeUndefined()
+
+    // Durable: the clear survives a reload — it does not resurrect the reaction.
+    const reopened = new Reactions()
+    await reopened.load('did:plc:me')
+    expect(reopened.reactionOf('at://p/1')).toBeUndefined()
+  })
+
+  it('restore(uri, prev) puts the exact prior row back — undo of a flip (#84)', async () => {
+    const r = new Reactions()
+    await r.load('did:plc:me')
+    await r.react('at://p/1', 'did:plc:alice', 'up')
+    const prev = { ...[...r.byUri.values()][0] } // snapshot BEFORE the flip
+    await r.react('at://p/1', 'did:plc:alice', 'down') // flip up→down
+    expect(r.reactionOf('at://p/1')).toBe('down')
+
+    // Undo restores the captured row verbatim — kind, did, and original t.
+    await r.restore('at://p/1', prev)
+    expect(r.byUri.get('at://p/1')).toEqual(prev)
+  })
+
+  it('restore fires onChange only when it actually changed the row', async () => {
+    const r = new Reactions()
+    await r.load('did:plc:me')
+    let fired = 0
+    r.onChange = () => fired++
+    await r.restore('at://absent', undefined) // no row to clear → no persist/push
+    expect(fired).toBe(0)
+    await r.react('at://p/1', 'did:plc:alice', 'up')
+    fired = 0
+    await r.restore('at://p/1', undefined) // real clear → one persist
+    expect(fired).toBe(1)
+  })
+
   it('persists across reloads (does not leave the archive — but survives it)', async () => {
     const a = new Reactions()
     await a.load('did:plc:me')

@@ -78,6 +78,21 @@ class ReadState {
     await this.#persist()
   }
 
+  /** Undo a whole dismissal batch in one persist — the counterpart to
+   * dismissMany, for the undo-last affordance (#84). A dismiss removes a post
+   * AND its reply subtree together, so its undo has to bring that same set back
+   * at once; looping restore() would persist (and fire onChange) once per uri.
+   * Only entries actually present are removed, so passing the full captured set
+   * is safe even if some were already gone. */
+  async restoreMany(uris: Iterable<string>) {
+    if (!this.#did) return
+    let changed = false
+    for (const uri of uris) {
+      if (this.dismissed.delete(uri)) changed = true
+    }
+    if (changed) await this.#persist()
+  }
+
   /** Drop in-memory state on logout (does not delete what's persisted). */
   reset() {
     this.#did = undefined
