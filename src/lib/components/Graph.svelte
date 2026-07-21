@@ -8,19 +8,14 @@
     climbChain,
     contextNode,
     buildTimeDomain,
-    layoutPositions,
     positionsFrozenTime,
     timeDomainIsStale,
     type TimeDomain,
     parentUriOf,
     rootUriOf,
     threadDescendants,
-    treeTargets,
-    withTopicPills,
     type GraphNode,
     type SelectMode,
-    type TopicPill,
-    type TreeNode,
   } from '../state/graph'
   import { Layout, pillBudgetBase, type Target } from '../state/layout'
   import { buildConversations, planView } from '../state/conversations'
@@ -166,7 +161,9 @@
       const cell = (pill.w + pill.gap.x) * (pill.h + pill.gap.y)
       const fw = Math.max(0, w - 24)
       const fh = Math.max(0, h - PAD_TOP - 60)
-      base = pillBudgetBase(fw, fh, cell, bleed.x, bleed.y, OVERFLOW)
+      // POINTS SPIKE: no reservoir — budget the FRAME alone (0 bleed, 0 overflow),
+      // so we plan what fits the viewport WELL rather than a world+ring's worth.
+      base = pillBudgetBase(fw, fh, cell, 0, 0, 0)
     } else {
       base = ((w * h) / 1e6) * 14.5
     }
@@ -466,7 +463,10 @@
   // capture produces the same domain a prompt one would.
   let timeDomain: TimeDomain | null = null
   const nodeLayout = $derived.by(() => {
-    if (!bleed.x) return layoutPositions(visibleNodes)
+    // POINTS SPIKE: always the corpus-frozen positions, in BOTH modes. A post's
+    // (time, engagement) is ranked against the whole corpus, so it doesn't drift
+    // as neighbours are dismissed — the honest, stable coordinate the points
+    // layout needs (layoutPositions re-ranks among the visible set, which drifts).
     if (timeDomainIsStale(timeDomain, graph.nodes)) timeDomain = buildTimeDomain(graph.nodes)
     return positionsFrozenTime(visibleNodes, graph.nodes, timeDomain!)
   })
@@ -500,79 +500,57 @@
     return c
   })
 
-  // Semantic targets (px) each node is pulled toward. The conversation is the
-  // spatial unit: a chain's topmost visible node anchors to the semantic axes,
-  // its replies hang below as a tidy tree. The math lives in treeTargets (pure,
-  // tested); here we resolve each node's parent through displayNodeOf (run head /
-  // representative) so childrenOf and root-detection agree by construction.
-  // A topic PILL is laid out like the root of a reply tree: it's a synthetic
-  // node anchored at its LOUDEST visible member's semantic position, and its
-  // member OPs (with their reply-subtrees) hang below it — instead of a pill at
-  // the members' centroid with edges radiating across the page. treeTargets
-  // does both the post trees and the pill trees in one pass; we split the result.
-  const treeLayout = $derived.by(() => {
-    // When the digest panel is open it overlays the right edge, so shrink the
-    // usable width by the panel so every node stays visible to its left.
+  // POINTS SPIKE: no reply-tree layout. Every post sits at its TRUE (time,
+  // engagement) coordinate, mapped straight across the frame — the honest
+  // scatter the semantic axes always promised, with no tidy-tree geometry
+  // bending a reply's position away from where it belongs. Reply chains are read
+  // in the thread-view dialog, not drawn on the map. The only structure kept is
+  // the topic pill: a hub/label anchored over its cluster (the "tree from the
+  // topic node"). The collision solver only nudges genuine overlaps apart.
+  const pointLayout = $derived.by(() => {
+    // The digest panel overlays the right edge when open; keep posts to its left.
     const panelW = showDigest ? Math.min(PANEL_W, w * 0.88) : 0
-    // Lay out across the WORLD, not the frame: rank is normalised over this
-    // box, so the lowest-ranked land in the reservoir outside the viewport.
-    // Dismiss an on-screen post and every rank shifts, drifting the reservoir
-    // inward -- gravity, with no extra force to tune.
-    const innerW = bleed.x
-      ? Math.max(0, w - panelW) + 2 * bleed.x
-      : Math.max(0, w - 2 * PAD_X - panelW)
-    const frameH = Math.max(0, h - PAD_TOP - Math.max(PAD_BOTTOM, bottomChrome + 8))
-    const innerH = frameH + 2 * bleed.y
+    const innerW = Math.max(0, w - 2 * PAD_X - panelW)
+    const innerH = Math.max(0, h - PAD_TOP - Math.max(PAD_BOTTOM, bottomChrome + 8))
     const present = new Set(visibleNodes.map((n) => n.uri))
-    const postNodes: TreeNode[] = visibleNodes.map((n) => {
-      const raw = parentUriOf(n.item)
-      const p = raw ? displayNodeOf(raw) : undefined
+    const sx = (x: number) => PAD_X + x * innerW
+    const sy = (y: number) => PAD_TOP + y * innerH
+
+    const posts: Target[] = visibleNodes.map((n) => {
       const a = nodeLayout.get(n.uri) ?? { x: 0.5, y: 0.5, sizeRank: 0.5 }
       return {
-        uri: n.uri,
-        timestamp: n.timestamp,
-        parent: p && p !== n.uri && present.has(p) ? p : undefined,
-        x: a.x,
-        y: a.y,
-        sizeRank: a.sizeRank,
+        id: n.uri,
+        tx: sx(a.x),
+        ty: sy(a.y),
+        r: (MIN_SIZE + a.sizeRank * (MAX_SIZE - MIN_SIZE)) / 2,
+        ...(pill ? { hw: pill.w / 2, hh: pill.h / 2 } : {}),
       }
     })
-    // Topic pills become tree roots over their (visible, display-resolved)
-    // members; withTopicPills does the loudest-anchor + thread-root reparenting.
-    const pills: TopicPill[] = topicMembership.map((m) => ({
-      sid: m.sid,
-      members: [...new Set(m.uris.map((u) => displayNodeOf(u)))].filter((u) => present.has(u)),
-    }))
-    const pillSids = new Set(pills.map((p) => p.sid))
 
-    const all = treeTargets(withTopicPills(postNodes, pills), {
-      padX: bleed.x ? -bleed.x : PAD_X,
-      padTop: bleed.y ? PAD_TOP - bleed.y : PAD_TOP,
-      innerW,
-      innerH,
-      // Row wrapping budgets against the window, not the world — innerW/H
-      // include the reservoir bleed in pill mode (see TreeLayoutBox.frameW).
-      frameW: bleed.x ? Math.max(0, w - panelW) : innerW,
-      frameH,
-      minSize: MIN_SIZE,
-      maxSize: MAX_SIZE,
-      pill,
-    })
-    const posts: Target[] = []
+    // Topic pills: anchor over the LOUDEST visible member (smallest y = highest
+    // engagement), lifted a touch so the label reads above the cluster rather
+    // than on top of the post. Members keep their own true positions — the pill
+    // is a hub/label, not a tree that pulls its members together.
     const pillMap = new Map<string, Target>()
-    // Topic pills are small labels, not posts. Stripping hw/hh made rectCollide
-    // fall back to `r` on BOTH axes, and r is 52 -- so a label reserved more
-    // VERTICAL room than a post pill does (52 vs 28), shoving conversations
-    // apart around itself, the opposite of the intent. Give them their own
-    // extents instead: wide enough for a label, short because they are one line.
-    for (const t of all)
-      pillSids.has(t.id)
-        ? pillMap.set(t.id, { ...t, hw: pill ? 52 : undefined, hh: pill ? 14 : undefined })
-        : posts.push(t)
+    for (const m of topicMembership) {
+      const members = [...new Set(m.uris.map((u) => displayNodeOf(u)))].filter((u) => present.has(u))
+      if (members.length < 2) continue
+      let loudest = members[0]
+      for (const u of members)
+        if ((nodeLayout.get(u)?.y ?? 1) < (nodeLayout.get(loudest)?.y ?? 1)) loudest = u
+      const a = nodeLayout.get(loudest) ?? { x: 0.5, y: 0.5, sizeRank: 0.5 }
+      pillMap.set(m.sid, {
+        id: m.sid,
+        tx: sx(a.x),
+        ty: sy(Math.max(0, a.y - 0.04)),
+        r: 52,
+        ...(pill ? { hw: 52, hh: 14 } : {}),
+      })
+    }
     return { posts, pills: pillMap }
   })
-  const targets = $derived(treeLayout.posts)
-  const pillTargets = $derived(treeLayout.pills)
+  const targets = $derived(pointLayout.posts)
+  const pillTargets = $derived(pointLayout.pills)
 
   const nodeByUri = $derived(new Map(visibleNodes.map((n) => [n.uri, n])))
 
@@ -955,8 +933,13 @@
     return `M${x1.toFixed(1)},${y1.toFixed(1)} Q${cx.toFixed(1)},${cy.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)}`
   }
 
+  // POINTS SPIKE: reply chains aren't drawn on the map — they're read in the
+  // thread-view dialog. Suppressing the reply edges keeps the scatter clean (no
+  // long connectors between a reply and its far-off parent). Topic edges (pill →
+  // members) are drawn separately below and stay. Flip to `false` to compare.
+  const SHOW_REPLY_EDGES = false
   const edgeLines = $derived.by(() =>
-    visibleEdges
+    (SHOW_REPLY_EDGES ? visibleEdges : [])
       .map((e) => {
         const a = placedByUri.get(e.from) // reply
         const b = placedByUri.get(e.to) // parent
@@ -1173,7 +1156,9 @@
   $effect(() => {
     const t = [...targets, ...topicTargets]
     layout?.setCollision(pill ? pill.gap : null) // rectangles vs circles
-    layout?.setBounds(w, h, 18, Math.max(24, bottomChrome), bleed.x, bleed.y)
+    // POINTS SPIKE: no reservoir bleed — the solver keeps everything inside the
+    // frame (targets are already frame-mapped), so nothing lands off-screen.
+    layout?.setBounds(w, h, 18, Math.max(24, bottomChrome), 0, 0)
     layout?.update(t, new Set(pinned))
   })
 
