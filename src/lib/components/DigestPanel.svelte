@@ -676,6 +676,10 @@
     list-style: none;
     margin: 0;
     padding: 0;
+    /* The panel runs to the floor (bottom: 0) and paints over the home
+       indicator, so pad the scroll list's tail to keep the last conversation
+       reachable above it. Zero on desktop / non-standalone. */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
     overflow-y: auto;
     flex: 1 1 0;
   }

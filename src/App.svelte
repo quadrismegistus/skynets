@@ -127,6 +127,12 @@
     display: flex;
     align-items: center;
     padding: 0.7rem 1rem;
+    /* With viewport-fit=cover the bar paints up into the notch/status-bar area,
+       so pull its contents clear of the safe-area insets. env() is 0 on desktop
+       and in non-standalone browsers, so max() leaves the original padding. */
+    padding-top: max(0.7rem, env(safe-area-inset-top, 0px));
+    padding-left: max(1rem, env(safe-area-inset-left, 0px));
+    padding-right: max(1rem, env(safe-area-inset-right, 0px));
     border-bottom: 1px solid var(--border);
     background: var(--bg-elev);
     flex-shrink: 0;
@@ -217,6 +223,9 @@
     }
     .topbar {
       padding: 0.5rem 0.6rem;
+      padding-top: max(0.5rem, env(safe-area-inset-top, 0px));
+      padding-left: max(0.6rem, env(safe-area-inset-left, 0px));
+      padding-right: max(0.6rem, env(safe-area-inset-right, 0px));
       gap: 0.35rem;
     }
     .brand {
