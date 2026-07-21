@@ -1102,7 +1102,6 @@
   let layout: Layout | undefined
   let draggingUri: string | null = null
   let tweenRaf = 0
-  const TWEEN_MS = 400
   // Read per paint, not captured at mount: the CSS side (PostNode's entrance)
   // honours a mid-session reduce-motion change via media query, and the two
   // motion systems must not disagree. One matchMedia call per solve is free.
@@ -1111,6 +1110,11 @@
 
   function paint(solved: Map<string, { x: number; y: number }>) {
     cancelAnimationFrame(tweenRaf)
+    // The glide duration is the "Post motion" slider (settings.motionMs), the same
+    // knob PostNode's entrance reads via --arrive-dur — so the two motion systems
+    // stay in step. Read untracked (paint runs inside untrack), so it just samples
+    // the current value per solve; a mid-session change lands on the next solve.
+    const dur = settings.motionMs
     // Nothing moved far enough to see: skip the tween, not because it would
     // look wrong but because 400ms of rAF re-renders for sub-pixel motion is
     // pure heat. This is the common case — most updates change data, not
@@ -1125,14 +1129,14 @@
         }
       }
     }
-    if (still || draggingUri || positions.size === 0 || reducedMotion()) {
+    if (still || draggingUri || positions.size === 0 || reducedMotion() || dur <= 0) {
       positions = solved
       return
     }
     const from = new Map(positions)
     const t0 = performance.now()
     const step = (now: number) => {
-      const t = Math.min(1, (now - t0) / TWEEN_MS)
+      const t = Math.min(1, (now - t0) / dur)
       const e = 1 - (1 - t) ** 3 // ease-out cubic: fast start, gentle landing
       const next = new Map<string, { x: number; y: number }>()
       for (const [id, to] of solved) {
@@ -2154,8 +2158,8 @@
           <span class="val">{settings.motionMs === 0 ? 'off' : `${settings.motionMs}ms`}</span>
         </div>
         <p class="hint">
-          How fast new posts glide into place. Left is instant (they just appear); right is a slower,
-          calmer entrance. Reduced-motion system settings always win.
+          How fast posts glide when the layout shifts and new ones arrive. Left is instant (they snap
+          into place); right is a slower, calmer motion. Reduced-motion system settings always win.
         </p>
 
         <div class="row">
