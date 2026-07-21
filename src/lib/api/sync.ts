@@ -80,20 +80,28 @@ export async function encryptDoc(doc: SyncDoc, passphrase: string): Promise<Sync
 }
 
 /** Decrypt an envelope. Throws on a wrong passphrase — the GCM auth tag fails,
- * so there's no separate marker to check. */
+ * so there's no separate marker to check. The header is validated up front (so a
+ * hostile `iter` can't burn CPU before any check, and unknown formats fail
+ * clearly), and ALL parsing sits inside the catch so a malformed file yields the
+ * friendly message rather than a raw base64/DOMException. */
 export async function decryptDoc(env: SyncEnvelope, passphrase: string): Promise<SyncDoc> {
-  const key = await deriveKey(passphrase, fromB64(env.salt), env.iter)
-  let pt: ArrayBuffer
+  if (env?.cipher !== 'AES-256-GCM' || env?.kdf !== 'PBKDF2-SHA256') {
+    throw new Error('Unrecognised sync file format.')
+  }
+  if (typeof env.iter !== 'number' || env.iter < 100_000 || env.iter > 2_000_000) {
+    throw new Error('Sync file has an unsupported key-derivation cost.')
+  }
   try {
-    pt = await crypto.subtle.decrypt(
+    const key = await deriveKey(passphrase, fromB64(env.salt), env.iter)
+    const pt = await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: fromB64(env.iv) as BufferSource },
       key,
       fromB64(env.ct) as BufferSource,
     )
+    return JSON.parse(new TextDecoder().decode(pt)) as SyncDoc
   } catch {
     throw new Error('Wrong passphrase, or the file is corrupt.')
   }
-  return JSON.parse(new TextDecoder().decode(pt)) as SyncDoc
 }
 
 /** Last-write-wins per uri: the entry with the greater `t` survives. */

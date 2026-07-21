@@ -53,7 +53,9 @@ export async function importFromFile(
     throw new Error('That does not look like a Mothtrap sync file.')
   }
   const doc = await decryptDoc(env, passphrase) // throws on wrong passphrase
-  if (doc.account && session.did && doc.account !== session.did) {
+  // Strict: only ever merge into the exact account the file was made for (and
+  // never when logged out). A missing/empty account is refused, not waved through.
+  if (!doc.account || doc.account !== session.did) {
     throw new Error('This file belongs to a different account — sign into that account to import it.')
   }
   return applyDoc(doc)

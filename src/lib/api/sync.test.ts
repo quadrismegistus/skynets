@@ -42,6 +42,17 @@ describe('sync crypto (#80 Phase 0)', () => {
     expect(a.iv).not.toBe(b.iv)
     expect(a.salt).not.toBe(b.salt)
   })
+
+  it('rejects an unknown format / out-of-range iter BEFORE deriving a key', async () => {
+    const env = await encryptDoc(doc(), 'pw')
+    await expect(decryptDoc({ ...env, cipher: 'rot13' as never }, 'pw')).rejects.toThrow(/format/i)
+    await expect(decryptDoc({ ...env, iter: 999_999_999 }, 'pw')).rejects.toThrow(/cost/i)
+  })
+
+  it('a malformed envelope yields the friendly error, not a raw base64 exception', async () => {
+    const env = await encryptDoc(doc(), 'pw')
+    await expect(decryptDoc({ ...env, salt: 'not base64 !!' }, 'pw')).rejects.toThrow(/passphrase|corrupt/i)
+  })
 })
 
 describe('sync merges (#80 Phase 0 CRDTs)', () => {
