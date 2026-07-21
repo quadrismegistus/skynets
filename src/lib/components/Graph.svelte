@@ -1001,11 +1001,12 @@
     }
     return new Set<string>()
   })
+  // Edges are pure ANNOTATION now — position is decided by the axes alone, so a
+  // connector can't drag the layout around (the old objection to always-on
+  // edges). Always drawn; a long one is just a true fact about the thread. The
+  // hovered chain still gets its member rings on top (hoveredChain above).
   const edgeLines = $derived.by(() =>
-    (hoveredChain.size > 1
-      ? visibleEdges.filter((e) => hoveredChain.has(e.from) || hoveredChain.has(e.to))
-      : []
-    )
+    visibleEdges
       .map((e) => {
         const a = placedByUri.get(e.from) // reply
         const b = placedByUri.get(e.to) // parent
