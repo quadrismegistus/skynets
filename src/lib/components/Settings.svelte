@@ -6,6 +6,7 @@
   import { reactions } from '../state/reactions.svelte'
   import { session } from '../state/session.svelte'
   import { terms } from '../state/terms.svelte'
+  import { exportToFile, importFromFile, sync } from '../state/sync.svelte'
   import { isNative } from '../api/platform'
 
   interface Props {
@@ -41,6 +42,72 @@
       .finally(() => (loading = false))
   })
 
+  // Sync (Phase 0): manual encrypted export/import — see docs/sync-spec.md.
+  let syncPass = $state('')
+  let syncBusy = $state(false)
+  let syncMsg = $state<{ ok: boolean; text: string } | null>(null)
+  let importInput: HTMLInputElement
+  async function doExport() {
+    if (!syncPass || syncBusy) return
+    syncBusy = true
+    syncMsg = null
+    try {
+      await exportToFile(syncPass)
+      syncMsg = { ok: true, text: 'Exported. Move the file to your other device and Import it there with the same passphrase.' }
+    } catch (e) {
+      syncMsg = { ok: false, text: e instanceof Error ? e.message : 'Export failed.' }
+    } finally {
+      syncBusy = false
+    }
+  }
+  async function doImport(e: Event) {
+    const input = e.target as HTMLInputElement
+    const file = input.files?.[0]
+    if (!file || !syncPass) return
+    syncBusy = true
+    syncMsg = null
+    try {
+      const r = await importFromFile(file, syncPass)
+      syncMsg = { ok: true, text: `Imported — merged ${r.reactions} reactions and ${r.dismissed} dismissed posts.` }
+    } catch (err) {
+      syncMsg = { ok: false, text: err instanceof Error ? err.message : 'Import failed.' }
+    } finally {
+      syncBusy = false
+      input.value = '' // let the same file be re-picked
+    }
+  }
+  async function enableSync() {
+    if (!syncPass) return
+    syncMsg = null
+    try {
+      await sync.enable(syncPass)
+      syncPass = ''
+      // enable() swallows a failed initial push into sync.error (retryable) — don't
+      // claim success over it.
+      syncMsg = sync.error
+        ? { ok: false, text: sync.error }
+        : { ok: true, text: 'Sync is on — turn it on with the same passphrase on your other devices.' }
+    } catch (e) {
+      syncMsg = { ok: false, text: e instanceof Error ? e.message : 'Could not turn on sync.' }
+    }
+  }
+  async function syncNow() {
+    syncMsg = null
+    await sync.syncNow()
+    syncMsg = sync.error ? { ok: false, text: sync.error } : { ok: true, text: 'Synced to your account.' }
+  }
+  async function turnOffSync() {
+    await sync.disable(false)
+    syncMsg = { ok: true, text: 'Sync turned off on this device (your other devices keep their copy).' }
+  }
+  function fmtLast(t: number | null): string {
+    if (!t) return ''
+    const s = Math.round((Date.now() - t) / 1000)
+    if (s < 60) return 'just now'
+    if (s < 3600) return `${Math.round(s / 60)}m ago`
+    return `${Math.round(s / 3600)}h ago`
+  }
+
   let confirmingWipe = $state(false)
   let wiping = $state(false)
   let wiped = $state(false)
@@ -53,6 +120,10 @@
       // doesn't touch, and the UI promises "everything stored is gone."
       await read.purge()
       await reactions.purge()
+      // Turn off sync locally too (drop the cached key), or a wipe would silently
+      // re-pull everything from the PDS on next login. Leaves the remote copy —
+      // deleting that is a separate, explicit choice.
+      await sync.disable(false)
       digest.clear()
       stats = null
       wiped = true
@@ -158,6 +229,65 @@
     </section>
 
     <section>
+      <h3>Sync across devices <span class="beta">beta</span></h3>
+      <p class="blurb">
+        Keep your private reactions and dismissed posts in step across devices, <strong>end-to-end
+        encrypted</strong> with a passphrase you choose. The data is stored in your own Bluesky account
+        as ciphertext — nobody (not Bluesky, not us) can read it without the passphrase, and there's no
+        Mothtrap server involved.
+      </p>
+      <label class="pass">
+        <span>Passphrase</span>
+        <input
+          type="password"
+          bind:value={syncPass}
+          placeholder="a phrase only you know"
+          autocomplete="off"
+        />
+      </label>
+
+      {#if sync.enabled}
+        <p class="state ok">
+          Sync is on{sync.lastSynced ? ` — last synced ${fmtLast(sync.lastSynced)}` : ''}.
+        </p>
+        <div class="actions">
+          <button class="primary" onclick={syncNow} disabled={sync.busy}
+            >{sync.busy ? 'Syncing…' : 'Sync now'}</button
+          >
+          <button onclick={turnOffSync} disabled={sync.busy}>Stop sync here</button>
+        </div>
+      {:else}
+        <div class="actions">
+          <button class="primary" onclick={enableSync} disabled={sync.busy || !syncPass}>
+            {sync.busy ? 'Enabling…' : 'Enable sync'}
+          </button>
+        </div>
+      {/if}
+
+      <details class="alt">
+        <summary>Or transfer with a file</summary>
+        <p class="blurb">
+          Export an encrypted file and import it on another device — no account round-trip.
+        </p>
+        <div class="actions">
+          <button onclick={doExport} disabled={syncBusy || !syncPass}>Export encrypted file</button>
+          <button onclick={() => importInput.click()} disabled={syncBusy || !syncPass}>Import a file…</button>
+          <input
+            bind:this={importInput}
+            type="file"
+            accept="application/json,.json"
+            onchange={doImport}
+            hidden
+          />
+        </div>
+      </details>
+
+      {#if syncMsg}
+        <p class="state" class:ok={syncMsg.ok} class:off={!syncMsg.ok}>{syncMsg.text}</p>
+      {/if}
+    </section>
+
+    <section>
       <h3>Account</h3>
       <p class="blurb">
         Signed in as <strong>@{session.handle}</strong> via {session.method === 'oauth'
@@ -238,6 +368,36 @@
   h3 {
     margin: 0 0 0.4rem;
     font-size: 0.9rem;
+  }
+  .beta {
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.05em 0.35em;
+    vertical-align: middle;
+  }
+  .pass {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin: 0 0 0.6rem;
+    font-size: 0.78rem;
+    color: var(--text-dim);
+  }
+  .pass input {
+    font-size: 0.85rem;
+    padding: 0.4rem 0.5rem;
+  }
+  .alt {
+    margin: 0.5rem 0 0;
+  }
+  .alt summary {
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: var(--text-dim);
   }
   .state {
     margin: 0 0 0.35rem;

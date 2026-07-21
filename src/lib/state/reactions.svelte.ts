@@ -100,6 +100,28 @@ class Reactions {
     return this.byUri.get(uri)?.reaction
   }
 
+  /** LWW-merge incoming rows (cross-device sync import): a row wins only if it's
+   * newer (`t`) than the local one for that uri. Additive — never deletes. */
+  async importRows(rows: Reaction[]) {
+    if (!this.#did) return
+    let changed = false
+    for (const r of rows) {
+      if (
+        (r.reaction !== 'up' && r.reaction !== 'down') ||
+        typeof r.t !== 'number' ||
+        typeof r.uri !== 'string' ||
+        typeof r.did !== 'string'
+      )
+        continue
+      const cur = this.byUri.get(r.uri)
+      if (!cur || r.t > cur.t) {
+        this.byUri.set(r.uri, { uri: r.uri, did: r.did, reaction: r.reaction, t: r.t })
+        changed = true
+      }
+    }
+    if (changed) await this.#persist()
+  }
+
   /** Drop in-memory state on logout (does not delete what's persisted). */
   reset() {
     this.#did = undefined
