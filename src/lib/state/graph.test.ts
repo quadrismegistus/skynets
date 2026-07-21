@@ -982,6 +982,31 @@ describe('withTopicPills', () => {
     expect(out.find((n) => n.uri === 'a')!.parent).toBeUndefined()
     expect(out.find((n) => n.uri === 'b')!.parent).toBe('a')
   })
+
+  // Cluster salience: a BIG or fast cluster is lifted toward the top so volume
+  // surfaces rather than hiding at the loudest member's rank. Size-gated, so
+  // small clusters (every test above) are unaffected — the anchor test at the top
+  // still asserts pill.y === the loudest member's y for a 2-member cluster.
+  it('lifts a big cluster’s pill above its loudest member (size surfaces)', () => {
+    const posts = [
+      post('op1', { x: 0.5, y: 0.9 }), // quiet
+      post('op2', { x: 0.5, y: 0.6 }), // loudest visible → the base anchor
+    ]
+    // Only 2 members visible, but the FULL cluster is large (size drives the lift).
+    const out = withTopicPills(posts, [{ sid: 'topic:big', members: ['op1', 'op2'], size: 16 }])
+    const pill = out.find((n) => n.uri === 'topic:big')!
+    expect(pill.y).toBeLessThan(0.6) // lifted above the loudest member
+    expect(pill.y).toBeGreaterThanOrEqual(0) // clamped at the top
+  })
+
+  it('lifts a big RECENT cluster more than a big STALE one (velocity modulates)', () => {
+    const pillY = (sid: string, x: number) =>
+      withTopicPills(
+        [post(`${sid}-a`, { x, y: 0.6 }), post(`${sid}-b`, { x, y: 0.9 })],
+        [{ sid, members: [`${sid}-a`, `${sid}-b`], size: 16 }],
+      ).find((n) => n.uri === sid)!.y
+    expect(pillY('topic:recent', 0.95)).toBeLessThan(pillY('topic:stale', 0.05))
+  })
 })
 
 describe('frozen time axis', () => {

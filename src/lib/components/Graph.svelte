@@ -542,6 +542,7 @@
     const pills: TopicPill[] = topicMembership.map((m) => ({
       sid: m.sid,
       members: [...new Set(m.uris.map((u) => displayNodeOf(u)))].filter((u) => present.has(u)),
+      size: m.uris.length, // FULL cluster size drives the salience lift, not just the visible members
     }))
     const pillSids = new Set(pills.map((p) => p.sid))
 

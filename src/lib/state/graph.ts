@@ -656,7 +656,19 @@ export function treeTargets(nodes: TreeNode[], box: TreeLayoutBox): TreeTarget[]
 export interface TopicPill {
   sid: string
   members: string[]
+  /** FULL cluster size (all members, not just the visible ones) — drives how far
+   * the pill is lifted toward the top so a big conversation SURFACES rather than
+   * hiding at its loudest member's rank. Absent → falls back to the visible count. */
+  size?: number
 }
+
+// Pill salience lift (#47-follow / cluster-surfacing). A topic pill normally sits
+// at its LOUDEST member's engagement-y — which for a big-but-quiet cluster is low,
+// so volume never surfaces. These lift the pill toward the top by cluster SIZE
+// (log-saturating) and VELOCITY (member recency). Size-GATED: a small cluster gets
+// no lift at all, so it's unchanged; velocity only modulates a big cluster's lift.
+const PILL_SIZE_CAP = 16 // a cluster this big gets the full size term
+const PILL_MAX_LIFT = 0.35 // at most this much of the engagement axis
 
 /**
  * Attach topic pills as synthetic tree roots over their members, so a topic
@@ -721,7 +733,18 @@ export function withTopicPills(posts: TreeNode[], pills: TopicPill[]): TreeNode[
     // to the corner while its members sat mid-canvas with edges radiating out:
     // precisely the layout the pill-as-tree-root design replaced.
     const newest = members.reduce((t, u) => Math.max(t, byUri.get(u)!.timestamp || 0), 0)
-    pillNodes.push({ uri: pill.sid, timestamp: newest, parent: undefined, x: a.x, y: a.y, sizeRank: 1 })
+    // Lift toward the top (more salient) by cluster size + velocity, so a big or
+    // fast-growing conversation surfaces instead of hiding at the loudest member's
+    // rank. sizeRank already carries reply-count as node SIZE; this moves POSITION.
+    // Size-gated so a small cluster is untouched; only ever lifts (clamped at 0).
+    const size = pill.size ?? members.length
+    const sizeTerm = Math.max(
+      0,
+      Math.min(1, (Math.log2(Math.max(1, size)) - 1) / (Math.log2(PILL_SIZE_CAP) - 1)),
+    )
+    const velTerm = members.reduce((s, u) => s + byUri.get(u)!.x, 0) / members.length // mean recency
+    const y = Math.max(0, a.y - PILL_MAX_LIFT * sizeTerm * (0.5 + 0.5 * velTerm))
+    pillNodes.push({ uri: pill.sid, timestamp: newest, parent: undefined, x: a.x, y, sizeRank: 1 })
     // First pill to claim a root keeps it; `roots` is already filtered to the
     // unclaimed, so the loser is skipped above rather than emitted childless.
     for (const u of roots) pillOf.set(u, pill.sid)
