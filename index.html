@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover lets the app paint edge-to-edge in standalone/PWA
+         mode; the chrome CSS honours env(safe-area-inset-*) so nothing lands
+         under the notch or home indicator. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Mothtrap</title>
     <meta name="description" content="Your Bluesky timeline as a map of conversations — triage, don't doomscroll." />
 

@@ -2495,8 +2495,10 @@
   }
   .config-wrap {
     position: absolute;
-    left: 16px;
-    bottom: 16px;
+    /* Clear the home indicator / side notch when viewport-fit=cover paints the
+       canvas edge-to-edge; env() is 0 on desktop so the 16px gap is unchanged. */
+    left: max(16px, env(safe-area-inset-left, 0px));
+    bottom: max(16px, env(safe-area-inset-bottom, 0px));
     z-index: 30; /* above topic nodes (z-index 3) and the digest panel */
   }
   .gear {
@@ -2626,8 +2628,9 @@
   }
   .hud {
     position: absolute;
-    right: 16px;
-    bottom: 16px;
+    /* Clear the home indicator / side notch under viewport-fit=cover. */
+    right: max(16px, env(safe-area-inset-right, 0px));
+    bottom: max(16px, env(safe-area-inset-bottom, 0px));
     display: flex;
     align-items: center;
     gap: 0.75rem;
@@ -2697,8 +2700,8 @@
   }
   .err-toast {
     position: absolute;
-    left: 16px;
-    bottom: 16px;
+    left: max(16px, env(safe-area-inset-left, 0px));
+    bottom: max(16px, env(safe-area-inset-bottom, 0px));
     color: var(--danger);
     font-size: 0.8rem;
   }
@@ -2710,12 +2713,12 @@
       display: none;
     }
     .hud {
-      right: 10px;
-      bottom: 12px;
+      right: max(10px, env(safe-area-inset-right, 0px));
+      bottom: max(12px, env(safe-area-inset-bottom, 0px));
       gap: 0.45rem;
     }
     .config-wrap {
-      bottom: 12px;
+      bottom: max(12px, env(safe-area-inset-bottom, 0px));
     }
   }
 </style>
