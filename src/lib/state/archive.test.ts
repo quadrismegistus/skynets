@@ -166,6 +166,36 @@ describe('Archive per-feed provenance', () => {
     await a.record([mkPost({ uri: 'at://legacy/1' })])
     expect((await a.getFeeds()).has('at://legacy/1')).toBe(false)
   })
+
+  it('aggregates per-feed distinct-post counts over mixed/legacy/multi-feed rows', async () => {
+    const a = await fresh()
+    const disco = 'at://did:plc:gen/app.bsky.feed.generator/discover'
+    // p1: surfaced by BOTH feeds — counts toward each (the cross-feed overlap).
+    await a.record([mkPost({ uri: 'at://p/1' })], undefined, 'following')
+    await a.record([mkPost({ uri: 'at://p/1' })], undefined, disco)
+    // p2: Discover only.
+    await a.record([mkPost({ uri: 'at://p/2' })], undefined, disco)
+    // p3: seen in Following as timeline THEN as a repost — still ONE distinct post there.
+    await a.record([mkPost({ uri: 'at://p/3' })], undefined, 'following')
+    await a.record([mkPost({ uri: 'at://p/3', repostBy: 'booster' })], undefined, 'following')
+    // A purely legacy (feed-less) sighting must not inflate any feed's total.
+    await a.record([mkPost({ uri: 'at://legacy/1' })])
+
+    const cov = await a.feedCoverage()
+    const byFeed = new Map(cov.map((r) => [r.feed, r.posts]))
+    expect(byFeed.get(disco)).toBe(2) // p1, p2
+    expect(byFeed.get('following')).toBe(2) // p1, p3 (repeat repost of p3 not double-counted)
+    expect(byFeed.size).toBe(2) // legacy contributes no feed
+    // Sorted by count desc (both 2 here → tie); every count is a positive integer.
+    expect(cov.every((r) => Number.isInteger(r.posts) && r.posts > 0)).toBe(true)
+    expect([...cov].sort((x, y) => y.posts - x.posts)).toEqual(cov)
+  })
+
+  it('reports no per-feed coverage when only legacy/feed-less rows exist', async () => {
+    const a = await fresh()
+    await a.record([mkPost({ uri: 'at://p/1' })]) // no feed argument
+    expect(await a.feedCoverage()).toEqual([])
+  })
 })
 
 describe('Archive labels', () => {

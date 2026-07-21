@@ -415,6 +415,22 @@ export class Archive {
     return out
   }
 
+  /** Per-feed count of DISTINCT archived posts each feed surfaced — the coverage
+   * breakdown (PLAN §6.5). Built over `getFeeds()`'s uri→feeds reduction, so a
+   * post counts once per feed even if it surfaced there several times (e.g.
+   * timeline then repost), and a post carried by two feeds counts toward BOTH
+   * (the cross-feed overlap is exactly the signal). Feed-less sightings —
+   * context/backfill writes and pre-feature (legacy) rows — carry no feed and
+   * contribute nothing, so the totals sum only over feed-scoped provenance.
+   * Read-only; sorted by count descending (ties keep insertion order). */
+  async feedCoverage(): Promise<{ feed: string; posts: number }[]> {
+    const byFeed = new Map<string, number>()
+    for (const set of (await this.getFeeds()).values()) {
+      for (const f of set) byFeed.set(f, (byFeed.get(f) ?? 0) + 1)
+    }
+    return [...byFeed].map(([feed, posts]) => ({ feed, posts })).sort((a, b) => b.posts - a.posts)
+  }
+
   /** How many of these URIs were already archived *before* `before` (i.e. in a
    * prior session). The backfill uses this to detect when it has paged back into
    * already-recorded history and can stop. */

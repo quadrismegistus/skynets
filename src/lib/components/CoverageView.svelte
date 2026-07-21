@@ -1,6 +1,8 @@
 <script lang="ts">
   import { archive } from '../state/archive'
   import { coverageBins, type Gran } from '../state/coverage'
+  import { feeds } from '../state/feeds.svelte'
+  import { FOLLOWING } from '../api/timeline'
 
   let { onclose }: { onclose: () => void } = $props()
 
@@ -13,6 +15,9 @@
   let source = $state<'posted' | 'captured'>('posted')
   let rows = $state<{ createdAt: number; firstSeen: number }[]>([])
   let loading = $state(true)
+  // Per-feed breakdown: how many DISTINCT archived posts each feed surfaced,
+  // over the provenance recorded on each appearance (PLAN §6.5). Read-only.
+  let feedRows = $state<{ feed: string; posts: number }[]>([])
 
   // Hover tooltip state (custom — native SVG <title> is slow/unreliable on thin bars).
   let svgW = $state(0)
@@ -26,9 +31,28 @@
       .finally(() => (loading = false))
   })
 
+  $effect(() => {
+    archive
+      .feedCoverage()
+      .then((r) => (feedRows = r))
+      .catch(() => (feedRows = []))
+  })
+
   const sorted = $derived(rows.map((r) => (source === 'posted' ? r.createdAt : r.firstSeen)))
   const stats = $derived(coverageBins(sorted, gran, trim))
   const effGran = $derived<Gran>(stats?.gran ?? 'day')
+
+  // Largest per-feed count, for scaling the breakdown bars (never 0).
+  const feedPeak = $derived(Math.max(1, ...feedRows.map((f) => f.posts)))
+
+  /** A readable name for a feed provenance key: the FOLLOWING sentinel becomes
+   * "Following"; a pinned feed/list resolves to its loaded display name; any
+   * other AT-uri falls back to its rkey (last path segment) — enough to tell
+   * feeds apart without a live resolve. */
+  function feedLabel(key: string): string {
+    if (key === FOLLOWING) return 'Following'
+    return feeds.list.find((f) => f.key === key)?.name || key.split('/').pop() || key
+  }
 
   function onMove(e: MouseEvent) {
     if (!stats || !svgW) return
@@ -124,6 +148,22 @@
         Peak: {stats.peak.toLocaleString()}/{effGran}.{#if stats.hidden > 0}
           {' '}({stats.hidden} older — mostly pulled-in context — trimmed.){/if}
       </p>
+
+      {#if feedRows.length}
+        <div class="feeds">
+          <div class="feeds-head">
+            <strong>Per-feed coverage</strong>
+            <span class="hint">distinct posts each feed surfaced — a post via two feeds counts in both</span>
+          </div>
+          {#each feedRows as f (f.feed)}
+            <div class="feed-row" title={f.feed}>
+              <span class="feed-bar" style="width: {(f.posts / feedPeak) * 100}%"></span>
+              <span class="feed-name">{feedLabel(f.feed)}</span>
+              <span class="feed-count">{f.posts.toLocaleString()}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
     {/if}
   </div>
 </div>
@@ -259,6 +299,60 @@
   .msg {
     padding: 2rem 0.5rem;
     text-align: center;
+    color: var(--text-dim);
+  }
+  .feeds {
+    margin-top: 0.9rem;
+    border-top: 1px solid var(--border);
+    padding-top: 0.7rem;
+  }
+  .feeds-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .feeds-head strong {
+    font-size: 0.82rem;
+  }
+  .feeds-head .hint {
+    color: var(--text-dim);
+    font-size: 0.68rem;
+  }
+  .feed-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.28rem 0.45rem;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .feed-bar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    background: var(--accent);
+    opacity: 0.16;
+    border-radius: 6px;
+    pointer-events: none;
+  }
+  .feed-name {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    font-size: 0.78rem;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .feed-count {
+    position: relative;
+    font-size: 0.78rem;
+    font-variant-numeric: tabular-nums;
     color: var(--text-dim);
   }
 </style>
