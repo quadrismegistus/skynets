@@ -85,6 +85,46 @@ describe('read store (#82 timestamped dismissals)', () => {
     expect(reopened.isDismissed('at://a')).toBe(false)
   })
 
+  it('restoreMany brings a whole dismissed batch back in one shot (#84 undo)', async () => {
+    const r = new ReadState()
+    await r.load(DID)
+    await r.dismissMany(['at://a', 'at://b', 'at://c'])
+
+    // Undo restores exactly the captured set — the post plus its reply subtree.
+    await r.restoreMany(['at://a', 'at://b', 'at://c'])
+    expect(r.dismissed.size).toBe(0)
+
+    // Durable: a fresh load must not resurrect any of them.
+    const reopened = new ReadState()
+    await reopened.load(DID)
+    expect(reopened.dismissed.size).toBe(0)
+  })
+
+  it('restoreMany removes only present uris and leaves the rest (partial undo set)', async () => {
+    const r = new ReadState()
+    await r.load(DID)
+    await r.dismissMany(['at://keep', 'at://drop'])
+
+    // Passing a uri that was never dismissed is a harmless no-op for that entry;
+    // the ones that ARE present come back, the untouched one stays dismissed.
+    await r.restoreMany(['at://drop', 'at://never'])
+    expect(r.isDismissed('at://drop')).toBe(false)
+    expect(r.isDismissed('at://keep')).toBe(true)
+  })
+
+  it('restoreMany fires onChange only when it actually removed something', async () => {
+    const r = new ReadState()
+    await r.load(DID)
+    await r.dismiss('at://a')
+
+    let fired = 0
+    r.onChange = () => fired++
+    await r.restoreMany(['at://absent']) // nothing present → no persist, no push
+    expect(fired).toBe(0)
+    await r.restoreMany(['at://a']) // present → one persist
+    expect(fired).toBe(1)
+  })
+
   it('persists as [uri, t] pairs and round-trips across a reload', async () => {
     const r = new ReadState()
     await r.load(DID)

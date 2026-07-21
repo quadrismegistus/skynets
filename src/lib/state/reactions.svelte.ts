@@ -105,6 +105,31 @@ class Reactions {
     return this.byUri.get(uri)?.reaction
   }
 
+  /**
+   * Restore a reaction row to an EXACT prior state — the react-undo path (#84),
+   * and the ONLY route by which a stored reaction gets cleared. `prev` is the
+   * row as it stood BEFORE the reacted action: undefined means there was none,
+   * so we delete the row (the common case — most reacted posts are first-time);
+   * a full row means the react was a flip (up→down), so we put the old one back
+   * verbatim, keeping its original did and t.
+   *
+   * No tombstone is needed for the delete despite reactions being otherwise
+   * grow-only: an undo fires within its ~5s TTL, strictly under the sync push
+   * debounce (10s, #83), so the reaction blips in and out entirely on-device —
+   * its debounced push never fires and the server never learns it existed.
+   */
+  async restore(uri: string, prev: Reaction | undefined) {
+    if (!this.#did) return
+    let changed: boolean
+    if (prev) {
+      this.byUri.set(uri, prev)
+      changed = true
+    } else {
+      changed = this.byUri.delete(uri)
+    }
+    if (changed) await this.#persist()
+  }
+
   /** LWW-merge incoming rows (cross-device sync import): a row wins only if it's
    * newer (`t`) than the local one for that uri. Additive — never deletes. */
   async importRows(rows: Reaction[]) {
