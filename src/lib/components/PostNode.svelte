@@ -160,7 +160,7 @@
   class:ghost
   class:unfollowed
   class:thread={node.isThreadRoot}
-  style="left: {px}px; top: {py}px; width: {pill ? pill.w : size}px; height: {pill ? pill.h : size}px; --clamp: {pill && pill.h < 50 ? 1 : 2}; --ex: {enter?.x ?? 0}px; --ey: {enter?.y ?? 0}px;{accent ? ` --accent-topic: ${accent};` : ''}"
+  style="left: {px}px; top: {py}px; width: {pill ? pill.w : size}px; height: {pill ? pill.h : size}px; --ex: {enter?.x ?? 0}px; --ey: {enter?.y ?? 0}px;{accent ? ` --accent-topic: ${accent};` : ''}"
   role="group"
   onpointerenter={(e) => e.pointerType === 'mouse' && onhover(node.uri)}
   onpointerleave={(e) => e.pointerType === 'mouse' && onhover(null)}
@@ -435,10 +435,8 @@
     line-height: 1.25;
     color: var(--text);
     display: -webkit-box;
-    /* Variable-height pills (points spike): a compact chip clamps to one line,
-       a full-height pill keeps two. Set from the measured height below. */
-    -webkit-line-clamp: var(--clamp, 2);
-    line-clamp: var(--clamp, 2);
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }

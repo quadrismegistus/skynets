@@ -572,19 +572,12 @@
 
     const posts: Target[] = visibleNodes.map((n) => {
       const a = nodeLayout.get(n.uri) ?? { x: 0.5, y: 0.5, sizeRank: 0.5 }
-      // Pills as POINTS: size is the signal, like the avatar radius. A loud
-      // conversation gets the full-width pill; a quiet post shrinks toward a
-      // compact chip. Uniform rectangles tile into rows and ink half the canvas
-      // (a masonry feed, not a scatter); variable area restores the whitespace
-      // that lets position read, and breaks the lanes uniform heights pack into.
-      const pw = pill ? Math.round(pill.w * (0.55 + 0.45 * a.sizeRank)) : 0
-      const ph = pill ? Math.round(pill.h * (0.75 + 0.25 * a.sizeRank)) : 0
       return {
         id: n.uri,
         tx: sx(a.x),
         ty: sy(a.y),
         r: (MIN_SIZE + a.sizeRank * (MAX_SIZE - MIN_SIZE)) / 2,
-        ...(pill ? { hw: pw / 2, hh: ph / 2 } : {}),
+        ...(pill ? { hw: pill.w / 2, hh: pill.h / 2 } : {}),
       }
     })
 
@@ -624,9 +617,6 @@
         px: p?.x ?? t.tx,
         py: p?.y ?? t.ty,
         size: t.r * 2,
-        // Per-node pill extents (points spike: pill size encodes the signal).
-        hw: t.hw,
-        hh: t.hh,
       }
     }),
   )
@@ -2155,7 +2145,7 @@
       px={p.px}
       py={p.py}
       size={p.size}
-      pill={pill && p.hw && p.hh ? { w: p.hw * 2, h: p.hh * 2 } : pill}
+      {pill}
       arriving={arriving.has(p.node.uri)}
       enter={enterFrom(p.px, p.py)}
       hasReplies={(edgeCount.get(p.node.uri) ?? 0) > 0}
@@ -2183,7 +2173,7 @@
        diameter, which in pill mode is unrelated to how tall the node is. -->
   {#each placed as p (p.node.uri)}
     {@const cap = nodeCaptions.get(p.node.uri)}
-    {@const half = pill ? (p.hh ?? pill.h / 2) : p.size / 2}
+    {@const half = pill ? pill.h / 2 : p.size / 2}
     {#if cap}
       <div
         class="node-caption"
