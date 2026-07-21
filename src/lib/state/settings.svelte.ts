@@ -13,6 +13,9 @@ interface Persisted {
   density?: number
   /** Speculative: render posts as readable pills instead of avatar circles. */
   postNodes?: boolean
+  /** Entrance animation duration for arriving posts, in ms. 0 = snap (no
+   * fly-in). Only the entrance is animated; positions are never eased. */
+  motionMs?: number
   selectMode?: SelectMode
   autoCycle?: boolean
   cycleInterval?: number
@@ -44,7 +47,12 @@ export const DEFAULTS = {
   debugMode: false,
   postNodes: false,
   density: 1,
+  motionMs: 450,
 }
+
+/** Bounds for the post-motion slider (ms). 0 = snap. Keep in sync with the slider. */
+export const MOTION_MIN = 0
+export const MOTION_MAX = 1000
 
 /** What the defaults were when the v1 (persist-everything) format was live.
  * Note replyChains/curvedEdges/nodeLimit differ from today's. */
@@ -114,6 +122,7 @@ class Settings {
   hideMutedReplies = $state(DEFAULTS.hideMutedReplies)
   debugMode = $state(DEFAULTS.debugMode)
   postNodes = $state(DEFAULTS.postNodes)
+  motionMs = $state(DEFAULTS.motionMs)
 
   constructor() {
     const p = load()
@@ -136,6 +145,9 @@ class Settings {
     if (typeof p.followsOnly === 'boolean') this.followsOnly = p.followsOnly
     if (typeof p.hideMutedReplies === 'boolean') this.hideMutedReplies = p.hideMutedReplies
     if (typeof p.postNodes === 'boolean') this.postNodes = p.postNodes
+    if (typeof p.motionMs === 'number' && Number.isFinite(p.motionMs)) {
+      this.motionMs = Math.min(MOTION_MAX, Math.max(MOTION_MIN, p.motionMs))
+    }
     if (typeof p.debugMode === 'boolean' && debugAllowed) this.debugMode = p.debugMode
 
     if (typeof localStorage !== 'undefined') {
@@ -157,6 +169,7 @@ class Settings {
           if (this.hideMutedReplies !== DEFAULTS.hideMutedReplies)
             data.hideMutedReplies = this.hideMutedReplies
           if (this.postNodes !== DEFAULTS.postNodes) data.postNodes = this.postNodes
+          if (this.motionMs !== DEFAULTS.motionMs) data.motionMs = this.motionMs
           if (this.debugMode !== DEFAULTS.debugMode) data.debugMode = this.debugMode
           localStorage.setItem(KEY, JSON.stringify(data))
         })

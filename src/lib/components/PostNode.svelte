@@ -252,9 +252,11 @@
      Only the entry offset is animated. left/top carry the simulation and are
      deliberately untransitioned; easing those would lag every tick. */
   .wrap.arriving {
+    /* Duration comes from the "Post motion" slider via --arrive-dur (set on the
+       graph root); 0.45s is the fallback / default. 0ms = snap, no fly-in. */
     transition:
-      transform 0.45s cubic-bezier(0.22, 0.61, 0.36, 1),
-      opacity 0.45s ease;
+      transform var(--arrive-dur, 0.45s) cubic-bezier(0.22, 0.61, 0.36, 1),
+      opacity var(--arrive-dur, 0.45s) ease;
   }
   .wrap.entering {
     transform: translate(-50%, -50%) translate(var(--ex), var(--ey));

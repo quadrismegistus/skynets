@@ -27,7 +27,7 @@
   import { read } from '../state/read.svelte'
   import { reactions, type ReactionKind } from '../state/reactions.svelte'
   import { moderation } from '../state/moderation.svelte'
-  import { settings, debugAllowed } from '../state/settings.svelte'
+  import { settings, debugAllowed, MOTION_MIN, MOTION_MAX } from '../state/settings.svelte'
   import { compose } from '../state/compose.svelte'
   import { threads } from '../state/threads.svelte'
   import { ancestors } from '../state/ancestors.svelte'
@@ -1769,15 +1769,28 @@
   // the keyboard just advanced to, so the next keypress hits the wrong post. Any
   // real pointer intent (a move or a press) releases the hold.
   let pointerHold = false
+  // True only for a short window after a real pointer move. Node positions are
+  // instant (never eased), so when the layout re-solves a node can jump out from
+  // under a STILL cursor — the browser then fires pointerleave/enter that look
+  // like the user leaving/arriving but were caused by the node moving, not the
+  // pointer. Gating hover changes on this flag ignores those drift events, so the
+  // post you're reading doesn't un-hover itself when the graph shifts (#88).
+  let movedRecently = false
+  let moveIdle: ReturnType<typeof setTimeout> | undefined
+  const MOVE_IDLE = 120
   $effect(() => {
     const release = () => (pointerHold = false)
     const onMove = (e: PointerEvent) => {
       pointerHold = false
+      movedRecently = true
       ptr = { x: e.clientX, y: e.clientY }
+      clearTimeout(moveIdle)
+      moveIdle = setTimeout(() => (movedRecently = false), MOVE_IDLE)
     }
     window.addEventListener('pointermove', onMove, { passive: true })
     window.addEventListener('pointerdown', release, { passive: true })
     return () => {
+      clearTimeout(moveIdle)
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerdown', release)
     }
@@ -1796,11 +1809,15 @@
   }
 
   /** Pointer-driven hover (node/card enter → set, leave → schedule clear). Ignored
-   * while a keyboard selection holds, so a stationary cursor can't override it. */
+   * while a keyboard selection holds (a stationary cursor can't override it). A
+   * LEAVE is honoured only if the pointer actually moved just now: an unaccompanied
+   * leave means the node drifted out from under a still cursor (the layout shifted),
+   * not that the reader left — so the post you're reading keeps its hover (#88).
+   * Enters are never gated on movement, so a genuine hover always registers. */
   function pointerHover(uri: string | null) {
     if (pointerHold) return
     if (uri) setHovered(uri)
-    else scheduleClear()
+    else if (movedRecently) scheduleClear()
   }
   /**
    * Let go of a hovered post only once the pointer is clear of BOTH the node
@@ -1938,7 +1955,10 @@
 
   <!-- Everything that lives in graph coordinates. Pan/zoom transforms this
        layer only, so the chrome (HUD, gear, digest) stays put. -->
-  <div class="viewport" style="transform: translate({view.x}px, {view.y}px) scale({view.k})">
+  <div
+    class="viewport"
+    style="transform: translate({view.x}px, {view.y}px) scale({view.k}); --arrive-dur: {settings.motionMs}ms"
+  >
   <svg class="edges" width={w} height={h}>
     <defs>
       <marker id="reply-arrow" viewBox="0 0 10 10" refX="8" refY="5"
@@ -2120,6 +2140,22 @@
         <p class="hint">
           Render posts as readable pills (avatar + opening line) instead of bare avatars. Each pill
           takes ~4× the room, so fewer fit.
+        </p>
+
+        <div class="row">
+          <span class="label">Post motion</span>
+          <input
+            type="range"
+            min={MOTION_MIN}
+            max={MOTION_MAX}
+            step="50"
+            bind:value={settings.motionMs}
+          />
+          <span class="val">{settings.motionMs === 0 ? 'off' : `${settings.motionMs}ms`}</span>
+        </div>
+        <p class="hint">
+          How fast new posts glide into place. Left is instant (they just appear); right is a slower,
+          calmer entrance. Reduced-motion system settings always win.
         </p>
 
         <div class="row">
