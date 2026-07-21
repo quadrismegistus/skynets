@@ -1715,22 +1715,36 @@
           ? order.length - 1
           : 0
         : Math.max(0, Math.min(order.length - 1, cur + dir))
-    setHovered(order[next].node.uri)
+    keyboardSelect(order[next].node.uri)
   }
 
-  // Rate the hovered post AND advance to the next post (the y/n & ↑/↓ keyboard
-  // fast-sweep). The next uri is captured BEFORE react() dismisses this one (and
-  // its reply subtree — skip the doomed set), then re-selected, so a sweep flows
-  // post→post without reaching for the mouse. On-screen only (via timeOrder).
-  function rateAndAdvance(uri: string, kind: ReactionKind) {
+  // The post the keyboard sweep should land on after `uri` (and its reply subtree)
+  // leave the graph: the next on-screen survivor forward, else the nearest back.
+  // Captured BEFORE the dismiss removes them. On-screen only (via timeOrder).
+  function nextSurvivor(uri: string): string | null {
     const order = timeOrder()
     const i = order.findIndex((p) => p.node.uri === uri)
+    if (i === -1) return null
     const gone = new Set([uri, ...threadDescendants(allItems, uri)])
     const survivor = (list: typeof order) => list.find((p) => !gone.has(p.node.uri))?.node.uri ?? null
-    const nextUri =
-      i === -1 ? null : (survivor(order.slice(i + 1)) ?? survivor(order.slice(0, i).reverse()))
+    return survivor(order.slice(i + 1)) ?? survivor(order.slice(0, i).reverse())
+  }
+
+  // Rate the hovered post AND advance to the next (the y/n · f/s · ↑/↓ fast-sweep):
+  // rate, dismiss, and hand the selection to the next survivor so the sweep flows
+  // post→post without reaching for the mouse.
+  function rateAndAdvance(uri: string, kind: ReactionKind) {
+    const next = nextSurvivor(uri)
     react(uri, kind)
-    if (nextUri) setHovered(nextUri)
+    if (next) keyboardSelect(next)
+  }
+
+  // Dismiss the hovered post AND advance — `d` joins the same sweep as the rate
+  // keys (clear, no judgment, next) instead of dead-ending on a null hover.
+  function dismissAndAdvance(uri: string) {
+    const next = nextSurvivor(uri)
+    dismiss(uri)
+    if (next) keyboardSelect(next)
   }
 
   // Card horizontal swipe (#72, reworked): ← previous post, → next. Navigates
@@ -1749,15 +1763,44 @@
    * rather than infer it from the last enter/leave event it happened to see.
    * Plain state: only ever read inside a timer, never rendered. */
   let ptr = { x: -1, y: -1 }
+  // A keyboard rate/dismiss/nav sets `hovered` and then OWNS it until the mouse
+  // actually moves. Without this, a stationary cursor — or a node reflowing under
+  // it after the dismissal — fires pointerenter and silently steals the selection
+  // the keyboard just advanced to, so the next keypress hits the wrong post. Any
+  // real pointer intent (a move or a press) releases the hold.
+  let pointerHold = false
   $effect(() => {
-    const onMove = (e: PointerEvent) => (ptr = { x: e.clientX, y: e.clientY })
+    const release = () => (pointerHold = false)
+    const onMove = (e: PointerEvent) => {
+      pointerHold = false
+      ptr = { x: e.clientX, y: e.clientY }
+    }
     window.addEventListener('pointermove', onMove, { passive: true })
-    return () => window.removeEventListener('pointermove', onMove)
+    window.addEventListener('pointerdown', release, { passive: true })
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerdown', release)
+    }
   })
 
   function setHovered(uri: string) {
     clearTimeout(clearTimer)
     hovered = uri
+  }
+
+  /** Select from the keyboard and hold the selection against the pointer until
+   * the mouse next moves (see `pointerHold`). */
+  function keyboardSelect(uri: string) {
+    pointerHold = true
+    setHovered(uri)
+  }
+
+  /** Pointer-driven hover (node/card enter → set, leave → schedule clear). Ignored
+   * while a keyboard selection holds, so a stationary cursor can't override it. */
+  function pointerHover(uri: string | null) {
+    if (pointerHold) return
+    if (uri) setHovered(uri)
+    else scheduleClear()
   }
   /**
    * Let go of a hovered post only once the pointer is clear of BOTH the node
@@ -1824,7 +1867,7 @@
       hovered = null
       showConfig = false
     } else if (k === 'd' && hoveredTopic) dismissTopic(hoveredTopic)
-    else if (k === 'd' && hovered) dismiss(hovered)
+    else if (k === 'd' && hovered) dismissAndAdvance(hovered)
     // Thumbs on the hovered post: y = up, n = down — rate, dismiss, and ADVANCE
     // to the next post (a fast triage sweep). `n` keeps its no-hover meaning
     // (nextBatch) — same hover-scoped overload the `d` key uses.
@@ -1949,7 +1992,7 @@
       accent={topicColorByNode.get(p.node.uri)}
       unfollowed={p.node.item.post.author.did !== session.did &&
         !follows.following(p.node.item.post.author)}
-      onhover={(uri) => (uri ? setHovered(uri) : scheduleClear())}
+      onhover={pointerHover}
       onclick={onNodeClick}
       ondblclick={onNodeDblClick}
       onexpand={(n) => toggleMapReplies(n.item)}
@@ -2020,8 +2063,8 @@
       onrate={(it, kind) => react(it.post.uri, kind)}
       showClose={coarsePointer}
       ondismiss={() => dismiss(c.node.uri)}
-      onkeep={() => setHovered(c.node.uri)}
-      onleave={scheduleClear}
+      onkeep={() => pointerHover(c.node.uri)}
+      onleave={() => pointerHover(null)}
       onclose={() => {
         pinned.delete(c.node.uri)
         if (hovered === c.node.uri) hovered = null
