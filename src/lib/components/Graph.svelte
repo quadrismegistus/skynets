@@ -1798,10 +1798,15 @@
   // Captured BEFORE the dismiss removes them. On-screen only (via timeOrder).
   function nextSurvivor(uri: string): string | null {
     const order = timeOrder()
-    const i = order.findIndex((p) => p.node.uri === uri)
-    if (i === -1) return null
+    if (!order.length) return null
     const gone = new Set([uri, ...threadDescendants(allItems, uri)])
     const survivor = (list: typeof order) => list.find((p) => !gone.has(p.node.uri))?.node.uri ?? null
+    const i = order.findIndex((p) => p.node.uri === uri)
+    // The anchor can drift off-screen after a dismiss reflows the layout (nav is
+    // scoped to on-screen nodes). If it's no longer in the visible order, DON'T
+    // dead-end the sweep — resume from the first on-screen survivor. (keepActiveInView
+    // makes this rare, but a fast burst can still outrun a reflow.)
+    if (i === -1) return survivor(order)
     return survivor(order.slice(i + 1)) ?? survivor(order.slice(0, i).reverse())
   }
 
@@ -1864,11 +1869,47 @@
     }
     window.addEventListener('pointermove', onMove, { passive: true })
     window.addEventListener('pointerdown', release, { passive: true })
+    window.addEventListener('wheel', release, { passive: true }) // a zoom is a deliberate view action
     return () => {
       clearTimeout(moveIdle)
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerdown', release)
+      window.removeEventListener('wheel', release)
     }
+  })
+
+  // Pan the graph so the KEYBOARD-active post lands in a comfortable, card-clear
+  // spot when it's drifted out of frame. `nextSurvivor` picks from on-screen nodes
+  // only (timeOrder), but a dismiss reflows the layout and can shove the post you
+  // just advanced to off-screen — you then can't see its gold ring, land on a
+  // post out of frame, and the NEXT keypress can't find the drifted anchor so the
+  // sweep dead-ends. The view read + write are untracked (effect_update_depth
+  // has bitten this file three times).
+  function keepActiveInView(uri: string) {
+    if (!w || !h || hovered !== uri || !pointerHold) return
+    const p = placed.find((n) => n.node.uri === uri)
+    if (!p) return
+    const sx = p.px * view.k + view.x
+    const sy = p.py * view.k + view.y
+    // Already comfortably inside the frame → leave the graph where it is (a sweep
+    // between nearby posts shouldn't twitch the whole canvas).
+    if (sx >= w * 0.12 && sx <= w * 0.88 && sy >= h * 0.16 && sy <= h * 0.84) return
+    // Bring it to a stable focus point: left-of-centre (the card opens RIGHT,
+    // CARD_W wide — cardPos flips/clamps on narrow frames) and a little above
+    // middle so the card has room below.
+    view.x += w * 0.3 - sx
+    view.y += h * 0.4 - sy
+  }
+
+  // Fire AFTER the dismiss reflow + motion tween settle (not per tween frame),
+  // and only once the user pauses — a rapid burst just reschedules. Gated on
+  // pointerHold so a MOUSE hover never yanks the graph.
+  $effect(() => {
+    const uri = hovered
+    const delay = settings.motionMs + 80
+    if (!uri || !pointerHold) return
+    const t = setTimeout(() => untrack(() => keepActiveInView(uri)), delay)
+    return () => clearTimeout(t)
   })
 
   function setHovered(uri: string) {
