@@ -28,6 +28,44 @@ export interface Target {
 }
 
 /**
+ * Pill-mode node budget, pre-density and pre-clamp: how many pills to plan so
+ * the FRAME ends up comfortably full. Extracted from Graph.svelte so the
+ * phone-width case is unit-testable (the derivation there reads reactive state).
+ *
+ * `frameArea / cell` is the number of pills that geometrically tile the frame;
+ * ×0.5 leaves the solver spread room (the other half is breathing space, not
+ * emptiness). The subtlety is the reservoir: the solver spreads the whole
+ * budget across the WORLD — frame plus a `bleed`-deep ring on every side — so
+ * only the frame's share of that world area actually lands on-screen. To seat
+ * ~half-the-frame pills in view, the budget must be scaled by world/frame area,
+ * NOT a flat 1+OVERFLOW.
+ *
+ * On a desktop the bleed is a thin rim, so world/frame ≈ 1.33 and the old flat
+ * 1.4 was fine — max() keeps that path byte-for-byte unchanged. On a ~402px
+ * phone the pill is ~212px and bleed.x ~170px, so the horizontal reservoir is
+ * nearly as wide as the frame itself: world/frame ≈ 2.2. The flat 1.4 planned
+ * ~9 nodes, of which the solver parked more than half in that side reservoir
+ * and only ~3 reached the screen. Scaling by the real ratio plans ~15, which
+ * lands the ~8 readable pills a phone has room for while still stocking the
+ * reservoir for dismissals.
+ */
+export function pillBudgetBase(
+  frameW: number,
+  frameH: number,
+  cell: number,
+  bleedX: number,
+  bleedY: number,
+  overflow: number,
+): number {
+  const area = frameW * frameH
+  if (area <= 0 || cell <= 0) return 0
+  const worldArea = (frameW + 2 * bleedX) * (frameH + 2 * bleedY)
+  // max(): desktop stays on the original 1+OVERFLOW; narrow screens, whose
+  // reservoir eats a larger share of the world, get the true ratio instead.
+  return (area / cell) * 0.5 * Math.max(1 + overflow, worldArea / area)
+}
+
+/**
  * Deterministic layout solver. Replaces the d3-force simulation.
  *
  * At the setting everyone actually used (cohesion 0) the simulation ran only a

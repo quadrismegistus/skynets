@@ -22,7 +22,7 @@
     type TopicPill,
     type TreeNode,
   } from '../state/graph'
-  import { Layout, type Target } from '../state/layout'
+  import { Layout, pillBudgetBase, type Target } from '../state/layout'
   import { buildConversations, planView } from '../state/conversations'
   import { read } from '../state/read.svelte'
   import { reactions, type ReactionKind } from '../state/reactions.svelte'
@@ -137,9 +137,13 @@
    * the old fixed 0–60 count could not):
    *
    * - Pills tile, so this is a real packing estimate: half of what geometrically
-   *   fits (the rest is spread room for the solver) plus the reservoir ring. This
-   *   runs DENSER than the old ?pills=1 default (which capped at the Count value),
-   *   by design — one density knob now governs both modes; drag it down if cramped.
+   *   fits (the rest is spread room for the solver) plus the reservoir ring —
+   *   sized by the WORLD/frame area ratio, not a flat 1+OVERFLOW, so a phone
+   *   (whose bleed.x is nearly a frame wide) plans enough that ~8 still reach the
+   *   screen instead of the ~3 a flat ring left after the solver stocked the
+   *   reservoir. See pillBudgetBase; desktop is unchanged (its ratio ≈ 1+OVERFLOW).
+   *   This runs DENSER than the old ?pills=1 default (which capped at the Count
+   *   value), by design — one density knob governs both modes; drag it down if cramped.
    * - Avatars don't tile — a conversation spreads out — so it's a UX target, the
    *   same megapixel heuristic the Count default used (~30 on a 1080p screen).
    *   NB w/h are the CANVAS (below the topbar), so at density 1 this lands ~1–2
@@ -156,10 +160,13 @@
     let base: number
     if (pill) {
       // By area, not whole columns: on a narrow canvas the column count rounds
-      // down to 1 and throws away most of the height.
+      // down to 1 and throws away most of the height. The reservoir supply is
+      // area-scaled (see pillBudgetBase) — bleed.x/bleed.y are the same ring the
+      // treeLayout spreads across, so the frame gets its true share of the plan.
       const cell = (pill.w + pill.gap.x) * (pill.h + pill.gap.y)
-      const area = Math.max(0, w - 24) * Math.max(0, h - PAD_TOP - 60)
-      base = (area / cell) * 0.5 * (1 + OVERFLOW) // + reservoir supply
+      const fw = Math.max(0, w - 24)
+      const fh = Math.max(0, h - PAD_TOP - 60)
+      base = pillBudgetBase(fw, fh, cell, bleed.x, bleed.y, OVERFLOW)
     } else {
       base = ((w * h) / 1e6) * 14.5
     }

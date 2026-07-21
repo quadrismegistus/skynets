@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Layout, type Target } from './layout'
+import { Layout, pillBudgetBase, type Target } from './layout'
 
 /**
  * The layout engine had no tests at all, which is how a run of defects reached
@@ -450,5 +450,58 @@ describe('circles, when no gap is configured', () => {
     const b = at(l, 'b')
     // r + 9 of breathing room each, as the old forceCollide gave.
     expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThanOrEqual(30 + 30 + 18 - 1)
+  })
+})
+
+describe('pill-mode node budget', () => {
+  // The pill and reservoir dimensions Graph.svelte configures: a 212x56 pill on
+  // a 34x32 gap, with a bleed of round(212*0.8)=170 by round(56*1.1)=62.
+  const CELL = (212 + 34) * (56 + 32) // 21648
+  const BLEED_X = 170
+  const BLEED_Y = 62
+  const OVERFLOW = 0.4
+  // Graph.svelte's frame terms: fw = w-24, fh = h-PAD_TOP-60 (PAD_TOP=52).
+  const frame = (w: number, h: number) => [w - 24, h - 52 - 60] as const
+  // The [8,120] clamp Graph.svelte applies after multiplying by density.
+  const clamp = (base: number, density = 1) =>
+    Math.max(8, Math.min(120, Math.round(base * density)))
+  // What the OLD flat 1+OVERFLOW ring would have planned, for contrast.
+  const flat = (fw: number, fh: number) => ((fw * fh) / CELL) * 0.5 * (1 + OVERFLOW)
+
+  it('plans enough pills on a 402px phone that ~8 reach the screen', () => {
+    // The bug (#43): a flat 40% reservoir ring planned ~9 nodes, but on a phone
+    // the horizontal reservoir is nearly a frame wide, so the solver parked more
+    // than half of them off-screen and only ~3 pills landed. Scaling the ring by
+    // the real world/frame area ratio lifts the plan to ~15, and ~8 reach the
+    // frame — the number a 402px column has room to show.
+    const [fw, fh] = frame(402, 874)
+    const base = pillBudgetBase(fw, fh, CELL, BLEED_X, BLEED_Y, OVERFLOW)
+    expect(clamp(base)).toBe(15)
+    // Materially more than the old flat ring, which rounded to 9.
+    expect(clamp(base)).toBeGreaterThan(clamp(flat(fw, fh)))
+    expect(Math.round(flat(fw, fh))).toBe(9)
+  })
+
+  it('leaves the desktop budget on the original 1+OVERFLOW ring', () => {
+    // On a 1920x1080 desktop the bleed is a thin rim (world/frame ≈ 1.33 < 1.4),
+    // so max() picks 1+OVERFLOW and the number is byte-for-byte the old formula.
+    const [fw, fh] = frame(1920, 1080)
+    const base = pillBudgetBase(fw, fh, CELL, BLEED_X, BLEED_Y, OVERFLOW)
+    expect(base).toBeCloseTo(flat(fw, fh), 10)
+    expect(clamp(base)).toBe(clamp(flat(fw, fh)))
+  })
+
+  it('boosts only where the reservoir dominates the frame', () => {
+    // Narrow: the ratio beats the flat ring, so the plan is larger than flat.
+    const [pw, ph] = frame(402, 874)
+    expect(pillBudgetBase(pw, ph, CELL, BLEED_X, BLEED_Y, OVERFLOW)).toBeGreaterThan(flat(pw, ph))
+    // Wide: the flat ring wins, so the plan equals it (no change to big screens).
+    const [dw, dh] = frame(1920, 1080)
+    expect(pillBudgetBase(dw, dh, CELL, BLEED_X, BLEED_Y, OVERFLOW)).toBeCloseTo(flat(dw, dh), 10)
+  })
+
+  it('is 0 for a degenerate frame (no divide-by-zero)', () => {
+    expect(pillBudgetBase(0, 800, CELL, BLEED_X, BLEED_Y, OVERFLOW)).toBe(0)
+    expect(pillBudgetBase(378, 762, 0, BLEED_X, BLEED_Y, OVERFLOW)).toBe(0)
   })
 })
