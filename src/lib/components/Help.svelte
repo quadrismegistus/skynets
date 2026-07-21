@@ -65,6 +65,7 @@
         <div><kbd>←</kbd><kbd>→</kbd><span>Move to the previous / next post (older / newer)</span></div>
         <div><kbd>↑</kbd><kbd>↓</kbd><span>Privately like / dislike the selected post — also dismisses it</span></div>
         <div><kbd>Y</kbd><kbd>N</kbd><span>Like / dislike the hovered post (same as ↑ / ↓)</span></div>
+        <div><kbd>F</kbd><kbd>S</kbd><span>Like / dislike — home-row aliases for the left hand (F up, S down)</span></div>
         <div><kbd>D</kbd><span>Dismiss the hovered post (and its replies)</span></div>
         <div><kbd>R</kbd><span>Load more posts</span></div>
         <div><kbd>N</kbd><span>Next batch from the queue (when no post is hovered)</span></div>

@@ -1802,7 +1802,7 @@
     // Don't hijack typing. A modal compose/report textarea lives outside this
     // component and its keystrokes bubble to this window handler, so a bare
     // guard on <input> alone let letters fire graph shortcuts (r/n/l — and now
-    // the destructive y/n) mid-sentence. Cover textareas and contenteditable.
+    // the destructive y/n/f/s) mid-sentence. Cover textareas and contenteditable.
     const t = e.target
     if (
       t instanceof HTMLInputElement ||
@@ -1830,6 +1830,10 @@
     // (nextBatch) — same hover-scoped overload the `d` key uses.
     else if (k === 'y' && hovered) rateAndAdvance(hovered, 'up')
     else if (k === 'n' && hovered) rateAndAdvance(hovered, 'down')
+    // Home-row aliases so a left hand can rate while the right stays on the mouse:
+    // f = up (favourable), s = down. Same rate-dismiss-advance as y/n.
+    else if (k === 'f' && hovered) rateAndAdvance(hovered, 'up')
+    else if (k === 's' && hovered) rateAndAdvance(hovered, 'down')
     // Arrow keys: ←/→ walk the timeline; ↑/↓ rate + advance (aliases of y/n).
     // preventDefault stops the page from scrolling.
     else if (e.key === 'ArrowUp' && hovered) {
