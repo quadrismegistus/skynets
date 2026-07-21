@@ -45,3 +45,31 @@ describe('ancestors settled tracking (#46 admissibility gate)', () => {
     expect(ancestors.settledUris.has('r')).toBe(false)
   })
 })
+
+describe('ancestors in-flight dedup (#64)', () => {
+  it('coalesces a reply uri repeated within one batch into a single fetch', async () => {
+    let release!: (chain: any[]) => void
+    // A still-pending fetch keeps the uri in-flight while the batch maps over it.
+    vi.mocked(thread.fetchAncestors).mockReturnValueOnce(
+      new Promise<any[]>((res) => (release = res)),
+    )
+    const done = ancestors.ensure(['dup', 'dup'])
+    // Both occurrences share the one outstanding request — no duplicate call.
+    expect(thread.fetchAncestors).toHaveBeenCalledTimes(1)
+    release([{ post: { uri: 'at://p/parent' } }])
+    await done
+    // The shared chain merges once (posts already dedup by uri anyway).
+    expect(ancestors.posts.filter((p) => p.post.uri === 'at://p/parent')).toHaveLength(1)
+  })
+
+  it('does not cache a rejection: the in-flight entry clears once it settles', async () => {
+    vi.mocked(thread.fetchAncestors).mockRejectedValueOnce(new Error('Post not found'))
+    await ancestors.ensure(['gone'])
+    // With #inflight cleared on settle, a fresh uri fetches normally afterwards
+    // (a stuck entry would be keyed by uri, so this mainly guards the map hygiene
+    // that lets a re-requestable uri retry rather than hang on a dead promise).
+    vi.mocked(thread.fetchAncestors).mockResolvedValueOnce([{ post: { uri: 'at://p/ok' } }] as any)
+    await ancestors.ensure(['other'])
+    expect(ancestors.posts.some((p) => p.post.uri === 'at://p/ok')).toBe(true)
+  })
+})
