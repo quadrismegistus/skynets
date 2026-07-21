@@ -37,6 +37,14 @@ interface Appearance {
   uri: string
   kind: AppearanceKind
   reposterDid?: string
+  /** Which feed surfaced this sighting — the feed generator's AT-uri, or the
+   * `FOLLOWING` sentinel for the home timeline. Absent = a context/backfill
+   * write, or a sighting recorded before per-feed provenance existed (legacy).
+   * Additive and schemaless: old rows simply lack the field and read back as
+   * unknown, so no DB version bump is needed. The same post surfaced by two
+   * feeds records two appearances (distinct `feed`) — that overlap is the
+   * cross-feed research signal (PLAN §6.5). */
+  feed?: string
   seenAt: number
 }
 interface CountSample {
@@ -227,8 +235,13 @@ export class Archive {
    * `'context'` for posts pulled in only to complete a thread or ancestor
    * chain (they never surfaced in your feed on their own). A post can carry
    * BOTH a timeline and a context appearance over its life; provenance is the
-   * union, so recording context never erases an earlier primary appearance. */
-  async record(items: FeedItem[], forceKind?: AppearanceKind): Promise<void> {
+   * union, so recording context never erases an earlier primary appearance.
+   *
+   * `feed` names the feed that surfaced these items (a generator AT-uri or the
+   * `FOLLOWING` sentinel); it joins the appearance dedup key, so the same post
+   * seen via two feeds records two appearances — the cross-feed signal (PLAN
+   * §6.5). Omit it for context/backfill writes, which stay feed-less. */
+  async record(items: FeedItem[], forceKind?: AppearanceKind, feed?: string): Promise<void> {
     const db = this.#db
     if (!db || items.length === 0) return
     const t = Date.now()
@@ -250,10 +263,10 @@ export class Archive {
       const { kind, reposterDid } = forceKind
         ? { kind: forceKind, reposterDid: forceKind === 'repost' ? reposterProfile(item)?.did : undefined }
         : appearanceKind(item)
-      const akey = `${uri}|${kind}|${reposterDid ?? ''}`
+      const akey = `${uri}|${kind}|${reposterDid ?? ''}|${feed ?? ''}`
       if (!this.#seenAppearance.has(akey)) {
         this.#seenAppearance.add(akey)
-        await apps.add({ uri, kind, reposterDid, seenAt: t })
+        await apps.add({ uri, kind, reposterDid, feed, seenAt: t })
       }
       const likes = item.post.likeCount ?? 0
       const reposts = item.post.repostCount ?? 0
@@ -372,6 +385,32 @@ export class Archive {
     for (const a of apps) {
       const prev = out.get(a.uri)
       if (!prev || KIND_RANK[a.kind] > KIND_RANK[prev]) out.set(a.uri, a.kind)
+    }
+    return out
+  }
+
+  /** The set of feeds each post was surfaced by, from the appearances log — the
+   * cross-feed overlap that makes a feed an object of diachronic study (a post
+   * appearing via both Following and Discover is signal; PLAN §6.5). Only
+   * appearances carrying a `feed` contribute: context/backfill sightings and
+   * rows written before per-feed provenance existed (legacy) have no feed and
+   * are omitted, so a uri absent from the map was never recorded under a named
+   * feed. Restricted to `uris` when given (else the whole corpus). */
+  async getFeeds(uris?: string[]): Promise<Map<string, Set<string>>> {
+    const out = new Map<string, Set<string>>()
+    const db = this.#db
+    if (!db) return out
+    const add = (a: Appearance) => {
+      if (!a.feed) return
+      let set = out.get(a.uri)
+      if (!set) out.set(a.uri, (set = new Set()))
+      set.add(a.feed)
+    }
+    if (uris) {
+      // Per-uri via the `uri` index — no full scan, cheap for a single post.
+      await Promise.all(uris.map(async (u) => (await db.getAllFromIndex('appearances', 'uri', u)).forEach(add)))
+    } else {
+      for (const a of await db.getAll('appearances')) add(a)
     }
     return out
   }

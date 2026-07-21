@@ -114,6 +114,60 @@ describe('Archive', () => {
   })
 })
 
+describe('Archive per-feed provenance', () => {
+  it('records which feed surfaced a post, readable via getFeeds', async () => {
+    const a = await fresh()
+    await a.record([mkPost({ uri: 'at://p/1' })], undefined, 'following')
+    const feeds = await a.getFeeds()
+    expect([...(feeds.get('at://p/1') ?? [])]).toEqual(['following'])
+  })
+
+  it('records TWO appearances when the same post surfaces via two feeds (the cross-feed signal)', async () => {
+    const a = await fresh()
+    const p = mkPost({ uri: 'at://p/1' })
+    await a.record([p], undefined, 'following')
+    await a.record([p], undefined, 'at://did:plc:gen/app.bsky.feed.generator/discover')
+    expect((await a.stats()).appearances).toBe(2)
+    const set = (await a.getFeeds()).get('at://p/1')!
+    expect([...set].sort()).toEqual(['at://did:plc:gen/app.bsky.feed.generator/discover', 'following'])
+  })
+
+  it('dedups repeat sightings within the same feed to one appearance', async () => {
+    const a = await fresh()
+    const p = mkPost({ uri: 'at://p/1' })
+    await a.record([p], undefined, 'following')
+    await a.record([p], undefined, 'following') // seen again in the same feed
+    expect((await a.stats()).appearances).toBe(1)
+    expect([...(await a.getFeeds()).get('at://p/1')!]).toEqual(['following'])
+  })
+
+  it('restricts getFeeds to the requested uris (index path)', async () => {
+    const a = await fresh()
+    await a.record([mkPost({ uri: 'at://p/1' })], undefined, 'following')
+    await a.record([mkPost({ uri: 'at://p/2' })], undefined, 'at://gen/discover')
+    const feeds = await a.getFeeds(['at://p/1'])
+    expect([...feeds.keys()]).toEqual(['at://p/1'])
+  })
+
+  it('leaves legacy/feed-less appearances valid and treats them as unknown (back-compat)', async () => {
+    const a = await fresh()
+    // A pre-feature write: no feed argument (the shape backfill + context writes
+    // and every record before this feature still use). Must stay valid.
+    await a.record([mkPost({ uri: 'at://p/1' })])
+    // A later feed-scoped sighting of the same post is a DISTINCT appearance.
+    await a.record([mkPost({ uri: 'at://p/1' })], undefined, 'following')
+    const s = await a.stats()
+    expect(s.appearances).toBe(2) // legacy (feed-less) + feed-named
+    // getProvenance is unaffected — the kind still resolves.
+    expect((await a.getProvenance()).get('at://p/1')).toBe('timeline')
+    // getFeeds surfaces only the named feed; the feed-less row is omitted.
+    expect([...(await a.getFeeds()).get('at://p/1')!]).toEqual(['following'])
+    // A purely legacy post (never seen under a feed) is absent from getFeeds.
+    await a.record([mkPost({ uri: 'at://legacy/1' })])
+    expect((await a.getFeeds()).has('at://legacy/1')).toBe(false)
+  })
+})
+
 describe('Archive labels', () => {
   it('round-trips per-post labels with their model', async () => {
     const a = await fresh()

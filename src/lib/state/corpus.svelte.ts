@@ -109,11 +109,14 @@ class Corpus {
 
   /** Record posts into the mirror AND the archive. `forceKind` overrides the
    * per-item timeline/repost inference — pass 'context' for posts pulled in only
-   * to complete a thread or ancestor chain. Returns the posts that were newly
-   * added to the mirror (not seen before), for callers that want the delta. */
-  record(items: FeedItem[], forceKind?: AppearanceKind): FeedItem[] {
+   * to complete a thread or ancestor chain. `feed` names the feed that surfaced
+   * them (a generator uri or the `FOLLOWING` sentinel), recorded as per-feed
+   * provenance on the archive appearance (PLAN §6.5); omit for context writes.
+   * Returns the posts that were newly added to the mirror (not seen before),
+   * for callers that want the delta. */
+  record(items: FeedItem[], forceKind?: AppearanceKind, feed?: string): FeedItem[] {
     const added = this.ingest(items, forceKind)
-    void archive.record(items, forceKind)
+    void archive.record(items, forceKind, feed)
     return added
   }
 

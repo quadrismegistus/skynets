@@ -1283,7 +1283,7 @@
     if (loading) return
     try {
       const page = await getFeedPage(feeds.active)
-      void corpus.record(page.items)
+      void corpus.record(page.items, undefined, feeds.active)
       const have = new Set(items.map((i) => i.post.uri))
       const fresh = page.items.filter((i) => !have.has(i.post.uri))
       if (fresh.length) items = [...fresh, ...items]
@@ -1384,7 +1384,7 @@
     error = undefined
     try {
       const page = await getFeedPage(feeds.active, append ? cursor : undefined)
-      void corpus.record(page.items)
+      void corpus.record(page.items, undefined, feeds.active)
       items = append ? [...items, ...page.items] : page.items
       cursor = page.cursor
     } catch (err) {

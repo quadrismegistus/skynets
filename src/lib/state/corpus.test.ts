@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Corpus, reconstructFeedItems } from './corpus.svelte'
 import { archive, type FeedSnapshot, type StoredProfile } from './archive'
 import { reposterProfile } from '../api/post'
@@ -72,6 +72,21 @@ describe('Corpus mirror', () => {
     expect(c.has('at://ctx/x')).toBe(true) // mirror updated…
     expect(c.hasContext('at://ctx/x')).toBe(true)
     expect((await archive.stats()).appearances).toBe(before) // …archive untouched
+  })
+
+  it('threads the active feed through to the archive write (per-feed provenance)', () => {
+    const spy = vi.spyOn(archive, 'record').mockResolvedValue()
+    try {
+      const c = new Corpus()
+      const items = [mkPost({ uri: 'at://ff/1' })]
+      c.record(items, undefined, 'following')
+      expect(spy).toHaveBeenCalledWith(items, undefined, 'following')
+      // A context write stays feed-less (no feed argument reaches the archive).
+      c.record([mkPost({ uri: 'at://ctx/1' })], 'context')
+      expect(spy).toHaveBeenLastCalledWith(expect.anything(), 'context', undefined)
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('flushToArchive persists mirrored posts under each role they hold', async () => {
