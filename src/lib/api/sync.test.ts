@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  casPush,
   decryptDoc,
   decryptWithKey,
   deriveSyncKey,
@@ -12,7 +13,9 @@ import {
   mergeDismissed,
   mergeReactions,
   randomSalt,
+  type CasPushDeps,
   type SyncDoc,
+  type SyncEnvelope,
 } from './sync'
 import type { Reaction } from '../state/reactions.svelte'
 
@@ -129,5 +132,96 @@ describe('sync merges (#80 Phase 0 CRDTs)', () => {
 
   it('dismissed merge is a union', () => {
     expect(mergeDismissed(['a', 'b'], ['b', 'c']).sort()).toEqual(['a', 'b', 'c'])
+  })
+})
+
+describe('casPush (#83 CAS retry)', () => {
+  const stubEnv: SyncEnvelope = {
+    v: 1,
+    kdf: 'PBKDF2-SHA256',
+    iter: ITER,
+    cipher: 'AES-256-GCM',
+    salt: 's',
+    iv: 'i',
+    ct: 'c',
+  }
+  const conflict = () => Object.assign(new Error('lost race'), { error: 'InvalidSwap' })
+  const isConflict = (e: unknown) => (e as { error?: string })?.error === 'InvalidSwap'
+
+  it('writes once and returns the new CID when there is no conflict', async () => {
+    const calls: (string | null)[] = []
+    const deps: CasPushDeps = {
+      currentCid: () => 'cidA',
+      buildEnv: async () => stubEnv,
+      put: async (_env, swap) => {
+        calls.push(swap)
+        return 'cidB'
+      },
+      pull: async () => {
+        throw new Error('should not pull')
+      },
+      isConflict,
+    }
+    expect(await casPush(deps)).toBe('cidB')
+    expect(calls).toEqual(['cidA']) // swapped against the CID we held
+  })
+
+  it('on a lost race: pulls, rebuilds against the fresh CID, and retries', async () => {
+    let cid: string | null = 'stale'
+    let built = 0
+    const swaps: (string | null)[] = []
+    const deps: CasPushDeps = {
+      currentCid: () => cid,
+      buildEnv: async () => {
+        built++
+        return stubEnv
+      },
+      put: async (_env, swap) => {
+        swaps.push(swap)
+        if (swap === 'stale') throw conflict() // first attempt loses
+        return 'final'
+      },
+      pull: async () => {
+        cid = 'fresh' // a pull refreshes the CID (and would have merged the winner)
+      },
+      isConflict,
+    }
+    expect(await casPush(deps, 3)).toBe('final')
+    expect(swaps).toEqual(['stale', 'fresh']) // retried against the post-pull CID
+    expect(built).toBe(2) // env rebuilt AFTER the pull — pushes the merged state
+  })
+
+  it('gives up after the retry budget and rethrows the conflict', async () => {
+    let pulls = 0
+    const deps: CasPushDeps = {
+      currentCid: () => 'x',
+      buildEnv: async () => stubEnv,
+      put: async () => {
+        throw conflict()
+      },
+      pull: async () => {
+        pulls++
+      },
+      isConflict,
+    }
+    await expect(casPush(deps, 2)).rejects.toMatchObject({ error: 'InvalidSwap' })
+    expect(pulls).toBe(2) // pulled on each of the 2 retries, then gave up
+  })
+
+  it('does not retry a non-conflict error', async () => {
+    let pulls = 0
+    const deps: CasPushDeps = {
+      currentCid: () => null,
+      buildEnv: async () => stubEnv,
+      put: async () => {
+        throw new Error('network down')
+      },
+      pull: async () => {
+        pulls++
+      },
+      isConflict,
+    }
+    await expect(casPush(deps)).rejects.toThrow('network down')
+    expect(pulls).toBe(0)
   })
 })

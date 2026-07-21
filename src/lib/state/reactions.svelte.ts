@@ -59,6 +59,11 @@ export function tallyByAuthor(rows: Iterable<Reaction>): AuthorTally[] {
 class Reactions {
   byUri = new SvelteMap<string, Reaction>()
   #did: string | undefined
+  /** Fired after any persisted change, so cross-device sync can schedule a
+   * debounced push (#83). Set by the sync module; null when sync is absent.
+   * Only fires when a write actually changed something (see #persist callers),
+   * so a no-op merge on pull doesn't spuriously trigger a push. */
+  onChange: (() => void) | undefined
 
   #key(did: string) {
     return `skynets:reactions:${did}` // skynets prefix matches the other local stores — do not change
@@ -140,6 +145,7 @@ class Reactions {
   async #persist() {
     if (!this.#did) return
     await set(this.#key(this.#did), [...this.byUri.values()])
+    this.onChange?.()
   }
 }
 

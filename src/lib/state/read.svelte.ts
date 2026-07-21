@@ -14,6 +14,11 @@ import { SvelteSet } from 'svelte/reactivity'
 class ReadState {
   dismissed = new SvelteSet<string>()
   #did: string | undefined
+  /** Fired after any persisted change, so cross-device sync can schedule a
+   * debounced push (#83). Set by the sync module; null when sync is absent.
+   * Only fires when a write actually changed the set, so a no-op merge on pull
+   * doesn't spuriously trigger a push. */
+  onChange: (() => void) | undefined
 
   #key(did: string) {
     return `skynets:dismissed:${did}` // legacy prefix from before the Mothtrap rename — do not change (users' read state)
@@ -76,6 +81,7 @@ class ReadState {
   async #persist() {
     if (!this.#did) return
     await set(this.#key(this.#did), [...this.dismissed])
+    this.onChange?.()
   }
 }
 

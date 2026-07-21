@@ -172,7 +172,47 @@ export function mergeReactions(local: Reaction[], incoming: Reaction[]): Reactio
   return [...by.values()]
 }
 
-/** Union — dismissals only add in Phase 0 (no un-dismiss tombstone yet). */
+/** Union — dismissals only add (no un-dismiss; see #82/#83). */
 export function mergeDismissed(local: string[], incoming: string[]): string[] {
   return [...new Set([...local, ...incoming])]
+}
+
+/** The moving parts of one CAS-conditioned push, injected so the retry loop is
+ * pure and testable (no store/DOM/atproto). */
+export interface CasPushDeps {
+  /** Read the CID to swap against — re-read each attempt (a pull refreshes it). */
+  currentCid: () => string | null
+  /** Encrypt the CURRENT (post-merge) local state — rebuilt each attempt so a
+   * retry pushes the merged superset, not the stale doc that lost the race. */
+  buildEnv: () => Promise<SyncEnvelope>
+  /** Write, CAS-conditioned on `swap`; resolves to the new record CID. */
+  put: (env: SyncEnvelope, swap: string | null) => Promise<string>
+  /** On conflict: pull + merge the winner's change and refresh the CID. */
+  pull: () => Promise<void>
+  /** Classify a write error as a lost CAS race (→ pull + retry) vs fatal. */
+  isConflict: (e: unknown) => boolean
+}
+
+/**
+ * Push local state to the remote, retrying on a lost `swapRecord` race. On
+ * conflict we pull (merging whatever the other device wrote), then rebuild the
+ * envelope from the merged state and swap against the fresh CID — so no
+ * concurrent edit is ever dropped; the writers converge instead of clobbering.
+ * Rebuilding *after* the pull is the load-bearing part: retrying with the
+ * pre-merge doc would overwrite the change we just pulled in.
+ */
+export async function casPush(deps: CasPushDeps, retries = 3): Promise<string> {
+  for (let attempt = 0; ; attempt++) {
+    const swap = deps.currentCid()
+    const env = await deps.buildEnv()
+    try {
+      return await deps.put(env, swap)
+    } catch (e) {
+      if (deps.isConflict(e) && attempt < retries) {
+        await deps.pull()
+        continue
+      }
+      throw e
+    }
+  }
 }

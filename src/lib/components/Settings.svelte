@@ -86,7 +86,7 @@
       // claim success over it.
       syncMsg = sync.error
         ? { ok: false, text: sync.error }
-        : { ok: true, text: 'Sync is on — turn it on with the same passphrase on your other devices.' }
+        : { ok: true, text: 'Sync is on — it keeps up automatically. Turn it on with the same passphrase on your other devices.' }
     } catch (e) {
       syncMsg = { ok: false, text: e instanceof Error ? e.message : 'Could not turn on sync.' }
     }
@@ -232,9 +232,9 @@
       <h3>Sync across devices <span class="beta">beta</span></h3>
       <p class="blurb">
         Keep your private reactions and dismissed posts in step across devices, <strong>end-to-end
-        encrypted</strong> with a passphrase you choose. The data is stored in your own Bluesky account
-        as ciphertext — nobody (not Bluesky, not us) can read it without the passphrase, and there's no
-        Mothtrap server involved.
+        encrypted</strong> with a passphrase you choose. Once on, it syncs automatically in the
+        background. The data is stored in your own Bluesky account as ciphertext — nobody (not Bluesky,
+        not us) can read it without the passphrase, and there's no Mothtrap server involved.
       </p>
       <label class="pass">
         <span>Passphrase</span>
@@ -248,7 +248,7 @@
 
       {#if sync.enabled}
         <p class="state ok">
-          Sync is on{sync.lastSynced ? ` — last synced ${fmtLast(sync.lastSynced)}` : ''}.
+          Sync is on — automatic{sync.lastSynced ? `, last synced ${fmtLast(sync.lastSynced)}` : ''}.
         </p>
         <div class="actions">
           <button class="primary" onclick={syncNow} disabled={sync.busy}
