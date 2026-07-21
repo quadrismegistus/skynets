@@ -1019,6 +1019,9 @@
         return {
           id: e.id,
           from: e.from,
+          // Hovering any member of a conversation brings ITS edges up to full
+          // strength; everything else stays a whisper (see .edges CSS).
+          lit: hoveredChain.size > 1 && (hoveredChain.has(e.from) || hoveredChain.has(e.to)),
           color: topicColorByNode.get(e.from) ?? '',
           d: curvePath(
             a.px + ux * (a.size / 2),
@@ -2132,9 +2135,10 @@
     {#each edgeLines as line (line.id)}
       <path
         d={line.d}
+        class:lit={line.lit}
         fill="none"
         marker-end="url(#{arrowId(line.color)})"
-        style={line.color ? `stroke: ${line.color}; opacity: 0.55` : ''}
+        style={line.color ? `stroke: ${line.color};` : ''}
       />
     {/each}
   </svg>
@@ -2610,8 +2614,15 @@
     fill: none;
     stroke: var(--text-dim);
     stroke-width: 2;
-    opacity: 0.7;
+    /* At rest an edge is a WHISPER — enough to see that a thread exists without
+       the connectors dominating the scatter. Hovering any member of a
+       conversation lifts its edges to full strength (.lit). */
+    opacity: 0.18;
     stroke-dasharray: 5 4;
+    transition: opacity 140ms ease;
+  }
+  .edges path.lit {
+    opacity: 0.95;
   }
   /* Arrowheads: default gray; colored markers carry an inline fill that must
      win, so keep this on the low-specificity default only. */
