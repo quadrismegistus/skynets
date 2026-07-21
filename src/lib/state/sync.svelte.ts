@@ -18,6 +18,7 @@ import {
   type SyncEnvelope,
 } from '../api/sync'
 import { deleteSyncState, getSyncState, isSwapConflict, putSyncState } from '../api/syncpds'
+import { subscribeSyncRecord } from '../api/firehose'
 
 /**
  * Cross-device sync (docs/sync-spec.md). The crypto + CRDT merges live in
@@ -144,6 +145,8 @@ class SyncState {
   #onFocus: (() => void) | null = null
   #onOnline: (() => void) | null = null
   #onBeforeUnload: (() => void) | null = null
+  // Jetstream teardown: closes the socket + cancels its reconnect (browser only).
+  #unsubFirehose: (() => void) | null = null
 
   constructor() {
     // Any persisted change to either store schedules a debounced push. markDirty
@@ -335,10 +338,13 @@ class SyncState {
     }
   }
 
-  /** Background pull (poll/focus/visible/online). Skips if one is in flight, and
-   * throttles the chatty foreground triggers. */
-  async #maybePull(reason: 'poll' | 'focus' | 'visible' | 'online' | 'start') {
+  /** Background pull (poll/focus/visible/online/firehose). Skips if one is in
+   * flight, and throttles the chatty foreground triggers. */
+  async #maybePull(reason: 'poll' | 'focus' | 'visible' | 'online' | 'start' | 'firehose') {
     if (!this.enabled || !this.#key || this.#syncing) return
+    // 'firehose' fires on a REAL remote commit, so it pulls immediately like
+    // 'poll' — only the chatty foreground triggers are rate-limited. The #syncing
+    // guard above still coalesces a burst of commits into one in-flight pull.
     if (
       (reason === 'focus' || reason === 'visible' || reason === 'online') &&
       this.#lastPull &&
@@ -361,6 +367,11 @@ class SyncState {
     if (initialPull) void this.#maybePull('start')
     if (typeof document === 'undefined' || typeof window === 'undefined') return // node/SSR: no timers/listeners
     this.#pollTimer = setInterval(() => void this.#maybePull('poll'), POLL_MS)
+    // Real-time nudge: pull the instant another device commits the sync record.
+    // The poll above stays as a fallback for when Jetstream lags or drops. Guarded
+    // for a missing DID (shouldn't happen once enabled, but keeps this defensive).
+    if (this.#did)
+      this.#unsubFirehose = subscribeSyncRecord(this.#did, () => void this.#maybePull('firehose'))
     this.#onVisibility = () => {
       if (document.visibilityState === 'visible') {
         void this.#maybePull('visible')
@@ -397,6 +408,10 @@ class SyncState {
     if (this.#pollTimer) {
       clearInterval(this.#pollTimer)
       this.#pollTimer = null
+    }
+    if (this.#unsubFirehose) {
+      this.#unsubFirehose()
+      this.#unsubFirehose = null
     }
     if (typeof document !== 'undefined' && this.#onVisibility)
       document.removeEventListener('visibilitychange', this.#onVisibility)
