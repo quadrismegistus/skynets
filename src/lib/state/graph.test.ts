@@ -894,34 +894,6 @@ describe('treeTargets', () => {
     expect(byId.get('a1')!.tx).toBeCloseTo(0)
     expect(byId.get('a0')!.tx).toBeLessThan(byId.get('b0')!.tx)
   })
-
-  it('contour-compacts sibling subtrees narrower than the block layout (opt-in)', () => {
-    // A leaf `solo` next to a chain a→b→{c,d} that only widens at its foot. Block
-    // layout reserves the chain's full 2-wide footprint and strands the leaf at
-    // the edge; compaction tucks it beside the chain's narrow top.
-    const nodes = [
-      mk('op', { timestamp: 1, x: 0.5, y: 0.5 }),
-      mk('solo', { timestamp: 2, parent: 'op' }),
-      mk('a', { timestamp: 3, parent: 'op' }),
-      mk('b', { timestamp: 4, parent: 'a' }),
-      mk('c', { timestamp: 5, parent: 'b' }),
-      mk('d', { timestamp: 6, parent: 'b' }),
-    ]
-    const span = (t: ReturnType<typeof treeTargets>) => {
-      const xs = t.map((n) => n.tx)
-      return Math.max(...xs) - Math.min(...xs)
-    }
-    const block = treeTargets(nodes, box)
-    const packed = treeTargets(nodes, { ...box, compact: true })
-    expect(span(packed)).toBeLessThan(span(block)) // the whole point: narrower
-    const p = new Map(packed.map((n) => [n.id, n]))
-    // Order invariants survive: solo still left of a's subtree, c left of d.
-    expect(p.get('solo')!.tx).toBeLessThan(p.get('a')!.tx)
-    expect(p.get('c')!.tx).toBeLessThan(p.get('d')!.tx)
-    // A reply still hangs below its parent.
-    expect(p.get('a')!.ty).toBeGreaterThan(p.get('op')!.ty)
-    expect(p.get('c')!.ty).toBeGreaterThan(p.get('b')!.ty)
-  })
 })
 
 describe('withTopicPills', () => {

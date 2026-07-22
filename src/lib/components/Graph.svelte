@@ -1213,15 +1213,6 @@
     setHovered(uri)
   }
 
-  // Topic nodes are draggable layout nodes. A revealed pill is pinned, so
-  // dragging it moves its whole conversation (the solver anchors a group to
-  // its pinned member); an unrevealed pill moves alone. A plain click pins
-  // the topic where it is (like a post); it does NOT open every member's
-  // card. Threshold + window listeners mirror PostNode.
-  function togglePinUri(id: string) {
-    if (pinned.has(id)) pinned.delete(id)
-    else pinned.add(id)
-  }
   // Click a pill → reveal (or re-hide) ALL its member posts, even the ones the
   // node budget dropped, and pin the pill in place while revealed so it doesn't
   // drift as its posts flow in. Drag still repositions it.
@@ -1918,11 +1909,6 @@
 
   function open(node: GraphNode) {
     window.open(bskyUrl(node.item), '_blank', 'noopener')
-  }
-
-  function togglePin(node: GraphNode) {
-    if (pinned.has(node.uri)) pinned.delete(node.uri)
-    else pinned.add(node.uri)
   }
 
   // Dragging a node holds it under the pointer (the sim flows around it).
@@ -2896,14 +2882,10 @@
           <input type="checkbox" bind:checked={settings.connectReplies} />
           <span class="val"></span>
         </div>
-        <p class="hint">Bring in the posts replies are replying to, drawing edges.</p>
-
-        <div class="row">
-          <span class="label">Reply chains</span>
-          <input type="checkbox" bind:checked={settings.replyChains} />
-          <span class="val"></span>
-        </div>
-        <p class="hint">Show each reply's full parent chain to the thread root (won't collapse those threads).</p>
+        <p class="hint">
+          Draw an edge from each post to the one it replies to. The full thread is in the thread
+          view — click a post to open it.
+        </p>
 
         <div class="row">
           <span class="label">Curved edges</span>

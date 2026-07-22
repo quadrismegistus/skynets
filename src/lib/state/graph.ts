@@ -417,11 +417,6 @@ export interface TreeLayoutBox {
   /** Pill mode: nodes are w x h rectangles rather than circles up to maxSize.
    * `gap` is the same spacing the collision force uses. */
   pill?: { w: number; h: number; gap: { x: number; y: number } }
-  /** Contour-compact the horizontal layout: pack sibling subtrees as close as
-   * their silhouettes allow (a narrow chain tucks beside a wide sibling's narrow
-   * part) instead of reserving each subtree's full width as a block. Opt-in so
-   * the default block layout — and its tests — are untouched. Used by the lens. */
-  compact?: boolean
 }
 export interface TreeTarget {
   id: string
@@ -639,87 +634,6 @@ export function treeTargets(nodes: TreeNode[], box: TreeLayoutBox): TreeTarget[]
     if (!n.parent || !byUri.has(n.parent)) {
       extent.set(n.uri, { minDx: 0, maxDx: 0, maxDy: 0 })
       assign(n.uri, 0, 0, assigned, n.uri)
-    }
-  }
-
-  // CONTOUR COMPACTION (opt-in). The block placement above reserves each
-  // subtree's full width for its whole height; a chain that branches only at the
-  // bottom still reserves that width all the way up, stranding leaf siblings at
-  // the far edge with big gaps. This recomputes dx (dy is kept) so each sibling
-  // subtree slides in until its actual node boxes are SEP from the boxes already
-  // placed — a narrow chain tucks beside a wide sibling's narrow top. Box-based
-  // (not level-based) so it copes with the variable card heights.
-  if (box.compact) {
-    const CARD_HW = (pill ? pill.w : maxSize) / 2
-    const SEP = pill ? pill.gap.x : 18 // min horizontal gap between subtrees
-    const halfW = (uri: string) => (byUri.get(uri)?.slim ? SLIM_HW : CARD_HW)
-    type Box = { x: number; y: number; hw: number; hh: number }
-    const dxRel = new Map<string, number>()
-    // Returns the subtree's node boxes (x relative to uri's root at 0, y absolute
-    // — the dy from assign), and every uri in it; fills dxRel along the way.
-    const packX = (uri: string): { boxes: Box[]; uris: string[] } => {
-      const kids = kidsOf(uri)
-      const ownY = off.get(uri)!.dy
-      const ownTop = ownY - hOf(uri) / 2
-      let ownBottom = ownY + hOf(uri) / 2
-      if (kids.length) {
-        // Extend the collision box DOWN through the corridor to this node's
-        // children, so a sibling subtree can't weave into the vertical gap
-        // between a parent and its replies — the interleaving that made the tree
-        // hard to read. (The box is for packing only; the node still renders at ownY.)
-        const childTop = Math.min(...kids.map((k) => (off.get(k.uri)?.dy ?? ownY) - hOf(k.uri) / 2))
-        ownBottom = Math.max(ownBottom, childTop - 1)
-      }
-      const ownBox = { x: 0, y: (ownTop + ownBottom) / 2, hw: halfW(uri), hh: (ownBottom - ownTop) / 2 }
-      if (!kids.length) {
-        dxRel.set(uri, 0)
-        return { boxes: [ownBox], uris: [uri] }
-      }
-      const placed: Box[] = []
-      const kidRootX: number[] = []
-      const uris = [uri]
-      for (const k of kids) {
-        const res = packX(k.uri)
-        // Slide k in from the right until its boxes are SEP clear of `placed`
-        // wherever their y-intervals overlap.
-        let X = 0
-        if (placed.length) {
-          let need = -Infinity
-          for (const c of res.boxes)
-            for (const p of placed)
-              if (c.y - c.hh < p.y + p.hh && p.y - p.hh < c.y + c.hh)
-                need = Math.max(need, p.x + p.hw + SEP - (c.x - c.hw))
-          if (need > -Infinity) X = need
-        }
-        kidRootX.push(X)
-        for (const c of res.boxes) placed.push({ x: c.x + X, y: c.y, hw: c.hw, hh: c.hh })
-        for (const u of res.uris) dxRel.set(u, (dxRel.get(u) ?? 0) + X)
-        uris.push(...res.uris)
-      }
-      // Centre the parent over its children's span.
-      const parentX = (kidRootX[0] + kidRootX[kidRootX.length - 1]) / 2
-      for (const u of uris) if (u !== uri) dxRel.set(u, (dxRel.get(u) ?? 0) - parentX)
-      dxRel.set(uri, 0)
-      const boxes: Box[] = [ownBox]
-      for (const c of placed) boxes.push({ x: c.x - parentX, y: c.y, hw: c.hw, hh: c.hh })
-      return { boxes, uris }
-    }
-    for (const rootUri of extent.keys()) packX(rootUri)
-    // Apply the compacted dx and recompute the horizontal extent for clamping.
-    for (const e of extent.values()) {
-      e.minDx = 0
-      e.maxDx = 0
-    }
-    for (const n of nodes) {
-      const o = off.get(n.uri)
-      const nx = dxRel.get(n.uri)
-      if (!o || nx === undefined) continue
-      o.dx = nx
-      const e = extent.get(nodeRoot.get(n.uri) ?? n.uri)
-      if (e) {
-        e.minDx = Math.min(e.minDx, nx)
-        e.maxDx = Math.max(e.maxDx, nx)
-      }
     }
   }
 
