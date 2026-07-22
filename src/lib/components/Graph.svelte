@@ -820,7 +820,7 @@
     // N more" belongs at the end of the row, not interleaved by time. (Infinity
     // is non-finite, so treeTargets' anchor summary skips it — no rank skew.)
     for (const o of overflow) {
-      chainNodes.push({ uri: o.id, timestamp: Infinity, parent: o.parent, x: 0.5, y: 0.5, sizeRank: 0.15, height: 30 })
+      chainNodes.push({ uri: o.id, timestamp: Infinity, parent: o.parent, x: 0.5, y: 0.5, sizeRank: 0.15, height: 30, slim: true })
     }
     if (chainNodes.length < 2) return null
     const panelW = showDigest ? Math.min(PANEL_W, w * 0.88) : 0
@@ -838,6 +838,7 @@
       minSize: MIN_SIZE,
       maxSize: MAX_SIZE,
       pill: readerPill, // lens nodes are reader cards, so pack for THAT footprint
+      compact: true, // contour-pack siblings instead of reserving full-width blocks
     })
     // Classic tree presentation: ROOT AT TOP-CENTRE. treeTargets' anchor math
     // is built for a tree coexisting with a scatter; the lens owns the whole
