@@ -399,8 +399,11 @@
       convos.filter((c) => !heldConvoIds.has(c.id) && (c.hasPrimary || forceFull.has(c.id))),
       {
         budget,
-        // Reply chains OFF = conversations render collapsed unless mapped.
-        autoUnrollMax: settings.replyChains ? 10 : 0,
+        // Unroll conversations into individual posts when EITHER connecting
+        // replies (points-lens era: show each feed post + its one parent) or the
+        // legacy full chains are on. visibleNodes then trims to feed post +
+        // immediate parent. Only fully off = collapsed reps, no reply edges.
+        autoUnrollMax: settings.connectReplies || settings.replyChains ? 10 : 0,
         perAuthorMax: 3,
         forceFull,
         ranking: settings.selectMode,
@@ -536,24 +539,22 @@
       climbChain(starts, set, parentNodeOf, prune)
     }
     // POINTS-LENS era: the FULL thread lives in the lens now, so the scatter
-    // keeps each feed post (plus reps/pinned/mapped) and only its IMMEDIATE
-    // parent — not the deep ancestry the climb/plan pulls in. Turn on "reply
-    // chains" for the old full-chain behaviour. The lens fetches its own thread,
-    // so this doesn't shorten what you see there.
-    if (!settings.replyChains) {
-      const present = new Set(set.keys())
-      const keep = new Set<string>()
-      for (const n of set.values()) {
-        if (!(primaryUris.has(n.uri) || repUris.has(n.uri) || pinned.has(n.uri) || expanded.has(n.uri)))
-          continue
-        keep.add(n.uri)
-        const raw = parentUriOf(n.item)
-        const p = raw ? graph.memberNode.get(raw) ?? raw : undefined // its display-parent
-        if (p && p !== n.uri && present.has(p)) keep.add(p)
-      }
-      return [...set.values()].filter((n) => keep.has(n.uri))
+    // ALWAYS keeps each feed post (plus reps/pinned/mapped) and only its
+    // IMMEDIATE parent — never the deep ancestry the climb/plan pulls in. (The
+    // old full-chain scatter is what the lens replaces, so this ignores the
+    // now-legacy `replyChains` setting; the lens fetches its own thread, so what
+    // you read THERE is unaffected.)
+    const present = new Set(set.keys())
+    const keep = new Set<string>()
+    for (const n of set.values()) {
+      if (!(primaryUris.has(n.uri) || repUris.has(n.uri) || pinned.has(n.uri) || expanded.has(n.uri)))
+        continue
+      keep.add(n.uri)
+      const raw = parentUriOf(n.item)
+      const p = raw ? graph.memberNode.get(raw) ?? raw : undefined // its display-parent
+      if (p && p !== n.uri && present.has(p)) keep.add(p)
     }
-    return [...set.values()]
+    return [...set.values()].filter((n) => keep.has(n.uri))
   })
   /**
    * Rank across the whole corpus in reservoir mode, not just the posts on
