@@ -1360,15 +1360,15 @@
         if (!a || !b) return null
         let d: string
         if (lensTree) {
-          // Reader tree: connect each card on its side NEAREST the other, so the
-          // edge runs in the gap between them rather than behind either one (a
-          // transparent ghost would show a line straight through it), and a
-          // sideways reply's edge doesn't bite across the cards.
+          // Reader tree: the reply always emits from its TOP-centre ("this
+          // replies to something above"); only the PARENT target picks its
+          // nearest side, so the edge lands cleanly without biting across a card.
           const hw = readerPill.w / 2
           const ah = lensTree.get(e.from)?.hh ?? a.size / 2
           const bh = lensTree.get(e.to)?.hh ?? b.size / 2
-          const [sx, sy] = edgeAnchor(a.px, a.py, hw, ah, b.px, b.py)
-          const [ex, ey] = edgeAnchor(b.px, b.py, hw, bh, a.px, a.py)
+          const sx = a.px
+          const sy = a.py - ah
+          const [ex, ey] = edgeAnchor(b.px, b.py, hw, bh, sx, sy)
           // Nudge the arrowhead (parent) end a touch OUTSIDE the card edge.
           const vx = ex - b.px
           const vy = ey - b.py
@@ -2629,10 +2629,10 @@
     {#each overflowPlaced as o (o.id)}
       {@const par = placedByUri.get(o.parent)}
       {#if par}
-        {@const anc = edgeAnchor(par.px, par.py, readerPill.w / 2, lensTree?.get(o.parent)?.hh ?? 0, o.px, o.py)}
+        {@const anc = edgeAnchor(par.px, par.py, readerPill.w / 2, lensTree?.get(o.parent)?.hh ?? 0, o.px, o.py - 15)}
         <path
           class="more-edge"
-          d={curvePath(anc[0], anc[1], o.px, o.py, settings.curvedEdges ? 0.14 : 0, 30)}
+          d={curvePath(o.px, o.py - 15, anc[0], anc[1], settings.curvedEdges ? 0.14 : 0, 30)}
           fill="none"
         />
       {/if}
