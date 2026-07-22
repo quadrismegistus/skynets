@@ -691,11 +691,38 @@
       maxSize: MAX_SIZE,
       pill,
     })
-    return new Map(tree.map((t) => [t.id, t]))
+    // Classic tree presentation: ROOT AT TOP-CENTRE. treeTargets' anchor math
+    // is built for a tree coexisting with a scatter; the lens owns the whole
+    // stage, so translate the rigid tree to put its top row just under the top
+    // bar, centred on the frame's x. (A translation — the tree's shape is
+    // untouched.)
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    for (const t of tree) {
+      minX = Math.min(minX, t.tx)
+      maxX = Math.max(maxX, t.tx)
+      minY = Math.min(minY, t.ty)
+    }
+    const dx = PAD_X + Math.max(0, w - 2 * PAD_X - panelW) / 2 - (minX + maxX) / 2
+    const dy = PAD_TOP + 28 - minY
+    return new Map(tree.map((t) => [t.id, { ...t, tx: t.tx + dx, ty: t.ty + dy }]))
   })
   const focusTargets = $derived.by<Target[]>(() => {
     if (!lensTree) return targets
-    const out = targets.map((t) => lensTree.get(t.id) ?? t)
+    // Non-members FLY AWAY: exiled radially past the frame edge (made legal by
+    // the lens bleed in setBounds below), so the gathered tree stands alone
+    // like a classic tree diagram. Their scatter targets are never touched —
+    // release re-solves the original input and everyone flies home.
+    const cx = w / 2
+    const cy = h / 2
+    const R = Math.hypot(w, h) * 0.75
+    const out = targets.map((t) => {
+      const tree = lensTree.get(t.id)
+      if (tree) return tree
+      const ang = Math.atan2(t.ty - cy || 0.001, t.tx - cx || 0.001)
+      return { ...t, tx: cx + Math.cos(ang) * R, ty: cy + Math.sin(ang) * R }
+    })
     for (const g of guestNodes) {
       const t = lensTree.get(g.uri)
       if (t) out.push(t)
@@ -1349,7 +1376,10 @@
     layout?.setCollision(pill ? pill.gap : null) // rectangles vs circles
     // POINTS SPIKE: no reservoir bleed — the solver keeps everything inside the
     // frame (targets are already frame-mapped), so nothing lands off-screen.
-    layout?.setBounds(w, h, 18, Math.max(24, bottomChrome), 0, 0)
+    // EXCEPT while the lens is open: a huge bleed legalizes the exile ring so
+    // non-members can fly off-stage (clamped back on release).
+    const lensBleed = lensTree ? Math.ceil(Math.hypot(w, h) * 0.8) : 0
+    layout?.setBounds(w, h, 18, Math.max(24, bottomChrome), lensBleed, lensBleed)
     // focusedThread and the guest count are part of the signature: entering/
     // leaving the lens — and guests arriving after the fetch, or leaving when
     // dismissed — re-solve everything (the whole tree re-lays around them) even
