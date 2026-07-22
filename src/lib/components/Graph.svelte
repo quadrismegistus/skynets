@@ -47,7 +47,7 @@
   import { isDemo } from '../api/demo'
   import { convoColor } from '../api/llm'
   import { untrack } from 'svelte'
-  import { SvelteSet } from 'svelte/reactivity'
+  import { SvelteSet, SvelteMap } from 'svelte/reactivity'
   import PostNode from './PostNode.svelte'
   import PostCard from './PostCard.svelte'
   import DigestPanel from './DigestPanel.svelte'
@@ -239,9 +239,13 @@
   // the root) is always kept when sibling-capping, so the thing you opened never
   // collapses out from under you.
   let focusedPost = $state<string | null>(null)
-  // Posts in the lens whose sibling cap the user lifted (clicked their "+K more"
-  // node). Cleared on each new focus, so a fresh thread starts capped.
-  const lensExpanded = new SvelteSet<string>()
+  // Per-post reveal count in the lens: how many direct replies to draw under a
+  // post (parent uri → count). Absent = the base cap; each "+K more" click adds
+  // LENS_SIBLING_STEP. Cleared on each new focus, so a fresh thread starts capped.
+  const lensExpanded = new SvelteMap<string, number>()
+  // Total revealed beyond the base cap, so the solve signature changes when a
+  // parent's count grows (Map.size alone wouldn't — it's the same key).
+  const lensExpandTotal = $derived([...lensExpanded.values()].reduce((a, b) => a + b, 0))
   // Topic pills the user double-clicked to reveal ALL their member posts (by
   // conversation id), even those the node budget would otherwise leave off.
   const revealedTopics = new SvelteSet<string>()
@@ -730,7 +734,8 @@
   // then feed members, then fetched guests — and the rest drop into a "+K more"
   // node that lifts the cap for that post on click. A const for now, a candidate
   // for a settings slider later.
-  const LENS_SIBLING_CAP = 3
+  const LENS_SIBLING_CAP = 2
+  const LENS_SIBLING_STEP = 2 // how many more "+K more" reveals per click
   // The lens membership resolved to a KEPT set + per-parent overflow counts, via
   // a capped walk from the thread roots.
   const lensPack = $derived.by(() => {
@@ -771,7 +776,7 @@
       const cs = (kids.get(n.uri) ?? [])
         .slice()
         .sort((a, b) => prio(a) - prio(b) || a.timestamp - b.timestamp)
-      const cap = lensExpanded.has(n.uri) ? cs.length : LENS_SIBLING_CAP
+      const cap = Math.min(cs.length, lensExpanded.get(n.uri) ?? LENS_SIBLING_CAP)
       if (cs.length > cap) {
         overflow.push({ id: `more:${n.uri}`, parent: n.uri, count: cs.length - cap, timestamp: cs[cap].timestamp })
       }
@@ -1581,7 +1586,7 @@
     // leaving the lens — and guests arriving after the fetch, or leaving when
     // dismissed — re-solve everything (the whole tree re-lays around them) even
     // though the freeze would otherwise ignore retargeting/newcomers.
-    const sig = `${w}|${h}|${bottomChrome}|${showDigest ? 1 : 0}|${pill ? pill.w : 0}|${focusedThread ?? ''}|g${guestNodes.length}|x${lensExpanded.size}`
+    const sig = `${w}|${h}|${bottomChrome}|${showDigest ? 1 : 0}|${pill ? pill.w : 0}|${focusedThread ?? ''}|g${guestNodes.length}|x${lensExpandTotal}`
     const ids = new Set(t.map((x) => x.id))
     if (batch !== null && batch === solvedBatch && sig === solvedSig) {
       const hasNew = t.some((x) => !solvedFor.has(x.id))
@@ -2656,13 +2661,13 @@
   {/each}
 
   <!-- Sibling-cap overflow: a small node under a post whose replies were capped.
-       Click to draw the rest of that post's replies (lifts the cap for it). -->
+       Click to draw the next few of that post's replies (LENS_SIBLING_STEP more). -->
   {#each overflowPlaced as o (o.id)}
     <button
       class="more-node"
       style="left: {o.px}px; top: {o.py}px"
-      title="Show {o.count} more {o.count === 1 ? 'reply' : 'replies'}"
-      onclick={() => lensExpanded.add(o.parent)}
+      title="Show {Math.min(o.count, LENS_SIBLING_STEP)} more of {o.count} {o.count === 1 ? 'reply' : 'replies'}"
+      onclick={() => lensExpanded.set(o.parent, (lensExpanded.get(o.parent) ?? LENS_SIBLING_CAP) + LENS_SIBLING_STEP)}
       onpointerdown={(e) => e.stopPropagation()}
     >
       +{o.count} more
