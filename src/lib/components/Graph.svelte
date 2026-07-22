@@ -1268,6 +1268,30 @@
   // point offset perpendicular to the chord. The bow makes it unambiguous which
   // two nodes an edge joins even when a third node sits on the straight line
   // between them — the edge arcs clear of it rather than passing through.
+  // The midpoint of a card's edge nearest a target point — so an edge meets the
+  // card on its closest side (left / right / bottom / top middle) instead of one
+  // fixed side that a diagonal run would then cut across. In the tree the parent
+  // is above its reply, so "top" is naturally never chosen for a parent (nor
+  // "bottom" for a reply). Returns [x, y].
+  function edgeAnchor(px: number, py: number, hw: number, hh: number, tx: number, ty: number): [number, number] {
+    const cands: [number, number][] = [
+      [px, py - hh],
+      [px, py + hh],
+      [px - hw, py],
+      [px + hw, py],
+    ]
+    let best = cands[0]
+    let bd = Infinity
+    for (const c of cands) {
+      const dd = (c[0] - tx) ** 2 + (c[1] - ty) ** 2
+      if (dd < bd) {
+        bd = dd
+        best = c
+      }
+    }
+    return best
+  }
+
   function curvePath(x1: number, y1: number, x2: number, y2: number, frac = 0.24, cap = 50) {
     const dx = x2 - x1
     const dy = y2 - y1
@@ -1336,13 +1360,20 @@
         if (!a || !b) return null
         let d: string
         if (lensTree) {
-          // Reader tree: the parent sits ABOVE its reply, so connect the reply's
-          // TOP-centre to the parent's BOTTOM-centre. The edge runs in the gap
-          // between the cards, never behind one — so a transparent (dismissed)
-          // card no longer shows the line straight through it.
+          // Reader tree: connect each card on its side NEAREST the other, so the
+          // edge runs in the gap between them rather than behind either one (a
+          // transparent ghost would show a line straight through it), and a
+          // sideways reply's edge doesn't bite across the cards.
+          const hw = readerPill.w / 2
           const ah = lensTree.get(e.from)?.hh ?? a.size / 2
           const bh = lensTree.get(e.to)?.hh ?? b.size / 2
-          d = curvePath(a.px, a.py - ah, b.px, b.py + bh + 4, settings.curvedEdges ? 0.14 : 0, 36)
+          const [sx, sy] = edgeAnchor(a.px, a.py, hw, ah, b.px, b.py)
+          const [ex, ey] = edgeAnchor(b.px, b.py, hw, bh, a.px, a.py)
+          // Nudge the arrowhead (parent) end a touch OUTSIDE the card edge.
+          const vx = ex - b.px
+          const vy = ey - b.py
+          const vl = Math.hypot(vx, vy) || 1
+          d = curvePath(sx, sy, ex + (vx / vl) * 4, ey + (vy / vl) * 4, settings.curvedEdges ? 0.14 : 0, 36)
         } else {
           // Scatter: no tree orientation, so trim radially toward the parent.
           const dx = b.px - a.px
@@ -2267,7 +2298,16 @@
   // so the lookup below would wrongly release) keeps it open.
   function focusChain(uri: string) {
     if (lensUris?.has(uri)) return
-    const c = convos.find((c) => c.members.some((m) => m.post.uri === uri))
+    let c = convos.find((c) => c.members.some((m) => m.post.uri === uri))
+    // A DISMISSED post (a dimmed ghost) isn't in `convos` (built from the
+    // non-dismissed `visible`), so clicking it found nothing and the lens never
+    // opened — you had to click a live node in the chain. Fall back to matching by
+    // thread root: the ghost's live descendants ARE in a conversation.
+    if (!c) {
+      const it = nodeByUri.get(uri)?.item ?? contextByUri.get(uri)
+      const root = it ? rootUriOf(it) : undefined
+      if (root) c = convos.find((cv) => rootUriOf(cv.members[0]) === root)
+    }
     // Focus any thread worth drawing as a tree: a conversation already showing
     // ≥2 members, OR a lone post that HAS replies we simply haven't drawn — the
     // lens fetch pulls its whole tree in as guests, the same way a multi-member
@@ -2584,14 +2624,15 @@
         style={line.color ? `stroke: ${line.color};` : ''}
       />
     {/each}
-    <!-- Faint connector from a capped post's bottom-centre down to its "+K more"
-         node (not from its centre, so it doesn't run behind the card). -->
+    <!-- Faint connector from a capped post's nearest edge to its "+K more" node
+         (not from its centre, so it doesn't run behind the card). -->
     {#each overflowPlaced as o (o.id)}
       {@const par = placedByUri.get(o.parent)}
       {#if par}
+        {@const anc = edgeAnchor(par.px, par.py, readerPill.w / 2, lensTree?.get(o.parent)?.hh ?? 0, o.px, o.py)}
         <path
           class="more-edge"
-          d={curvePath(par.px, par.py + (lensTree?.get(o.parent)?.hh ?? 0), o.px, o.py, settings.curvedEdges ? 0.14 : 0, 30)}
+          d={curvePath(anc[0], anc[1], o.px, o.py, settings.curvedEdges ? 0.14 : 0, 30)}
           fill="none"
         />
       {/if}
@@ -2651,12 +2692,14 @@
        diameter, which in pill mode is unrelated to how tall the node is. -->
   {#each placed as p (p.node.uri)}
     {@const cap = nodeCaptions.get(p.node.uri)}
-    {@const half = pill ? pill.h / 2 : p.size / 2}
+    {@const rb = readerBoxByUri.get(p.node.uri)}
+    {@const above = !!rb || !!pill}
+    {@const half = rb ? rb.h / 2 : pill ? pill.h / 2 : p.size / 2}
     {#if cap}
       <div
         class="node-caption"
-        class:above={!!pill}
-        style="left: {p.px}px; top: {pill ? p.py - half - 3 : p.py + half + 3}px; --c: {cap.color}"
+        class:above
+        style="left: {p.px}px; top: {above ? p.py - half - 3 : p.py + half + 3}px; --c: {cap.color}"
       >
         {cap.label}
       </div>
