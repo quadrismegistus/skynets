@@ -1193,8 +1193,13 @@
     // avatar radius (p.size/2) lands the card ON the pill. Clear the pill's own
     // edge (pill.w/2) instead, so the card always sits beside it, not over it.
     const halfW = pill ? pill.w / 2 : p.size / 2
-    let x = p.px + halfW + 12
-    if (x + CARD_W > w) x = p.px - halfW - 12 - CARD_W
+    // A tight gap: enough to read as separate from the node, small enough that
+    // the pointer can't linger in the dead zone between them and lose the hover
+    // (the grace-window re-check bridges only a brief crossing). Was 12 → a
+    // pausable strip beside wide pills.
+    const gap = 4
+    let x = p.px + halfW + gap
+    if (x + CARD_W > w) x = p.px - halfW - gap - CARD_W
     if (x < 8) x = 8
     // y is just an anchor; the card clamps its own top by its measured height.
     const y = Math.max(8, p.py - p.size / 2)
@@ -1714,6 +1719,10 @@
   let pan: { sx: number; sy: number; vx: number; vy: number; moved: boolean } | null = null
   let pinch: { dist: number; mx: number; my: number; vx: number; vy: number; vk: number } | null = null
   let canvasRelease: (() => void) | null = null
+  // Did the current background gesture actually move (pan or pinch)? A still tap
+  // on the background releases the focus lens ("click anywhere else"); a drag —
+  // panning a large tree into view — or a pinch must NOT collapse it.
+  let bgMoved = false
 
   function canvasXY(e: PointerEvent) {
     const r = graphEl.getBoundingClientRect()
@@ -1742,11 +1751,14 @@
     if (e.button !== 0) return
     const t = e.target as HTMLElement
     if (t.closest('.wrap, .card, .config-wrap, .hud, .panel, .digest-btn, .topic-node')) return
-    focusedThread = null // background press releases the focus lens
     canvasPointers.set(e.pointerId, canvasXY(e))
     if (canvasPointers.size === 1) startPan()
-    else if (canvasPointers.size === 2) startPinch()
+    else if (canvasPointers.size === 2) {
+      startPinch()
+      bgMoved = true // a second finger means a pinch/zoom, never a release tap
+    }
     if (!canvasRelease) {
+      bgMoved = false // fresh background gesture — assume a tap until it moves
       window.addEventListener('pointermove', onCanvasMove)
       window.addEventListener('pointerup', onCanvasUp)
       window.addEventListener('pointercancel', onCanvasUp)
@@ -1781,12 +1793,14 @@
       view.x = mx - gx * k
       view.y = my - gy * k
       view.k = k
+      bgMoved = true
     } else if (pan && canvasPointers.size === 1) {
       const p = canvasPointers.get(e.pointerId)!
       const dx = p.x - pan.sx
       const dy = p.y - pan.sy
       if (!pan.moved && Math.hypot(dx, dy) < 4) return
       pan.moved = true
+      bgMoved = true
       view.x = pan.vx + dx
       view.y = pan.vy + dy
     }
@@ -1800,7 +1814,13 @@
     // jumping; 0 left → release the window listeners.
     if (canvasPointers.size >= 2) startPinch()
     else if (canvasPointers.size === 1) startPan()
-    else canvasRelease?.()
+    else {
+      // Whole background gesture ended. A still TAP is the "click anywhere else"
+      // that releases the focus lens; a pan (dragging a large tree into view) or
+      // pinch left bgMoved set, so the lens survives the gesture.
+      if (!bgMoved) focusedThread = null
+      canvasRelease?.()
+    }
   }
 
   $effect(() => () => canvasRelease?.())
