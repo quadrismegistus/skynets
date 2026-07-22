@@ -838,7 +838,10 @@
       minSize: MIN_SIZE,
       maxSize: MAX_SIZE,
       pill: readerPill, // lens nodes are reader cards, so pack for THAT footprint
-      compact: true, // contour-pack siblings instead of reserving full-width blocks
+      // Block layout (each subtree a contiguous column) — CLEAR to read. Contour
+      // compaction is narrower but interleaves branches confusingly; for a
+      // reading tree, clarity wins. Slim overflow markers keep block from being
+      // needlessly wide (see widthOf).
     })
     // Classic tree presentation: ROOT AT TOP-CENTRE. treeTargets' anchor math
     // is built for a tree coexisting with a scatter; the lens owns the whole

@@ -540,13 +540,16 @@ export function treeTargets(nodes: TreeNode[], box: TreeLayoutBox): TreeTarget[]
   // A subtree's width is its WIDEST row (not the sum of its children), so
   // wrapping propagates upward: a wrapped fan takes less horizontal room, and
   // its grandparent spreads its own children accordingly.
+  // A slim node (a "+K more" marker) reserves a fraction of a column, so it
+  // doesn't strand itself in a full card-width of empty space.
+  const SLIM_W = 0.35
   const widths = new Map<string, number>()
   const widthOf = (uri: string, guard: Set<string>): number => {
     const memo = widths.get(uri)
     if (memo !== undefined) return memo
     if (guard.has(uri)) return 1
     guard.add(uri)
-    let w = 1
+    let w = byUri.get(uri)?.slim ? SLIM_W : 1
     for (const row of rowsOf(uri, guard)) {
       w = Math.max(
         w,
@@ -653,8 +656,19 @@ export function treeTargets(nodes: TreeNode[], box: TreeLayoutBox): TreeTarget[]
     // Returns the subtree's node boxes (x relative to uri's root at 0, y absolute
     // — the dy from assign), and every uri in it; fills dxRel along the way.
     const packX = (uri: string): { boxes: Box[]; uris: string[] } => {
-      const ownBox = { x: 0, y: off.get(uri)!.dy, hw: halfW(uri), hh: hOf(uri) / 2 }
       const kids = kidsOf(uri)
+      const ownY = off.get(uri)!.dy
+      const ownTop = ownY - hOf(uri) / 2
+      let ownBottom = ownY + hOf(uri) / 2
+      if (kids.length) {
+        // Extend the collision box DOWN through the corridor to this node's
+        // children, so a sibling subtree can't weave into the vertical gap
+        // between a parent and its replies — the interleaving that made the tree
+        // hard to read. (The box is for packing only; the node still renders at ownY.)
+        const childTop = Math.min(...kids.map((k) => (off.get(k.uri)?.dy ?? ownY) - hOf(k.uri) / 2))
+        ownBottom = Math.max(ownBottom, childTop - 1)
+      }
+      const ownBox = { x: 0, y: (ownTop + ownBottom) / 2, hw: halfW(uri), hh: (ownBottom - ownTop) / 2 }
       if (!kids.length) {
         dxRel.set(uri, 0)
         return { boxes: [ownBox], uris: [uri] }
