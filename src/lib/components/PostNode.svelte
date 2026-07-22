@@ -42,6 +42,11 @@
     ondismiss: (uri: string) => void
     ondragmove: (uri: string, clientX: number, clientY: number) => void
     ondragend: (uri: string) => void
+    /** Reader-lens inline actions (shown on hover; the card is the read surface,
+     * so its actions live on it rather than on a popped card). */
+    onreply?: (node: GraphNode) => void
+    onquote?: (node: GraphNode) => void
+    onrate?: (uri: string, kind: 'up' | 'down') => void
   }
   let {
     node,
@@ -67,6 +72,9 @@
     ondismiss,
     ondragmove,
     ondragend,
+    onreply,
+    onquote,
+    onrate,
   }: Props = $props()
 
   // Held at the entry offset for one frame, then released so CSS carries it
@@ -275,6 +283,24 @@
     <button class="dismiss" title="Mark as read (dismiss)" aria-label="Dismiss" onclick={dismiss}>
       ✕
     </button>
+  {/if}
+
+  <!-- Reader-lens actions: the card IS the reading surface (no popped card for
+       pure text), so reply/quote/rate live on it, revealed on hover. Media/quote
+       cards keep popping the full card, which carries these already. -->
+  {#if reader && !hasEmbedFlag && !ghost && !cover.blur}
+    <div
+      class="actions"
+      role="toolbar"
+      tabindex="-1"
+      aria-label="Post actions"
+      onpointerdown={(e) => e.stopPropagation()}
+    >
+      <button title="Reply" aria-label="Reply" onclick={(e) => { e.stopPropagation(); onreply?.(node) }}>↩</button>
+      <button title="Quote" aria-label="Quote" onclick={(e) => { e.stopPropagation(); onquote?.(node) }}>❝</button>
+      <button title="Thumb up (private)" aria-label="Thumb up" onclick={(e) => { e.stopPropagation(); onrate?.(node.uri, 'up') }}>👍</button>
+      <button title="Thumb down (private)" aria-label="Thumb down" onclick={(e) => { e.stopPropagation(); onrate?.(node.uri, 'down') }}>👎</button>
+    </div>
   {/if}
 </div>
 
@@ -538,6 +564,41 @@
     border-radius: 999px;
     padding: 0 6px;
     white-space: nowrap;
+  }
+  /* Inline action bar, revealed on hover in the bottom-right of a reader card. */
+  .actions {
+    position: absolute;
+    bottom: 5px;
+    right: 7px;
+    display: none;
+    gap: 1px;
+    padding: 2px;
+    border-radius: 999px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    z-index: 40;
+  }
+  @media (hover: hover) {
+    .wrap.reader:hover .actions {
+      display: flex;
+    }
+  }
+  .actions button {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    border-radius: 50%;
+    font-size: 0.72rem;
+    line-height: 1;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    color: var(--text-dim);
+  }
+  .actions button:hover {
+    background: var(--bg-elev);
   }
 
   .node {
